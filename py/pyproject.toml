@@ -4,7 +4,13 @@ version = "0.0.0"
 description = "Python helpers for scenecast (TTS, alignment, audio, frames)"
 requires-python = ">=3.10,<3.14"
 dependencies = [
-  "kokoro-onnx",
+  "onnxruntime",
+  "misaki",
+  "g2p_en",
+  "spacy",
+  "num2words",
+  "preshed<3.0.11",  # preshed 3.0.14 breaks spaCy tokenizer loading (OverflowError)
+  "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
   "faster-whisper",
   "soundfile",
   "numpy",
@@ -21,3 +27,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["scenecast_py"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv]
+# g2p_en declares `distance` (GPL) but never imports it (verified by grep); never install it.
+override-dependencies = ["distance; python_version < '0'"]

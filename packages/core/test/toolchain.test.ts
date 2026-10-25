@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ensureToolchain, findUv, uvEnv } from '../src/toolchain.js';
+import { ensureToolchain, findUv, runPy, uvEnv } from '../src/toolchain.js';
 
 function tmpCache(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-cache-'));
@@ -23,6 +23,15 @@ describe('toolchain', () => {
     }
   });
 
+  it('runPy rejects invalid module names', async () => {
+    await expect(runPy('os; rm -rf /', [])).rejects.toThrow('invalid python module name "os; rm -rf /"');
+    await expect(runPy('--help', [])).rejects.toThrow('invalid python module name "--help"');
+  });
+
+  it.skipIf(!findUv())('runPy failure names the module', async () => {
+    await expect(runPy('scenecast_py._selftest_fail', [])).rejects.toThrow(/scenecast_py\._selftest_fail/);
+  }, 300_000);
+
   it.skipIf(!findUv())('resolves ffmpeg path', () => {
     const uv = findUv()!;
     const py = path.resolve(import.meta.dirname, '../../../py');
@@ -39,6 +48,14 @@ describe.skipIf(!process.env.SCENECAST_E2E)('toolchain e2e (real download)', () 
   it('ensureToolchain resolves everything', async () => {
     const tc = await ensureToolchain();
     console.log(JSON.stringify(tc, null, 2));
+    const code =
+      'import sys, onnxruntime as ort; ort.InferenceSession(sys.argv[1], providers=["CPUExecutionProvider"]); print("session ok")';
+    const out = execFileSync(
+      findUv()!,
+      ['run', '--project', path.resolve(import.meta.dirname, '../../../py'), 'python', '-c', code, tc.models.kokoro],
+      { encoding: 'utf8', env: uvEnv() },
+    );
+    expect(out).toContain('session ok');
     for (const p of [tc.python, tc.ffmpeg, tc.models.kokoro, tc.models.voices, tc.models.whisper]) {
       expect(fs.existsSync(p)).toBe(true);
     }

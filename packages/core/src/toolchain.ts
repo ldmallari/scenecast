@@ -96,14 +96,16 @@ function installUv(): string {
 
 /** uv wants ~/.local/share/uv for managed Pythons; if that is not writable, keep them in the scenecast cache. */
 export function uvEnv(): NodeJS.ProcessEnv {
-  if (process.env.UV_PYTHON_INSTALL_DIR) return process.env;
+  const env: NodeJS.ProcessEnv = { ...process.env, SCENECAST_CACHE: cacheDir() };
+  env.NLTK_DATA ??= path.join(cacheDir(), 'nltk');
+  if (env.UV_PYTHON_INSTALL_DIR) return env;
   const share = path.join(os.homedir(), '.local', 'share');
   try {
     fs.mkdirSync(path.join(share, 'uv'), { recursive: true });
     fs.accessSync(path.join(share, 'uv'), fs.constants.W_OK);
-    return process.env;
+    return env;
   } catch {
-    return { ...process.env, UV_PYTHON_INSTALL_DIR: path.join(cacheDir(), 'python') };
+    return { ...env, UV_PYTHON_INSTALL_DIR: path.join(cacheDir(), 'python') };
   }
 }
 
@@ -168,6 +170,9 @@ export async function ensureToolchain(opts: { offline?: boolean } = {}): Promise
   const whisperModel = findWhisperModel(whisperRoot);
   if (!whisperModel) throw new Error(`Whisper model not found under ${whisperRoot} after download.`);
 
+  // G2P data (NLTK) is fetched here, never at first synthesis. The spaCy model ships in the uv environment.
+  await run(uv, ['run', '--project', PY_PROJECT, 'python', '-m', 'scenecast_py.g2p', '--fetch'], false);
+
   const py = (code: string) => run(uv, ['run', '--project', PY_PROJECT, 'python', '-c', code], true);
   const python = await py('import sys; print(sys.executable)');
   const ffmpeg = await py('import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())');
@@ -176,6 +181,7 @@ export async function ensureToolchain(opts: { offline?: boolean } = {}): Promise
 }
 
 export async function runPy(module: string, args: string[]): Promise<void> {
+  if (!/^[A-Za-z_][\w.]*$/.test(module)) throw new Error(`invalid python module name "${module}"`);
   const uv = findUv() ?? installUv();
   try {
     await run(uv, ['run', '--project', PY_PROJECT, 'python', '-m', module, ...args], false);
