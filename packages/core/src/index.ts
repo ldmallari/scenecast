@@ -7,3 +7,5 @@ export * from './record/record.js';
 export { settle, trackNetwork, LOADING_SELECTOR } from './record/settle.js';
 export * from './ffmpeg.js';
 export * from './retime.js';
+export * from './frame.js';
+export * from './captions.js';
