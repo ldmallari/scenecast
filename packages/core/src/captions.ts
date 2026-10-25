@@ -30,17 +30,26 @@ const EDGE = 72;
 /** Caption events from a take: each event's boxes are active from its output time to the next event's (or `sceneEnd`). */
 export function eventsForCaptions(take: Take, scheduled: ScheduledStep[], opts: { sceneEnd: number }): CaptionEvent[] {
   const map = (b: Box): Box => (take.viewport === 'phone' ? phoneToFrame(b) : b);
-  const times = take.events.map((e) => {
-    const sch = scheduled.find((s) => s.index === e.index);
-    if (!sch) throw new Error(`captions: no scheduled step for take event ${e.index}`);
-    return sch.startAt + travelSecFor(sch.step);
-  });
-  return take.events.map((e, i) => ({
-    start: times[i]!,
-    end: i + 1 < times.length ? times[i + 1]! : opts.sceneEnd,
+  const timed = take.events
+    .map((e) => {
+      const sch = scheduled.find((s) => s.index === e.index);
+      if (!sch) throw new Error(`captions: no scheduled step for take event ${e.index}`);
+      return { e, t: sch.startAt + travelSecFor(sch.step) };
+    })
+    .sort((a, b) => a.t - b.t);
+  return timed.map(({ e, t }, i) => ({
+    start: t,
+    end: i + 1 < timed.length ? timed[i + 1]!.t : opts.sceneEnd,
     boxes: [e.target, e.cursorTo, ...e.panels].filter((b): b is Box => b !== undefined).map(map),
   }));
 }
+
+/** Breaks any word longer than a line into line-sized pieces. */
+function breakLongWords(words: string[], max: number): string[] {
+  return words.flatMap((w) => (w.length <= max ? [w] : w.match(new RegExp(`.{1,${max}}`, 'gu')) ?? [w]));
+}
+
+const len = (ws: string[]) => ws.join(' ').length;
 
 /** Splits words into two lines, as even as possible, avoiding a one-word line when there are 4+ words. */
 function twoLines(words: string[]): string[] {
@@ -49,7 +58,7 @@ function twoLines(words: string[]): string[] {
   let best = -1;
   let bestMax = Infinity;
   for (let k = minWords; k <= words.length - minWords; k++) {
-    const m = Math.max(words.slice(0, k).join(' ').length, words.slice(k).join(' ').length);
+    const m = Math.max(len(words.slice(0, k)), len(words.slice(k)));
     if (m < bestMax) {
       bestMax = m;
       best = k;
@@ -58,43 +67,84 @@ function twoLines(words: string[]): string[] {
   return [words.slice(0, best).join(' '), words.slice(best).join(' ')];
 }
 
+/** Lines for one cue: a single line when it fits, else two balanced lines. */
+function cueLines(g: string[], max: number): string[] {
+  return len(g) <= max ? [g.join(' ')] : twoLines(g);
+}
+
+/** Cuts words into n groups of similar size, each with at least `min` words; null if impossible. */
+function breaksFor(words: string[], n: number, min: number): string[][] | null {
+  if (n * min > words.length) return null;
+  const prefix = [0];
+  words.forEach((w, i) => prefix.push(prefix[i]! + w.length + 1));
+  const total = prefix[words.length]!;
+  const groups: string[][] = [];
+  let from = 0;
+  for (let c = 1; c < n; c++) {
+    const lo = from + min;
+    const hi = words.length - (n - c) * min;
+    const target = prefix[from]! + ((total - prefix[from]!) / (n - c + 1));
+    let to = lo;
+    for (let k = lo; k <= hi; k++) if (Math.abs(prefix[k]! - target) < Math.abs(prefix[to]! - target)) to = k;
+    groups.push(words.slice(from, to));
+    from = to;
+  }
+  groups.push(words.slice(from));
+  return groups;
+}
+
 /** Splits a phrase into cues of at most maxLines balanced lines. */
 function splitPhrase(text: string): string[][] {
   const { maxLines, charsPerLine } = DEFAULTS.captions;
-  const words = text.trim().split(/\s+/).filter(Boolean);
+  const words = breakLongWords(text.trim().split(/\s+/).filter(Boolean), charsPerLine);
   if (!words.length) return [];
-  const total = words.join(' ').length;
-  if (total <= charsPerLine) return [[words.join(' ')]];
-  const n = Math.max(1, Math.ceil(total / (charsPerLine * maxLines)));
-  // Balanced cue breaks: nearest word boundary to each even share, never leaving a one-word cue.
-  const groups: string[][] = [];
-  let from = 0;
-  let consumed = 0;
-  for (let c = 1; c <= n; c++) {
-    if (c === n) {
-      groups.push(words.slice(from));
-      break;
+  if (len(words) <= charsPerLine) return [[words.join(' ')]];
+  let fallback: string[][] | null = null;
+  // Prefer two words per cue; drop to one only when pieces of a hard-broken word cannot fit otherwise.
+  for (const min of words.length >= 4 ? [2, 1] : [1]) {
+    for (let n = Math.max(1, Math.ceil(len(words) / (charsPerLine * maxLines))); ; n++) {
+      const groups = breaksFor(words, n, min);
+      if (!groups) break;
+      const lines = groups.map((g) => cueLines(g, charsPerLine));
+      fallback ??= lines;
+      if (lines.every((l) => l.length <= maxLines && l.every((x) => x.length <= charsPerLine))) return lines;
     }
-    const target = (total * c) / n;
-    let to = from + 1;
-    let acc = consumed + words[from]!.length;
-    while (to < words.length - 1 && Math.abs(acc + 1 + words[to]!.length - target) < Math.abs(acc - target)) {
-      acc += 1 + words[to]!.length;
-      to++;
-    }
-    groups.push(words.slice(from, to));
-    consumed = acc + 1;
-    from = to;
   }
-  return groups.map((g) => (g.join(' ').length <= charsPerLine ? [g.join(' ')] : twoLines(g)));
+  return fallback ?? [[words.join(' ')]];
+}
+
+/** Total area of the union of `boxes` clipped to `clip`. */
+function unionArea(boxes: Box[], clip: Box): number {
+  const rs = boxes
+    .map((b) => ({
+      x0: Math.max(b.x, clip.x),
+      y0: Math.max(b.y, clip.y),
+      x1: Math.min(b.x + b.w, clip.x + clip.w),
+      y1: Math.min(b.y + b.h, clip.y + clip.h),
+    }))
+    .filter((r) => r.x1 > r.x0 && r.y1 > r.y0);
+  const xs = [...new Set(rs.flatMap((r) => [r.x0, r.x1]))].sort((a, b) => a - b);
+  let area = 0;
+  for (let i = 0; i + 1 < xs.length; i++) {
+    const [xa, xb] = [xs[i]!, xs[i + 1]!];
+    const ys = rs.filter((r) => r.x0 <= xa && r.x1 >= xb).map((r) => [r.y0, r.y1] as const).sort((a, b) => a[0] - b[0]);
+    let covered = 0;
+    let end = -Infinity;
+    for (const [y0, y1] of ys) {
+      covered += Math.max(0, y1 - Math.max(y0, end));
+      end = Math.max(end, y1);
+    }
+    area += covered * (xb - xa);
+  }
+  return area;
 }
 
 function captionBox(lines: string[], side: 'bottom' | 'top'): Box {
   const { width: W, height: H } = DEFAULTS.video;
   const widest = Math.max(...lines.map((l) => l.length));
-  const w = widest * CHAR_EM * FONT_PX + 2 * PAD_X;
+  const w = Math.min(W, widest * CHAR_EM * FONT_PX + 2 * PAD_X);
   const h = lines.length * FONT_PX * LINE_HEIGHT + 2 * PAD_Y;
-  return { x: (W - w) / 2, y: side === 'bottom' ? H - EDGE - h : EDGE, w, h };
+  return { x: Math.max(0, (W - w) / 2), y: side === 'bottom' ? H - EDGE - h : EDGE, w, h };
 }
 
 function overlap(a: Box, b: Box): number {
@@ -120,14 +170,16 @@ export function layoutCaptions(_scene: Pick<Scene, 'id'>, voice: SceneVoice, eve
       const boxes = events.filter((e) => e.start < end && e.end > start).flatMap((e) => e.boxes);
       const bottom = captionBox(lines, 'bottom');
       const top = captionBox(lines, 'top');
-      const bottomHit = boxes.reduce((a, b) => a + Math.max(overlap(b, zone), overlap(b, bottom)), 0);
-      const topHit = boxes.reduce((a, b) => a + overlap(b, top), 0);
       const cue: Cue = { start, end, lines, side: 'bottom', box: bottom };
+      // The bottom zone only triggers a look at the top; the choice compares real caption-box overlap.
+      const trigger = boxes.some((b) => overlap(b, zone) > 0 || overlap(b, bottom) > 0);
+      const bottomHit = trigger ? unionArea(boxes, bottom) : 0;
       if (bottomHit > 0) {
+        const topHit = unionArea(boxes, top);
         if (topHit === 0) Object.assign(cue, { side: 'top', box: top });
-        else if (topHit < bottomHit) {
+        else if (topHit < bottomHit)
           Object.assign(cue, { side: 'top', box: top, reason: 'both sides overlap the target; top overlaps less' });
-        } else cue.reason = 'both sides overlap the target; bottom overlaps less';
+        else cue.reason = `both sides overlap the target; ${topHit === bottomHit ? 'equal, bottom kept' : 'bottom overlaps less'}`;
       }
       cues.push(cue);
     });
