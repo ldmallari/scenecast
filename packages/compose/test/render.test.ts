@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,9 +7,56 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULTS, ensureToolchain, phoneFrame, phoneToFrame, type Brand } from '@scenecast/core';
 import { chromium } from 'playwright';
 import { clampZoom, inFramePixels, ringAlpha, sceneOpacity, srcTimeAt, timeline, zoomBoxAt, type ComposePlan } from '../src/plan.js';
-import { ffprobePath, preview, renderVideo, runRevideo } from '../src/render.js';
+import { ffprobePath, finish, preview, renderVideo, runRevideo } from '../src/render.js';
 
 const run = promisify(execFile);
+
+/** The `colr` box of the first video sample entry, parsed from the MP4's bytes (moov/trak/mdia/minf/stbl/stsd/avc1/colr). */
+function readColr(file: string): { type: string; primaries?: number; transfer?: number; matrix?: number; fullRange?: boolean } | undefined {
+  const b = fs.readFileSync(file);
+  const boxes = (start: number, end: number) => {
+    const out: { type: string; body: number; end: number }[] = [];
+    for (let o = start; o + 8 <= end; ) {
+      let size = b.readUInt32BE(o);
+      const type = b.toString('latin1', o + 4, o + 8);
+      let header = 8;
+      if (size === 1) {
+        size = Number(b.readBigUInt64BE(o + 8));
+        header = 16;
+      } else if (size === 0) size = end - o;
+      if (size < header) break;
+      out.push({ type, body: o + header, end: o + size });
+      o += size;
+    }
+    return out;
+  };
+  const find = (list: ReturnType<typeof boxes>, type: string) => list.find((x) => x.type === type);
+  const moov = find(boxes(0, b.length), 'moov');
+  if (!moov) return undefined;
+  for (const trak of boxes(moov.body, moov.end).filter((x) => x.type === 'trak')) {
+    let node: { body: number; end: number } | undefined = trak;
+    for (const t of ['mdia', 'minf', 'stbl', 'stsd']) node = node && find(boxes(node.body, node.end), t);
+    if (!node) continue;
+    // stsd: version/flags (4) + entry count (4), then sample entries
+    const entry = boxes(node.body + 8, node.end)[0];
+    if (!entry || !['avc1', 'avc3'].includes(entry.type)) continue;
+    // VisualSampleEntry: 78 bytes of fields before its child boxes
+    const colr = find(boxes(entry.body + 78, entry.end), 'colr');
+    if (!colr) return undefined;
+    const type = b.toString('latin1', colr.body, colr.body + 4);
+    if (type !== 'nclx') return { type };
+    return {
+      type,
+      primaries: b.readUInt16BE(colr.body + 4),
+      transfer: b.readUInt16BE(colr.body + 6),
+      matrix: b.readUInt16BE(colr.body + 8),
+      fullRange: (b.readUInt8(colr.body + 10) & 0x80) !== 0,
+    };
+  }
+  return undefined;
+}
+
+const NCLX_601_ON_709 = { type: 'nclx', primaries: 1, transfer: 1, matrix: 6, fullRange: false };
 const FRAME = { x: 0, y: 0, w: 1920, h: 1080 };
 const PAD = DEFAULTS.audit.zoomPadPx;
 const ASPECT = 1920 / 1080;
@@ -247,6 +294,7 @@ describe('renderVideo', () => {
     const v = info.streams[0]!;
     expect(v).toMatchObject({ codec_type: 'video', codec_name: 'h264', width: 1920, height: 1080, r_frame_rate: '30/1', pix_fmt: 'yuv420p', color_space: 'smpte170m', color_primaries: 'bt709' });
     expect(Number(v.nb_frames)).toBe(90);
+    expect(readColr(out)).toEqual(NCLX_601_ON_709); // QuickTime/Safari read this box, not the SPS
     expect(Number(info.format.duration)).toBeCloseTo(3, 1);
 
     // intro card in the brand colour at 0.3 s (top-left corner, clear of the text)
@@ -318,4 +366,62 @@ describe('renderVideo', () => {
     await expect(preview(bad, { open: false })).rejects.toThrow(/not found/);
     expect(mine().filter((d) => !before.has(d))).toEqual([]);
   });
+
+  it('tags colour in the MP4 colr box when finish() has to re-encode', async () => {
+    const src = path.join(dir, 'mpeg4.mp4');
+    await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=30:d=1', '-c:v', 'mpeg4', src]);
+    const out = path.join(dir, 'reencoded.mp4');
+    await finish(ffmpeg, 'libx264', src, out, 30);
+    const { stdout } = await run(ffprobePath(), ['-v', 'error', '-show_entries', 'stream=codec_name,nb_frames', '-of', 'json', out]);
+    expect(JSON.parse(stdout).streams[0]).toMatchObject({ codec_name: 'h264', nb_frames: '30' });
+    expect(readColr(out)).toEqual(NCLX_601_ON_709);
+  });
+
+  for (const sig of ['SIGKILL', 'SIGINT'] as const) {
+    it(`leaves no worker or browser behind when the parent dies (${sig})`, async () => {
+      const marker = `--scenecast-orphan-marker=${process.pid}-${sig}-${Date.now()}`;
+      const work = fs.mkdtempSync(path.join(dir, 'orphan-'));
+      const jobFile = path.join(work, 'job.json');
+      const job = {
+        projectFile: path.join(work, 'missing-project.ts'), // never renders: the worker would run forever
+        outDir: path.join(work, 'out'),
+        publicDir: path.join(work, 'public'),
+        root: path.resolve(__dirname, '..'),
+        ffmpeg,
+        ffprobe: ffprobePath(),
+        chrome: chromium.executablePath(),
+        chromeArgs: [marker],
+        width: 320,
+        height: 180,
+        define: {},
+      };
+      // A separate parent process (plain node can import supervise.ts) that we can kill.
+      const parentScript = path.join(work, 'parent.mjs');
+      const supervise = path.resolve(__dirname, '../src/supervise.ts');
+      fs.writeFileSync(parentScript, `import { runRevideo } from ${JSON.stringify(supervise)};
+runRevideo(${JSON.stringify(job)}, ${JSON.stringify(jobFile)}, { stallSec: 300 }).catch(() => {});
+console.log('started');
+`);
+      // CI=true turns off Vite's own exit-on-stdin-EOF, so only scenecast's handling is tested.
+      const parent = spawn(process.execPath, ['--no-warnings', parentScript], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CI: 'true' } });
+      const procs = async () =>
+        (await run('ps', ['-axo', 'pid=,command='])).stdout.split('\n').filter((l) => l.includes(marker) || l.includes(jobFile));
+      const deadline = Date.now() + 30_000;
+      let browserUp = false;
+      while (!browserUp && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 200));
+        browserUp = (await procs()).some((l) => l.includes(marker));
+      }
+      expect(browserUp).toBe(true);
+      expect((await procs()).some((l) => l.includes('render-worker.ts'))).toBe(true);
+      parent.kill(sig);
+      let left = await procs();
+      const until = Date.now() + 8_000;
+      while (left.length && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 250));
+        left = await procs();
+      }
+      expect(left).toEqual([]);
+    }, 60_000);
+  }
 });

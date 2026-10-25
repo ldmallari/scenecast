@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { DEFAULTS, ensureToolchain, phoneFrame } from '@scenecast/core';
 import { clampZoom, inFramePixels, timeline, type ComposePlan, type ResolvedPlan } from './plan.js';
-import type { RevideoJob } from './render-worker.js';
+import { runRevideo } from './supervise.js';
+export { runRevideo, STALL_SEC } from './supervise.js';
 
 // Revideo phones home by default; scenecast never sends telemetry (the editor in `preview` runs here).
 process.env.DISABLE_TELEMETRY = 'true';
@@ -18,11 +19,6 @@ const run = promisify(execFile);
 const require = createRequire(import.meta.url);
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PROJECT_FILE = path.join(PKG_DIR, 'src', 'project.ts');
-const WORKER_FILE = path.join(PKG_DIR, 'src', 'render-worker.ts');
-/** A render that reports no progress for this long is stopped. */
-export const STALL_SEC = 90;
-/** After SIGTERM, how long the worker gets to close its browser before SIGKILL. */
-const KILL_GRACE_MS = 5000;
 /** Requires modules as @revideo/ffmpeg sees them (fluent-ffmpeg, the ffprobe installer). */
 const ffmpegRequire = () => createRequire(createRequire(require.resolve('@revideo/renderer')).resolve('@revideo/ffmpeg'));
 
@@ -118,80 +114,6 @@ function chromePath(): string {
 }
 
 /**
- * Runs one Revideo render in a child process (render-worker.ts) and resolves with the file it
- * wrote. If no progress arrives for `stallSec`, the worker is sent SIGTERM (its exit hook kills
- * the browser's process group; the Vite server dies with the process), then SIGKILL after a grace
- * period, and the promise rejects.
- */
-export function runRevideo(job: RevideoJob, jobFile: string, opts: { stallSec?: number; onLog?: (line: string) => void } = {}): Promise<string> {
-  const stallSec = opts.stallSec ?? STALL_SEC;
-  fs.writeFileSync(jobFile, JSON.stringify(job));
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--no-warnings', WORKER_FILE, jobFile], {
-      cwd: PKG_DIR,
-      detached: true, // own process group, so the watchdog can signal the whole tree
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const tail: string[] = [];
-    const keep = (line: string) => {
-      opts.onLog?.(line);
-      tail.push(line);
-      if (tail.length > 30) tail.shift();
-    };
-    let done: string | undefined;
-    let error: string | undefined;
-    let stalled = false;
-    let timer: NodeJS.Timeout | undefined;
-    let killer: NodeJS.Timeout | undefined;
-    const signal = (sig: NodeJS.Signals) => {
-      try {
-        process.kill(-child.pid!, sig);
-      } catch {
-        /* already gone */
-      }
-    };
-    const kick = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        stalled = true;
-        signal('SIGTERM');
-        killer = setTimeout(() => signal('SIGKILL'), KILL_GRACE_MS);
-      }, stallSec * 1000);
-    };
-    kick();
-    // Detached, the worker would outlive us (e.g. on Ctrl-C); take it down when we exit.
-    const onParentExit = () => signal('SIGTERM');
-    process.once('exit', onParentExit);
-    let buf = '';
-    child.stdout.on('data', (d: Buffer) => {
-      buf += d.toString();
-      let nl: number;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        const m = /^@@scenecast (progress|done|error) (.*)$/.exec(line);
-        if (!m) keep(line);
-        else if (m[1] === 'progress') kick();
-        else if (m[1] === 'done') done = m[2];
-        else error = m[2];
-      }
-    });
-    child.stderr.on('data', (d: Buffer) => d.toString().split('\n').filter(Boolean).forEach(keep));
-    child.on('error', reject);
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      clearTimeout(killer);
-      process.off('exit', onParentExit);
-      if (stalled) signal('SIGKILL'); // anything left in the group
-      const context = tail.length ? `\n${tail.join('\n')}` : '';
-      if (stalled) reject(new Error(`Revideo render made no progress for ${stallSec} s and was stopped${context}`));
-      else if (code === 0 && done) resolve(done);
-      else reject(new Error(`Revideo render failed (exit ${code}): ${error ?? 'no result'}${context}`));
-    });
-  });
-}
-
-/**
  * Renders the plan to a silent 1920×1080, 30 fps, H.264 (yuv420p, +faststart) MP4.
  * Revideo runs in a child process, so renders do not share global state.
  */
@@ -232,18 +154,25 @@ export async function renderVideo(plan: ComposePlan, out: string, opts: RenderOp
  * front. Revideo's ffmpeg exporter leaves the codec to ffmpeg's MP4 default (libx264 when built
  * in); if that was not H.264 the video is re-encoded with `encoder`.
  */
-async function finish(ffmpeg: string, encoder: string, rendered: string, out: string, frames: number): Promise<void> {
+export async function finish(ffmpeg: string, encoder: string, rendered: string, out: string, frames: number): Promise<void> {
   fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   const probe = await run(ffmpeg, ['-hide_banner', '-nostdin', '-i', rendered]).catch((e: { stderr?: string }) => ({ stderr: e.stderr ?? '' }));
   const isH264 = /Video: h264\b/.test(probe.stderr);
-  const codec = isH264 ? ['-c:v', 'copy'] : ['-c:v', encoder, '-pix_fmt', 'yuv420p', '-r', String(DEFAULTS.video.fps), ...(encoder === 'libx264' ? ['-crf', '16'] : ['-b:v', '12M'])];
+  // When re-encoding, the encoder takes primaries/transfer from the frames, so set them there too.
+  const codec = isH264 ? ['-c:v', 'copy'] : [
+    '-vf', 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=smpte170m:range=tv',
+    '-c:v', encoder, '-pix_fmt', 'yuv420p', '-r', String(DEFAULTS.video.fps), ...(encoder === 'libx264' ? ['-crf', '16'] : ['-b:v', '12M']),
+  ];
   await run(ffmpeg, [
     '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', rendered,
     '-map', '0:v:0', '-an', '-frames:v', String(frames), ...codec,
     // Revideo's exporter converts its sRGB frames with ffmpeg's default BT.601 matrix and leaves the
-    // stream untagged, which players read as BT.709 for HD. Tag what it is.
+    // stream untagged, which players read as BT.709 for HD. Tag what it is, in both places players
+    // look: the SPS (bsf, read by Chrome/VLC) and the MP4 `colr` nclx box (the options below, read
+    // by QuickTime/Safari). Transfer is tagged bt709 by ruling.
     '-bsf:v', 'h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=6:video_full_range_flag=0',
-    '-movflags', '+faststart', out,
+    '-colorspace', 'smpte170m', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
+    '-movflags', '+faststart+write_colr', out,
   ]);
 }
 

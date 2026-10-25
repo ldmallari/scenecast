@@ -57,6 +57,14 @@ async function main(jobFile: string): Promise<void> {
   process.env.FFPROBE_PATH = job.ffprobe;
   // On SIGTERM exit at once: puppeteer's exit hook then kills the browser's process group.
   process.on('SIGTERM', () => process.exit(143));
+  // Writes to a dead parent's pipes must not crash us at some random point; stdin EOF below is
+  // the one, deterministic way we notice the parent is gone.
+  process.stdout.on('error', () => {});
+  process.stderr.on('error', () => {});
+  // The parent holds our stdin open; EOF means it is gone (even after SIGKILL), so stop too.
+  process.stdin.on('end', () => process.exit(129));
+  process.stdin.on('close', () => process.exit(129));
+  process.stdin.resume();
 
   const require = createRequire(import.meta.url);
   const rendererPath = require.resolve('@revideo/renderer');
