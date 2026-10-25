@@ -1,9 +1,9 @@
 // Plan types, the scene timeline and zoom clamping (Node side). Per-frame helpers the Revideo
 // page uses live in timing.ts, which stays free of Node imports.
-import { DEFAULTS, type Box, type Brand, type Cue, type Segment } from '@scenecast/core';
+import { DEFAULTS, phoneToFrame, type Box, type Brand, type Cue, type Segment } from '@scenecast/core';
 export { easeInOutCubic, ringAlpha, sceneOpacity, srcTimeAt, zoomBoxAt } from './timing.js';
 
-/** Something shown from `start` to `end` (scene seconds) around `box` (frame px). */
+/** Something shown from `start` to `end` (scene seconds) around `box` (frame px; take px on phone scenes). */
 export interface Timed {
   start: number;
   end: number;
@@ -25,14 +25,18 @@ export interface PlanScene {
   /** Retimed clips and holds; times are scene seconds. */
   segments?: Segment[];
   cues?: Cue[];
-  /** Zoom targets in frame px; clamped and padded by the renderer (see `clampZoom`). */
+  /** Zoom targets (frame px, or take px on phone scenes); clamped and padded by the renderer (see `clampZoom`). */
   zooms?: Timed[];
-  /** Highlight rings the composer draws (only those the recorder did not draw). */
+  /** Highlight rings the composer draws (only those the recorder did not draw); same pixel space as zooms. */
   rings?: Timed[];
   card?: CardSpec;
-  /** A 390×844 phone take, shown inside a CSS-drawn outline at 80% of the frame height. */
+  /**
+   * A 390×844 phone take, shown inside a CSS-drawn outline at 80% of the frame height. Its zoom,
+   * ring and nav boxes are in the take's own pixels (as the recorder logs them); the renderer maps
+   * them into the frame with core's `phoneToFrame`. Cue boxes are already in frame px (captions.ts).
+   */
   phone?: boolean;
-  /** The app's left nav in frame px, so a zoom never cuts it partly. */
+  /** The app's left nav (same pixel space as zooms), so a zoom never cuts it partly. */
   navBox?: Box;
 }
 
@@ -90,7 +94,7 @@ export function timeline(plan: ComposePlan): { scenes: SceneTiming[]; total: num
   return { scenes, total: t };
 }
 
-const isLeftNav = (nav: Box | undefined): nav is Box => !!nav && nav.x <= 0 && nav.w < NAV_MAX_W;
+const isLeftNav = (nav: Box | undefined, edge: number): nav is Box => !!nav && nav.x <= edge + EPS && nav.w < NAV_MAX_W;
 
 /** Grows `b` around its centre to the frame's aspect and at most MAX_ZOOM magnification. */
 function fitAspect(b: Box, frame: Box): Box {
@@ -115,14 +119,15 @@ const cutsNav = (b: Box, nav: Box, frame: Box) => b.x > Math.max(nav.x, frame.x)
 /**
  * The zoom region for a target `box`: padded by `pad`, grown to the frame's aspect ratio
  * (never more than 2.5× magnification), clamped inside the frame. A left nav (`navBox`
- * with x ≤ 0 and w < 320) is never cut partly: the region widens to include it or shifts
+ * with x ≤ `navEdge` and w < 320; `navEdge` is the screen's left edge: 0, or the phone
+ * screen's x on phone scenes) is never cut partly: the region widens to include it or shifts
  * right to exclude it, whichever moves its left edge less (shifting only when the target
  * itself is clear of the nav). Returns the full frame when the target needs no zoom.
  */
-export function clampZoom(box: Box, frame: Box, pad: number, navBox?: Box): Box {
+export function clampZoom(box: Box, frame: Box, pad: number, navBox?: Box, navEdge = 0): Box {
   const padded = { x: box.x - pad, y: box.y - pad, w: box.w + 2 * pad, h: box.h + 2 * pad };
   let z = clampInto(fitAspect(padded, frame), frame);
-  const nav = isLeftNav(navBox) ? navBox : undefined;
+  const nav = isLeftNav(navBox, navEdge) ? navBox : undefined;
   if (!nav || !cutsNav(z, nav, frame)) return z;
 
   const navRight = nav.x + nav.w;
@@ -140,4 +145,16 @@ export function clampZoom(box: Box, frame: Box, pad: number, navBox?: Box): Box 
     if (!cutsNav(shifted, nav, frame) && shifted.x <= box.x + EPS) return shifted;
   }
   return widen();
+}
+
+/** The scene with its zoom, ring and nav boxes in frame px: phone-take boxes go through `phoneToFrame`. */
+export function inFramePixels(scene: PlanScene): PlanScene {
+  if (!scene.phone) return scene;
+  const map = (t: Timed): Timed => ({ ...t, box: phoneToFrame(t.box) });
+  return {
+    ...scene,
+    zooms: scene.zooms?.map(map),
+    rings: scene.rings?.map(map),
+    navBox: scene.navBox && phoneToFrame(scene.navBox),
+  };
 }

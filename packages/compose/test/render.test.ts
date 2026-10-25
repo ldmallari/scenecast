@@ -4,9 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { DEFAULTS, ensureToolchain, type Brand } from '@scenecast/core';
-import { clampZoom, ringAlpha, sceneOpacity, srcTimeAt, timeline, zoomBoxAt, type ComposePlan } from '../src/plan.js';
-import { ffprobePath, renderVideo } from '../src/render.js';
+import { DEFAULTS, ensureToolchain, phoneFrame, phoneToFrame, type Brand } from '@scenecast/core';
+import { chromium } from 'playwright';
+import { clampZoom, inFramePixels, ringAlpha, sceneOpacity, srcTimeAt, timeline, zoomBoxAt, type ComposePlan } from '../src/plan.js';
+import { ffprobePath, preview, renderVideo, runRevideo } from '../src/render.js';
 
 const run = promisify(execFile);
 const FRAME = { x: 0, y: 0, w: 1920, h: 1080 };
@@ -92,6 +93,35 @@ describe('clampZoom', () => {
   it('ignores a navBox that is not a left nav', () => {
     const target = { x: 200, y: 300, w: 300, h: 80 };
     expect(clampZoom(target, FRAME, PAD, { x: 40, y: 0, w: 240, h: 1080 })).toEqual(clampZoom(target, FRAME, PAD));
+  });
+});
+
+describe('phone scenes', () => {
+  it('maps ring, zoom and nav boxes from take px into frame px', () => {
+    const ring = { x: 20, y: 700, w: 350, h: 60 };
+    const zoom = { x: 40, y: 100, w: 200, h: 80 };
+    const nav = { x: 0, y: 0, w: 60, h: 844 };
+    const scene = inFramePixels({ kind: 'app', duration: 2, phone: true, segments: [],
+      rings: [{ start: 0, end: 1, box: ring }], zooms: [{ start: 0, end: 1, box: zoom }], navBox: nav });
+    const f = phoneFrame();
+    expect(scene.rings![0]!.box).toEqual(phoneToFrame(ring));
+    expect(scene.zooms![0]!.box).toEqual(phoneToFrame(zoom));
+    expect(scene.navBox).toEqual(phoneToFrame(nav));
+    expect(scene.rings![0]!.box.x).toBeCloseTo(f.x + 20 * f.scale, 6);
+    expect(scene.rings![0]!.box.y).toBeCloseTo(f.y + 700 * f.scale, 6);
+    expect(scene.rings![0]!.box.w).toBeCloseTo(350 * f.scale, 6);
+  });
+
+  it('leaves desktop boxes alone', () => {
+    const scene = { kind: 'app' as const, duration: 2, rings: [{ start: 0, end: 1, box: { x: 1, y: 2, w: 3, h: 4 } }] };
+    expect(inFramePixels(scene)).toBe(scene);
+  });
+
+  it('honours a phone nav at the phone screen edge', () => {
+    const f = phoneFrame();
+    const nav = phoneToFrame({ x: 0, y: 0, w: 60, h: 844 });
+    const z = clampZoom(phoneToFrame({ x: 50, y: 400, w: 40, h: 30 }), FRAME, PAD, nav, f.x);
+    expect(z.x > nav.x + 1e-6 && z.x < nav.x + nav.w - 1e-6).toBe(false);
   });
 });
 
@@ -211,11 +241,11 @@ describe('renderVideo', () => {
     expect(res.duration).toBeCloseTo(3, 6);
 
     const { stdout } = await run(ffprobePath(), ['-v', 'error', '-show_entries',
-      'stream=codec_type,codec_name,width,height,r_frame_rate,pix_fmt,nb_frames:format=duration', '-of', 'json', out]);
+      'stream=codec_type,codec_name,width,height,r_frame_rate,pix_fmt,nb_frames,color_space,color_primaries:format=duration', '-of', 'json', out]);
     const info = JSON.parse(stdout) as { streams: Record<string, string | number>[]; format: { duration: string } };
     expect(info.streams).toHaveLength(1); // silent: no audio track
     const v = info.streams[0]!;
-    expect(v).toMatchObject({ codec_type: 'video', codec_name: 'h264', width: 1920, height: 1080, r_frame_rate: '30/1', pix_fmt: 'yuv420p' });
+    expect(v).toMatchObject({ codec_type: 'video', codec_name: 'h264', width: 1920, height: 1080, r_frame_rate: '30/1', pix_fmt: 'yuv420p', color_space: 'smpte170m', color_primaries: 'bt709' });
     expect(Number(v.nb_frames)).toBe(90);
     expect(Number(info.format.duration)).toBeCloseTo(3, 1);
 
@@ -226,4 +256,66 @@ describe('renderVideo', () => {
     const cap = await pixel(out, 2.0, 668, 924);
     expect(Math.max(...cap)).toBeLessThan(90);
   }, 180_000);
+
+  it('shows the recording on frame 0 of an app scene (not a blank frame)', async () => {
+    const plan: ComposePlan = {
+      brand,
+      scenes: [{ kind: 'app', duration: 1, segments: [{ src: fixture, srcIn: 0.6, srcOut: 1.6, outStart: 0 }] }],
+    };
+    const out = path.join(dir, 'frame0.mp4');
+    const logs: string[] = [];
+    await renderVideo(plan, out, { onLog: (l) => logs.push(l) });
+    expect(logs.filter((l) => /asynchronous property/.test(l))).toEqual([]);
+    const ref = path.join(dir, 'ref.png');
+    await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-ss', '0.6', '-i', fixture, '-frames:v', '1', ref]);
+    // testsrc2's static colour bars; the background would be black (diff ≥ 250)
+    for (const [x, y] of [[100, 300], [500, 300], [900, 300], [1300, 300], [1700, 300], [300, 900]] as const) {
+      const got = await pixel(out, 0, x, y);
+      const want = await pixel(ref, 0, x, y);
+      const diff = Math.max(...got.map((c, i) => Math.abs(c - want[i]!)));
+      expect(diff, `patch at ${x},${y}: got ${got} want ${want}`).toBeLessThanOrEqual(8);
+    }
+  }, 180_000);
+
+  it('stops a stalled render and its browser', async () => {
+    const marker = `--scenecast-test-marker=${process.pid}-${Date.now()}`;
+    const work = fs.mkdtempSync(path.join(dir, 'stall-'));
+    // A project that cannot be imported makes Revideo wait forever for a page that never renders.
+    const job = {
+      projectFile: path.join(work, 'missing-project.ts'),
+      outDir: path.join(work, 'out'),
+      publicDir: path.join(work, 'public'),
+      root: path.resolve(__dirname, '..'),
+      ffmpeg,
+      ffprobe: ffprobePath(),
+      chrome: chromium.executablePath(),
+      chromeArgs: [marker],
+      width: 320,
+      height: 180,
+      define: {},
+    };
+    const browserProcs = async () =>
+      (await run('ps', ['-axo', 'pid=,command='])).stdout.split('\n').filter((l) => l.includes(marker));
+    const t0 = Date.now();
+    let settled = false;
+    const rendering = runRevideo(job, path.join(work, 'job.json'), { stallSec: 4 }).finally(() => (settled = true));
+    let browserSeen = false;
+    while (!settled && !browserSeen) {
+      browserSeen = (await browserProcs()).length > 0;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    await expect(rendering).rejects.toThrow(/no progress for 4 s/);
+    expect(browserSeen).toBe(true); // the browser really was running when the watchdog fired
+    expect(Date.now() - t0).toBeLessThan(30_000);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(await browserProcs()).toEqual([]);
+  }, 60_000);
+
+  it('preview removes its temp folder when it fails', async () => {
+    const mine = () => fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('scenecast-preview-'));
+    const before = new Set(mine());
+    const bad: ComposePlan = { brand, scenes: [{ kind: 'app', duration: 1, segments: [{ src: path.join(dir, 'nope.webm'), srcIn: 0, srcOut: 1, outStart: 0 }] }] };
+    await expect(preview(bad, { open: false })).rejects.toThrow(/not found/);
+    expect(mine().filter((d) => !before.has(d))).toEqual([]);
+  });
 });
