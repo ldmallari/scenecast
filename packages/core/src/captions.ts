@@ -85,8 +85,7 @@ export interface TimedBox {
  * Caption events on screen, for a scene with zooms. `times` is each take event's output time (where
  * retime put it); `zooms` are the plan's zooms (unclamped, as the composer gets them). Each take event's
  * boxes (target, ring, cursor, panels; phone boxes mapped into the frame once) stay active until the
- * next event. each take event's boxes (target, ring, cursor, panels; phone boxes mapped
- * into the frame once) stay active until the next event. Every window is split where a zoom starts,
+ * next event. Every window is split where a zoom starts,
  * finishes easing, ends or finishes easing out, and each piece carries the boxes as they look on
  * screen in every view of that piece, so a caption clear of these is clear of what the audit checks.
  */
