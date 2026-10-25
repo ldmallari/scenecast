@@ -4,7 +4,7 @@ import { ensureToolchain } from './toolchain.js';
 export interface FlashScan {
   /** Presentation time of the first magenta frame. */
   start: number;
-  /** Presentation time of the first non-magenta frame after the flash (or the last frame time if the clip ends magenta). */
+  /** Presentation time of the first non-magenta frame after the flash. */
   end: number;
 }
 
@@ -45,7 +45,7 @@ export async function scanFlash(file: string): Promise<FlashScan> {
     if (!all && start >= 0) return { start: times[start]!, end: times[i]! };
   }
   if (start < 0) throw new Error(`no flash marker found in ${file}`);
-  return { start: times[start]!, end: times[frames - 1]! };
+  throw new Error(`flash marker never ends in ${file}`);
 }
 
 /** Presentation time (seconds) of the first magenta frame. */

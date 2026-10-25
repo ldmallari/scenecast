@@ -1,9 +1,12 @@
 import { DEFAULTS } from './scene/schema.js';
-import { DEFAULT_TRAVEL_SEC, type Take } from './record/record.js';
+import { DEFAULT_TRAVEL_SEC, travelSecFor, type Take } from './record/record.js';
 import type { ScheduledStep } from './schedule.js';
 import type { SceneVoice } from './voice.js';
 
-/** One piece of the retimed scene. A hold has `srcIn === srcOut` (the held frame time) and `hold` seconds. */
+/**
+ * One piece of the retimed scene. A hold has `srcIn === srcOut` (the held frame time) and `hold` seconds.
+ * Renderers place segments at outStart; lengths are whole output frames.
+ */
 export interface Segment {
   src: string;
   srcIn: number;
@@ -13,17 +16,21 @@ export interface Segment {
 }
 
 export interface RetimeOpts {
-  /** First magenta frame time (from detectFlash). Defaults to `take.flashAt`, which is only an estimate. */
-  flashTime?: number;
-  /** First non-magenta frame time after the flash. Defaults to flashTime + 0.1 (the flash is held at least 100 ms). */
-  flashEnd?: number;
-  /** Length of the source file in seconds; past it the last frame is held. Default: unbounded. */
+  /** Scene id, for error messages. */
+  sceneId: string;
+  /** First magenta frame time (from scanFlash); `take.flashAt` is only an estimate. */
+  flashTime: number;
+  /** First non-magenta frame time after the flash (from scanFlash). */
+  flashEnd: number;
+  /** Length of the source file in seconds; past it the last decodable frame is held. Default: unbounded. */
   srcDuration?: number;
   breathSec?: number;
+  fps?: number;
 }
 
+/** Frame period of the webm the recorder produces; the last decodable frame is this far before the end. */
+const SRC_FRAME = 1 / 25;
 const EPS = 1e-6;
-const POINTER = new Set(['click', 'hover', 'type']);
 /** Never cut or freeze inside this long a stretch before an action: the cursor glide plus a margin. */
 const PROTECT_BEFORE = DEFAULT_TRAVEL_SEC + 0.15;
 /** Never cut this soon after the previous event, so its visible result plays out. */
@@ -58,26 +65,45 @@ function cutRanges(p: number, n: number, excess: number, label: string): Range[]
   return cuts.sort((x, y) => x[0] - y[0]);
 }
 
+/** Snaps segment starts to the output frame grid; each length is the gap to the next snapped start. */
+function quantise(segs: Segment[], total: number, fps: number): Segment[] {
+  const q = (t: number) => Math.round(t * fps) / fps;
+  const out: Segment[] = [];
+  segs.forEach((g, i) => {
+    const start = q(g.outStart);
+    const end = i + 1 < segs.length ? q(segs[i + 1]!.outStart) : q(total);
+    const len = end - start;
+    if (len < 0.5 / fps) return;
+    out.push(g.hold !== undefined ? { ...g, outStart: start, hold: len } : { ...g, outStart: start, srcOut: g.srcIn + len });
+  });
+  return out;
+}
+
 /**
  * Maps the take onto the voice clock at 1:1 speed: between consecutive events, late idle time is trimmed
  * from a quiet window (after the previous result, before the cursor glide); early arrivals hold the frame before the glide.
  */
-export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice, opts: RetimeOpts = {}): Segment[] {
-  const flash = opts.flashTime ?? take.flashAt;
-  const srcStart = opts.flashEnd ?? flash + 0.1;
+export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice, opts: RetimeOpts): Segment[] {
+  const { flashTime: flash, flashEnd: srcStart, sceneId } = opts;
+  const fps = opts.fps ?? DEFAULTS.video.fps;
   const total = voice.duration + (opts.breathSec ?? DEFAULTS.video.breathSec);
   const srcEnd = opts.srcDuration ?? Infinity;
   const byIndex = new Map(scheduled.map((s) => [s.index, s]));
 
   const anchors = take.events.map((e) => {
     const sch = byIndex.get(e.index);
-    if (!sch) throw new Error(`retime: take event ${e.index} has no scheduled step`);
-    const out = sch.startAt + (POINTER.has(e.kind) ? DEFAULT_TRAVEL_SEC : 0);
-    return { out, src: flash + e.at };
+    if (!sch) throw new Error(`scene "${sceneId}": take event ${e.index} has no scheduled step`);
+    return { out: sch.startAt + travelSecFor(sch.step), src: flash + e.at };
   });
-  for (let i = 1; i < anchors.length; i++)
-    if (anchors[i]!.out < anchors[i - 1]!.out - EPS)
-      throw new Error(`retime: event ${take.events[i]!.index} is scheduled before the previous event`);
+  anchors.forEach((a, i) => {
+    const idx = take.events[i]!.index;
+    if (a.src < srcStart - EPS) throw new Error(`scene "${sceneId}": action ${idx} happened before the take started`);
+    const prev = anchors[i - 1];
+    if (prev && a.src < prev.src - EPS && a.out >= prev.out - EPS)
+      throw new Error(`scene "${sceneId}": take events out of order at action ${idx}`);
+    if (prev && a.out < prev.out - EPS)
+      throw new Error(`scene "${sceneId}": action ${idx} is scheduled before the previous action`);
+  });
 
   const segs: Segment[] = [];
   let outT = 0;
@@ -88,7 +114,7 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
     const got = Math.max(0, end - from);
     if (got > EPS) segs.push({ src: take.file, srcIn: from, srcOut: from + got, outStart: outT });
     outT += got;
-    if (len - got > EPS) hold(srcEnd, len - got);
+    if (len - got > EPS) hold(srcEnd - SRC_FRAME, len - got);
   };
   const hold = (at: number, len: number) => {
     if (len <= EPS) return;
@@ -116,5 +142,5 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
     srcT = Math.max(srcT, a.src);
   });
   play(srcT, total - outT);
-  return segs;
+  return quantise(segs, total, fps);
 }
