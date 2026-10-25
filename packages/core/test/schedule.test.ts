@@ -55,4 +55,35 @@ describe('schedule', () => {
     expect(s!.startAt).toBe(0);
     expect(s!.prePosition).toBe(true);
   });
+
+  it('throws when a cue is not in the voice timeline', () => {
+    expect(() => schedule(scene([{ do: 'click', cue: 'banana' }]), voice, opts)).toThrow(
+      'scene "s" step 0: cue "banana" not found in the voice timeline (occurrence 1)',
+    );
+  });
+
+  it('throws when occ exceeds the matches, and for an empty-normalising cue', () => {
+    expect(() => schedule(scene([{ do: 'zoom', cue: 'save', occ: 3 }]), voice, opts)).toThrow(
+      'cue "save" not found in the voice timeline (occurrence 3)',
+    );
+    expect(() => schedule(scene([{ do: 'zoom', cue: '...' }]), voice, opts)).toThrow(/not found/);
+  });
+
+  it('multi-word cue lands on its first word', () => {
+    const n = 'Please tick the box now.';
+    const v: SceneVoice = {
+      duration: 3,
+      phrases: [],
+      words: n.split(' ').map((w, k) => ({ w, start: k * 0.5, end: k * 0.5 + 0.4 })),
+    };
+    const sc = { ...scene([{ do: 'zoom', cue: 'tick the box' }]), narration: n } as Scene;
+    expect(schedule(sc, v, opts)[0]!.cueTime).toBe(0.5);
+  });
+
+  it('treats NaN or negative travel as 0', () => {
+    for (const t of [NaN, -1]) {
+      const [s] = schedule(scene([{ do: 'click', cue: 'then' }]), voice, { leadSec: 0.3, travelSec: () => t });
+      expect(s!.startAt).toBe(2.0);
+    }
+  });
 });

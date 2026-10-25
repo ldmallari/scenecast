@@ -26,12 +26,13 @@ function norm(w: string): string {
 /** Start time of the first word of the nth occurrence of `cue` in the word list, or null. */
 function cueStart(voice: SceneVoice, cue: string, occ: number): number | null {
   const target = cue.trim().split(/\s+/).map(norm);
+  if (target.some((t) => t === '')) return null;
   const words = voice.words.map((x) => norm(x.w));
   let seen = 0;
   for (let i = 0; i + target.length <= words.length; i++) {
-    if (target.every((t, j) => words[i + j] === t) && ++seen === occ) return voice.words[i]!.start;
-    // non-overlapping, like countCue: after a match, continue past it
-    if (seen > 0 && target.every((t, j) => words[i + j] === t)) i += target.length - 1;
+    if (!target.every((t, j) => words[i + j] === t)) continue;
+    if (++seen === occ) return voice.words[i]!.start;
+    i += target.length - 1; // non-overlapping, like countCue
   }
   return null;
 }
@@ -40,14 +41,20 @@ function cueStart(voice: SceneVoice, cue: string, occ: number): number | null {
 export function schedule(scene: Scene, voice: SceneVoice, opts: ScheduleOpts): ScheduledStep[] {
   const out: ScheduledStep[] = [];
   scene.steps.forEach((step, index) => {
-    const cue = step.cue === undefined ? null : cueStart(voice, step.cue, step.occ ?? 1);
+    const occ = step.occ ?? 1;
+    const cue = step.cue === undefined ? null : cueStart(voice, step.cue, occ);
+    if (step.cue !== undefined && cue === null)
+      throw new Error(
+        `scene "${scene.id}" step ${index}: cue "${step.cue}" not found in the voice timeline (occurrence ${occ})`,
+      );
     const prev = out[index - 1];
     if (cue === null) {
       out.push({ index, step, cueTime: null, startAt: prev ? prev.startAt + (prev.step.ms ?? 0) / 1000 : 0 });
       return;
     }
     const target = cue + (step.offset ?? 0);
-    const raw = POINTER.has(step.do) ? target - opts.travelSec(step) : target;
+    const travel = opts.travelSec(step);
+    const raw = POINTER.has(step.do) ? target - (Number.isFinite(travel) && travel > 0 ? travel : 0) : target;
     const item: ScheduledStep = { index, step, cueTime: cue, startAt: Math.max(0, raw) };
     if (raw < 0 && POINTER.has(step.do)) item.prePosition = true;
     out.push(item);
