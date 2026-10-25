@@ -33,8 +33,10 @@ const SHORT_SETTLE_MS = 1500;
 /** Round trips used to measure the page clock against Node's. */
 const CLOCK_SAMPLES = 5;
 const TYPE_DELAY_MS = 35;
-const RING_HOLD_MS = 1200;
-const RING_FADE_MS = 150;
+/** How long the recorder's ring holds at full strength when the step sets no `ms`. */
+export const RING_HOLD_MS = 1200;
+/** The recorder's ring fades in (and out) over this long; it is at full strength after it. */
+export const RING_FADE_MS = 150;
 /** Keep recording this long after the last step so its result is on screen. */
 const TAIL_SEC = 1;
 

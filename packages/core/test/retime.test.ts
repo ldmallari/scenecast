@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { detectFlash } from '../src/ffmpeg.js';
 import { DEFAULT_TRAVEL_SEC, type Take, type TakeEvent } from '../src/record/record.js';
-import { retime, type Segment } from '../src/retime.js';
+import { outputTimeOf, retime, type Segment } from '../src/retime.js';
 import type { ScheduledStep } from '../src/schedule.js';
 import { ensureToolchain } from '../src/toolchain.js';
 import type { SceneVoice } from '../src/voice.js';
@@ -176,4 +176,20 @@ describe('detectFlash', () => {
     execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=160x90:r=25:d=1', '-pix_fmt', 'yuv420p', none]);
     await expect(detectFlash(none)).rejects.toThrow(`no flash marker found in ${none}`);
   }, 30_000);
+});
+
+describe('outputTimeOf', () => {
+  const segs = [
+    { src: 'a', srcIn: 0.2, srcOut: 2.2, outStart: 0 },
+    { src: 'a', srcIn: 2.2, srcOut: 2.2, outStart: 2.0, hold: 0.5 },
+    { src: 'a', srcIn: 3.0, srcOut: 5.0, outStart: 2.5 },
+  ];
+  it('inverts the segments: clips map 1:1, cut source time maps to nothing', () => {
+    expect(outputTimeOf(segs, 1.2)).toBeCloseTo(1.0, 9);
+    expect(outputTimeOf(segs, 3.0)).toBeCloseTo(2.5, 9);
+    expect(outputTimeOf(segs, 4.5)).toBeCloseTo(4.0, 9);
+    expect(outputTimeOf(segs, 2.6)).toBeNull();
+    // Up to a frame past a clip's end (frame-grid rounding) lands on the clip's end.
+    expect(outputTimeOf(segs, 2.21)).toBeCloseTo(2.0, 9);
+  });
 });

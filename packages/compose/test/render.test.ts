@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { DEFAULTS, ensureToolchain, phoneFrame, phoneToFrame, type Brand } from '@scenecast/core';
+import { DEFAULTS, ensureToolchain, phoneFrame, phoneToFrame, type AuditPlan, type Brand } from '@scenecast/core';
 import { chromium } from 'playwright';
 import { clampZoom, inFramePixels, ringAlpha, sceneOpacity, srcTimeAt, timeline, zoomBoxAt, type ComposePlan } from '../src/plan.js';
 import { ffprobePath, finish, preview, renderVideo, runRevideo } from '../src/render.js';
@@ -68,6 +68,11 @@ const contains = (outer: { x: number; y: number; w: number; h: number }, inner: 
   inner.x + inner.w <= outer.x + outer.w + 1e-6 && inner.y + inner.h <= outer.y + outer.h + 1e-6;
 
 describe('clampZoom', () => {
+  it('a ComposePlan is what the audit reads', () => {
+    const asAudit = (p: ComposePlan): AuditPlan => p; // compile-time: the audit reads the composer's plan as is
+    expect(asAudit({ brand: {} as Brand, scenes: [] }).scenes).toEqual([]);
+  });
+
   it('zoom box clamped and padded', () => {
     const target = { x: 800, y: 400, w: 400, h: 200 };
     const z = clampZoom(target, FRAME, PAD);

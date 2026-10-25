@@ -144,3 +144,16 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
   play(srcT, total - outT);
   return quantise(segs, total, fps);
 }
+
+/**
+ * Where source time `src` of the take shows on the scene's output clock, by the retimed segments: the
+ * inverse of `retime`. Null when that moment was cut out. A source time up to one output frame past a
+ * clip's end (frame-grid rounding) still maps to that clip.
+ */
+export function outputTimeOf(segments: Segment[], src: number, fps: number = DEFAULTS.video.fps): number | null {
+  const clips = segments.filter((g) => g.hold === undefined);
+  const inside = clips.find((g) => src >= g.srcIn - EPS && src < g.srcOut - EPS);
+  if (inside) return inside.outStart + (src - inside.srcIn);
+  const near = clips.filter((g) => src >= g.srcIn - EPS && src <= g.srcOut + 1 / fps + EPS).at(-1);
+  return near ? near.outStart + (near.srcOut - near.srcIn) : null;
+}
