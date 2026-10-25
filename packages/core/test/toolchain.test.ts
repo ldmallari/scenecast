@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ensureToolchain, findUv } from '../src/toolchain.js';
+import { ensureToolchain, findUv, uvEnv } from '../src/toolchain.js';
 
 function tmpCache(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-cache-'));
@@ -29,7 +29,7 @@ describe('toolchain', () => {
     const out = execFileSync(
       uv,
       ['run', '--project', py, 'python', '-c', 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())'],
-      { encoding: 'utf8' },
+      { encoding: 'utf8', env: uvEnv() },
     ).trim();
     expect(fs.existsSync(out)).toBe(true);
   }, 300_000);

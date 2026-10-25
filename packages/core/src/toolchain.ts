@@ -95,7 +95,7 @@ function installUv(): string {
 }
 
 /** uv wants ~/.local/share/uv for managed Pythons; if that is not writable, keep them in the scenecast cache. */
-function uvEnv(): NodeJS.ProcessEnv {
+export function uvEnv(): NodeJS.ProcessEnv {
   if (process.env.UV_PYTHON_INSTALL_DIR) return process.env;
   const share = path.join(os.homedir(), '.local', 'share');
   try {
