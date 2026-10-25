@@ -1,0 +1,23 @@
+{
+  "name": "@scenecast/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "scenecast": "bin/scenecast.js"
+  },
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@scenecast/compose": "workspace:*",
+    "@scenecast/core": "workspace:*",
+    "playwright": "^1.64.1"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  }
+}

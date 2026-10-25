@@ -1,0 +1,86 @@
+# The example video: a short tour of Demo Co, the invented app in this folder.
+#
+#   node server.mjs                                  # serves the app at http://127.0.0.1:4310
+#   scenecast render video.yaml                      # seeds, signs in, records, composes and audits
+#
+# seed.mjs fills the worklist through the app's API; the login steps sign in before each signed-in
+# scene, so the render runs unattended.
+id: demo
+title: A quick tour of Demo Co
+output: demo
+brand:
+  primary: "#1F3A5F"
+  accent: "#F5C518"
+  font: Inter
+  introTitle: A quick tour of Demo Co
+  introSubtitle: Sign in, check your worklist and sign a form
+app:
+  baseUrl: http://127.0.0.1:4310
+  seed: ./seed.mjs
+  login:
+    - { do: goto, text: /login }
+    - { do: type, sel: "#email", text: sam@example.com }
+    - { do: type, sel: "#password", text: demo-password }
+    - { do: click, sel: "#signin" }
+audit:
+  allowList: [Demo Co]
+
+scenes:
+  - id: sign-in
+    kind: app
+    title: Sign in
+    route: /login
+    signedOut: true
+    narration: >-
+      Welcome to Demo Co. To sign in, type your work email, then your password, and press Sign in.
+    steps:
+      - { cue: email, do: type, sel: "#email", text: sam@example.com }
+      - { cue: password, do: type, sel: "#password", text: demo-password }
+      - { cue: Sign in, occ: 2, do: click, sel: "#signin" }
+
+  - id: worklist
+    kind: app
+    title: Your worklist
+    route: /dashboard
+    narration: >-
+      Your dashboard opens on the worklist, with everything that needs you today.
+      Each item shows when it is due, so the most urgent work comes first.
+    steps:
+      - { cue: worklist, do: ring, sel: ".worklist", pad: 10 }
+      - { cue: due, do: zoom, sel: ".worklist li:first-child", pad: 16, ms: 2500 }
+
+  - id: sign-form
+    kind: app
+    title: Sign a form
+    route: /form
+    narration: >-
+      To sign the work agreement, tick the box, type your full name, and press Sign.
+      A green note confirms that it is signed.
+    steps:
+      - { cue: tick, do: click, sel: "#agree" }
+      - { cue: full name, do: type, sel: "#name", text: Sam Rivera }
+      - { cue: Sign, occ: 2, do: click, sel: "#sign" }
+      - { cue: confirms, do: ring, sel: "#signed", pad: 8 }
+
+  - id: account-menu
+    kind: app
+    title: The account menu
+    route: /dashboard
+    narration: >-
+      Your account menu sits at the top right, so open it to find your profile, your settings, and sign out.
+    steps:
+      - { cue: open, do: click, sel: "#menu-button" }
+      - { cue: profile, do: ring, sel: "#account-menu", pad: 6 }
+
+  - id: phone
+    kind: app
+    title: On your phone
+    route: /dashboard
+    viewport: phone
+    narration: >-
+      On a phone, the same worklist fits the narrow screen.
+      Tap Requests to see everything you have asked for.
+    steps:
+      - { cue: worklist, do: ring, sel: ".worklist", pad: 6 }
+      - { cue: Requests, do: click, sel: ".nav a[href='/requests']" }
+      - { cue: everything, do: ring, sel: "table", pad: 6 }

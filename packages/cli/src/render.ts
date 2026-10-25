@@ -1,0 +1,288 @@
+// The render pipeline: load → seed → voice → schedule → record → retime → captions → compose → mix →
+// audit, every expensive stage behind the stage cache (work/<id>/<stage>/).
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import {
+  audit,
+  buildVoice,
+  DEFAULTS,
+  ensureToolchain,
+  loadScene,
+  mix,
+  recordScene,
+  runFfmpeg,
+  runPy,
+  scanFlash,
+  schedule,
+  splitPhrases,
+  travelSecFor,
+  type AuditCounts,
+  type Scene,
+  type SceneVoice,
+  type ScheduledStep,
+  type VideoSpec,
+} from '@scenecast/core';
+import { renderVideo } from '@scenecast/compose';
+import { buildVoiceTrack } from './audio.js';
+import { buildVideo, chaptersTxt, finalSrt, type BuiltVideo, type Recorded, type SceneInput } from './build.js';
+import { StageCache } from './cache.js';
+
+export interface RenderOptions {
+  /** Render just this scene (no intro or outro card); the files get a `-<sceneId>` suffix. */
+  only?: string;
+  /** Run the audit (default true). */
+  audit?: boolean;
+  /** Keep every intermediate file (Revideo's work folder, the recorder's session file). */
+  keepWork?: boolean;
+  /** Ignore the cache and redo every stage (for example after the app itself changed). */
+  fresh?: boolean;
+  /** Where the outputs go. Default `out`. */
+  outDir?: string;
+  /** Where the work folders go (work/<id>). Default `work`. */
+  workRoot?: string;
+  log?: (msg: string) => void;
+}
+
+export interface RenderResult {
+  /** The audit verdict: 0 on PASS (or with the audit off), 1 on any FAIL. */
+  exitCode: number;
+  video: string;
+  /** Seconds. */
+  duration: number;
+  /** Wall-clock seconds of the whole render, and of each stage that ran (cached ones are absent). */
+  wallSec: number;
+  stageSec: Record<string, number>;
+  audit?: { pass: boolean; counts: AuditCounts; dir: string };
+}
+
+/** Everything up to (not including) compose: the plan and what it was built from. */
+export interface Prepared {
+  spec: VideoSpec;
+  video: BuiltVideo;
+  cache: StageCache;
+  workDir: string;
+  /** Output base name (`<output>` or `<output>-<only>`). */
+  name: string;
+}
+
+const secs = (since: number) => (performance.now() - since) / 1000;
+
+/** Seconds of video in a media file, from a stream copy (the recorder's webm has no duration header). */
+async function mediaDuration(file: string): Promise<number> {
+  const { ffmpeg } = await ensureToolchain({ offline: true }).catch(() => ensureToolchain());
+  const { err } = await runFfmpeg(ffmpeg, ['-hide_banner', '-nostdin', '-stats', '-i', file, '-map', '0:v:0', '-c', 'copy', '-f', 'null', '-']);
+  const times = [...err.matchAll(/time=\s*(\d+):(\d+):([\d.]+)/g)];
+  const last = times.at(-1);
+  if (!last) throw new Error(`could not read the length of ${file}`);
+  return Number(last[1]) * 3600 + Number(last[2]) * 60 + Number(last[3]);
+}
+
+/**
+ * Runs `app.seed` once before recording. A script path runs with node (.js/.mjs/.cjs/.ts) or sh (.sh);
+ * anything else is a shell command. It runs in the scene file's folder with SCENECAST_BASE_URL set.
+ */
+export function runSeed(seed: string, cwd: string, baseUrl: string): Promise<void> {
+  const ext = path.extname(seed).toLowerCase();
+  const file = path.isAbsolute(seed) && fs.existsSync(seed);
+  const [cmd, args] = !file
+    ? ['sh', ['-c', seed]]
+    : ['.js', '.mjs', '.cjs', '.ts'].includes(ext)
+      ? [process.execPath, [seed]]
+      : ext === '.sh'
+        ? ['sh', [seed]]
+        : [seed, []];
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd as string, args as string[], { cwd, stdio: 'inherit', env: { ...process.env, SCENECAST_BASE_URL: baseUrl } });
+    child.on('error', reject);
+    child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`seed "${seed}" exited with code ${code}`))));
+  });
+}
+
+/** Voices every scene, one cache entry per scene; the scenes that changed are synthesised in one batch. */
+async function voiceStage(spec: VideoSpec, scenes: Scene[], cache: StageCache, log: (m: string) => void): Promise<Map<string, { wav: string; voice: SceneVoice }>> {
+  const out = new Map<string, { wav: string; voice: SceneVoice }>();
+  const misses: { scene: Scene; key: string }[] = [];
+  for (const scene of scenes) {
+    const input = { voice: spec.voice, phrases: splitPhrases(scene.narration), fake: process.env.SCENECAST_FAKE_TTS === '1' };
+    const key = await cache.key(`voice/${scene.id}`, input);
+    const hit = await cache.lookup<{ wav: string; voice: SceneVoice }>(`voice/${scene.id}`, key);
+    if (hit) out.set(scene.id, hit);
+    else misses.push({ scene, key });
+  }
+  if (!misses.length) {
+    log('voice: cached');
+    return out;
+  }
+  const started = performance.now();
+  const batch = cache.dir('voice/.batch');
+  fs.rmSync(batch, { recursive: true, force: true });
+  try {
+    const timeline = await buildVoice({ ...spec, scenes: misses.map((m) => m.scene) }, batch);
+    for (const { scene, key } of misses) {
+      const dir = cache.dir(`voice/${scene.id}`);
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir, { recursive: true });
+      const wav = path.join(dir, 'voice.wav');
+      fs.copyFileSync(path.join(batch, 'voice', `${scene.id}.wav`), wav);
+      const result = { wav, voice: timeline.scenes[scene.id]! };
+      await cache.save(`voice/${scene.id}`, key, result, [wav]);
+      out.set(scene.id, result);
+    }
+  } finally {
+    fs.rmSync(batch, { recursive: true, force: true });
+  }
+  cache.timings['voice'] = secs(started);
+  log(`voice: ${misses.map((m) => m.scene.id).join(', ')} done in ${secs(started).toFixed(1)} s`);
+  return out;
+}
+
+/** Load, seed, voice, schedule, record, retime and captions: the plan, ready to compose. */
+export async function prepare(file: string, opts: RenderOptions = {}): Promise<Prepared> {
+  const log = opts.log ?? ((m: string) => console.log(`scenecast: ${m}`));
+  const spec = await loadScene(file);
+  const sceneDir = path.dirname(path.resolve(file));
+  const scenes = opts.only ? spec.scenes.filter((s) => s.id === opts.only) : spec.scenes;
+  if (!scenes.length) throw new Error(`no scene "${opts.only}" in ${file} (scenes: ${spec.scenes.map((s) => s.id).join(', ')})`);
+  const workDir = path.resolve(opts.workRoot ?? 'work', spec.id);
+  const cache = new StageCache(workDir, { fresh: opts.fresh, log });
+
+  const voices = await voiceStage(spec, scenes, cache, log);
+
+  let seeded = false;
+  const inputs: SceneInput[] = [];
+  for (const scene of scenes) {
+    const { voice } = voices.get(scene.id)!;
+    if (scene.kind === 'title') {
+      inputs.push({ scene, voice });
+      continue;
+    }
+    const scheduled: ScheduledStep[] = schedule(scene, voice, { leadSec: DEFAULTS.video.leadSec, travelSec: travelSecFor });
+    const app = spec.app;
+    const seedFile = app.seed && path.isAbsolute(app.seed) && fs.existsSync(app.seed) ? app.seed : undefined;
+    const { result: recorded } = await cache.run<Recorded>({
+      name: `record/${scene.id}`,
+      input: { scene, scheduled, app },
+      files: [app.storageState, app.loginHook, seedFile].filter((f): f is string => !!f && fs.existsSync(f)),
+      run: async (dir) => {
+        if (app.seed && !seeded) {
+          log(`seed: ${app.seed}`);
+          await runSeed(app.seed, sceneDir, app.baseUrl);
+          seeded = true;
+        }
+        const take = await recordScene(scene, scheduled, app, dir);
+        // The signed-in session the recorder saved holds credentials: never leave it behind.
+        if (!opts.keepWork) fs.rmSync(path.join(dir, '.session.json'), { force: true });
+        const flash = await scanFlash(take.file);
+        return { take, flashTime: flash.start, flashEnd: flash.end, srcDuration: await mediaDuration(take.file) };
+      },
+      outputs: (r) => [r.take.file],
+    });
+    inputs.push({ scene, voice, scheduled, recorded });
+  }
+
+  const video = buildVideo(spec, inputs, { cards: !opts.only });
+  const name = opts.only ? `${spec.output}-${opts.only}` : spec.output;
+  return { spec, video, cache, workDir, name };
+}
+
+/**
+ * Renders the video. Revideo keeps process-wide state (environment, patched modules), so a process
+ * renders (or previews) at most once: the CLI runs one command per process.
+ */
+export async function render(file: string, opts: RenderOptions = {}): Promise<RenderResult> {
+  const started = performance.now();
+  const log = opts.log ?? ((m: string) => console.log(`scenecast: ${m}`));
+  const { spec, video, cache, workDir, name } = await prepare(file, { ...opts, log });
+  const outDir = path.resolve(opts.outDir ?? 'out');
+  fs.mkdirSync(outDir, { recursive: true });
+  const { plan, total } = video;
+
+  const sources = [...new Set(plan.scenes.flatMap((s) => (s.segments ?? []).map((g) => g.src)))];
+  const { result: composed } = await cache.run({
+    name: 'compose',
+    input: { plan },
+    files: [...sources, ...(spec.brand.logo ? [spec.brand.logo] : [])],
+    run: async (dir) =>
+      renderVideo(plan, path.join(dir, 'video.mp4'), opts.keepWork ? { workDir: path.join(dir, 'render') } : {}),
+    outputs: (r) => [r.file],
+  });
+
+  const music = spec.brand.music?.file ?? (
+    await cache.run({
+      name: 'music',
+      input: { seconds: total, seed: 0 },
+      run: async (dir) => {
+        const wav = path.join(dir, 'music.wav');
+        await runPy('scenecast_py.music', ['--seconds', total.toFixed(3), '--out', wav, '--seed', '0']);
+        return { wav };
+      },
+      outputs: (r) => [r.wav],
+    })
+  ).result.wav;
+
+  const clips = video.scenes.map((s) => ({ file: path.join(cache.dir(`voice/${s.scene.id}`), 'voice.wav'), start: s.start }));
+  const { result: track } = await cache.run({
+    name: 'voicetrack',
+    input: { clips: clips.map((c) => ({ start: c.start })), total },
+    files: clips.map((c) => c.file),
+    run: async (dir) => {
+      const wav = path.join(dir, 'voice.wav');
+      buildVoiceTrack(clips, total, wav);
+      return { wav };
+    },
+    outputs: (r) => [r.wav],
+  });
+
+  const { result: mixed } = await cache.run({
+    name: 'mix',
+    input: { music: spec.brand.music ? 'user' : 'synth' },
+    files: [composed.file, track.wav, music],
+    run: async (dir) => {
+      const file = path.join(dir, `${name}.mp4`);
+      return { file, ...(await mix(composed.file, track.wav, music, file)) };
+    },
+    outputs: (r) => [r.file],
+  });
+
+  const mp4 = path.join(outDir, `${name}.mp4`);
+  fs.copyFileSync(mixed.file, mp4);
+  fs.writeFileSync(path.join(outDir, `${name}.srt`), finalSrt(video));
+  fs.writeFileSync(path.join(outDir, 'chapters.txt'), chaptersTxt(video.scenes));
+  log(`wrote ${mp4} (${total.toFixed(2)} s, ${mixed.lufs.toFixed(1)} LUFS)`);
+
+  let verdict: RenderResult['audit'];
+  if (opts.audit !== false) {
+    const scenes = video.scenes
+      .filter((s) => s.scene.kind === 'app')
+      .map((s) => ({ scene: s.scene, planIndex: s.planIndex, scheduled: s.scheduled!, take: s.recorded!.take, flashTime: s.recorded!.flashTime }));
+    const loudness = { lufs: mixed.lufs, truePeak: mixed.truePeak };
+    const { result } = await cache.run({
+      name: 'audit',
+      input: { plan, scenes, loudness, allowList: spec.audit?.allowList ?? [] },
+      files: [mixed.file],
+      run: async () => {
+        const r = await audit({ video: mixed.file, plan, scenes, loudness, workDir, spec });
+        return { pass: r.pass, counts: r.counts, dir: r.dir };
+      },
+      outputs: (r) => ['audit.json', 'audit-table.md', 'contact-sheet.png'].map((f) => path.join(r.dir, f)),
+    });
+    const auditOut = path.join(outDir, 'audit');
+    fs.rmSync(auditOut, { recursive: true, force: true });
+    fs.cpSync(result.dir, auditOut, { recursive: true, filter: (src) => path.basename(src) !== '.stage.json' });
+    verdict = { ...result, dir: auditOut };
+    const c = result.counts;
+    log(`audit: ${result.pass ? 'PASS' : 'FAIL'} (${c.pass} pass, ${c.warn} warn, ${c.fail} fail); see ${path.join(auditOut, 'audit-table.md')}`);
+  }
+
+  const wallSec = secs(started);
+  log(`video ${total.toFixed(1)} s, wall time ${wallSec.toFixed(1)} s (${(wallSec / total).toFixed(2)}x)`);
+  return {
+    exitCode: verdict && !verdict.pass ? 1 : 0,
+    video: mp4,
+    duration: total,
+    wallSec,
+    stageSec: { ...cache.timings },
+    audit: verdict,
+  };
+}

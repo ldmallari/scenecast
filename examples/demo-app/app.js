@@ -3,6 +3,13 @@
   const root = document.getElementById('app');
   const signedIn = () => localStorage.getItem('token') !== null;
 
+  const SAMPLE_WORKLIST = [
+    { title: 'Approve the March travel request', due: 'Due today' },
+    { title: 'Sign the updated work agreement', due: 'Due Friday' },
+    { title: 'Review two new requests', due: 'This week' },
+  ];
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
   const NAV = [
     ['/dashboard', 'Dashboard'],
     ['/requests', 'Requests'],
@@ -68,12 +75,19 @@
         <h1>Good morning, Sam</h1>
         <section class="card">
           <h2>What needs you</h2>
-          <ul class="worklist">
-            <li><span>Approve the March travel request</span><span class="tag">Due today</span></li>
-            <li><span>Sign the updated work agreement</span><span class="tag">Due Friday</span></li>
-            <li><span>Review two new requests</span><span class="tag">This week</span></li>
-          </ul>
+          <ul class="worklist"></ul>
         </section>`);
+      const list = root.querySelector('.worklist');
+      const show = (items) => {
+        list.innerHTML = items.length
+          ? items.map((i) => `<li><span>${esc(i.title)}</span><span class="tag">${esc(i.due)}</span></li>`).join('')
+          : '<li class="empty">Nothing needs you right now.</li>';
+      };
+      // server.mjs serves the seeded worklist; a plain static server has no API, so use the sample list.
+      fetch('/api/worklist')
+        .then((r) => (r.ok && (r.headers.get('content-type') || '').includes('json') ? r.json() : SAMPLE_WORKLIST))
+        .catch(() => SAMPLE_WORKLIST)
+        .then(show);
     },
     '/requests'(path) {
       const rows = [

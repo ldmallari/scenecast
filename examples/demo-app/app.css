@@ -72,6 +72,7 @@ h1 { font-size: 26px; margin: 0 0 20px; }
 .worklist { list-style: none; margin: 0; padding: 0; }
 .worklist li { display: flex; justify-content: space-between; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); }
 .worklist li:first-child { border-top: 0; }
+.worklist li.empty { color: var(--muted); }
 .tag { font-size: 13px; color: var(--muted); }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 12px 8px; border-top: 1px solid var(--line); }
