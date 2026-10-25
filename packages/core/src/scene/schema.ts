@@ -18,6 +18,8 @@ export const DEFAULTS = {
     musicLufs: -29,
     duckDb: 6,
     truePeakDb: -1.5,
+    /** What loudnorm aims for; the extra margin absorbs AAC overshoot so the file still passes truePeakDb. */
+    truePeakTargetDb: -2,
     musicFadeSec: 4,
   },
   phone: { width: 390, height: 844 },

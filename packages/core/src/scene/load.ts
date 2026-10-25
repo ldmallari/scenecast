@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -30,7 +31,10 @@ export async function loadScene(file: string): Promise<VideoSpec> {
   const rel = (p: string | undefined) => (p === undefined || path.isAbsolute(p) ? p : path.resolve(dir, p));
 
   if (spec.brand.logo) spec.brand.logo = rel(spec.brand.logo);
-  if (spec.brand.music) spec.brand.music.file = rel(spec.brand.music.file)!;
+  if (spec.brand.music) {
+    spec.brand.music.file = rel(spec.brand.music.file)!;
+    if (!existsSync(spec.brand.music.file)) throw new Error(`brand.music.file not found: ${spec.brand.music.file}`);
+  }
   if (spec.app.storageState) spec.app.storageState = rel(spec.app.storageState);
   if (spec.app.loginHook) spec.app.loginHook = rel(spec.app.loginHook);
   if (spec.app.seed && isPathLike(spec.app.seed)) spec.app.seed = rel(spec.app.seed);
