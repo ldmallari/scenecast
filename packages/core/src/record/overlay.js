@@ -118,28 +118,27 @@
       setTimeout(() => r.remove(), 2 * RING.fadeMs + holdMs + 50);
     },
     /**
-     * Full-viewport magenta flash for at least `frames` frames of `fps`. Resolves with the epoch ms
-     * of the first animation frame the flash was on screen: the take's t = 0.
+     * Full-viewport magenta flash held for at least `minMs`. Resolves with the epoch ms stamped in the
+     * second animation frame, i.e. just after the first frame with the flash was painted: the take's t = 0.
      */
-    flash(frames, fps) {
+    flash(minMs) {
       mount();
       const f = document.createElement('div');
       f.className = 'flash';
       layer.appendChild(f);
       return new Promise((resolve) => {
-        requestAnimationFrame(() => {
-          const shownAt = now();
-          let seen = 1;
-          const minMs = (frames * 1000) / fps;
-          const tick = () => {
-            seen++;
-            if (seen >= frames && now() - shownAt >= minMs) {
-              f.remove();
-              resolve(shownAt);
-            } else requestAnimationFrame(tick);
-          };
-          requestAnimationFrame(tick);
-        });
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            const shownAt = now();
+            const tick = () => {
+              if (now() - shownAt >= minMs) {
+                f.remove();
+                resolve(shownAt);
+              } else requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+          }),
+        );
       });
     },
   };

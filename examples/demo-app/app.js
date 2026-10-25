@@ -8,6 +8,7 @@
     ['/requests', 'Requests'],
     ['/form', 'Agreement'],
     ['/slow', 'Reports'],
+    ['/live', 'Live'],
   ];
 
   function shell(path, body) {
@@ -115,6 +116,24 @@
         if (!card) return;
         card.innerHTML = `<p>3 reports are ready.</p><button id="slow-action" type="button">Open latest report</button>`;
       }, 2500);
+    },
+    // Keeps an EventSource and a streamed fetch open, with a determinate progress bar: a settled page
+    // that is never network-idle. Without a server behind /events and /stream it just retries quietly.
+    '/live'(path) {
+      shell(path, `
+        <h1>Live activity</h1>
+        <section class="card">
+          <p>Storage used</p>
+          <div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="40"><span style="width: 40%"></span></div>
+          <p id="live-status">Waiting for updates…</p>
+          <button id="live-action" type="button">Refresh</button>
+        </section>`);
+      const status = document.getElementById('live-status');
+      const events = new EventSource('/events');
+      events.onmessage = (e) => (status.textContent = e.data);
+      fetch('/stream')
+        .then((r) => r.body && r.body.getReader().read())
+        .catch(() => {});
     },
   };
 

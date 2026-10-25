@@ -4,7 +4,9 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { findUv, uvEnv } from '../src/toolchain.js';
 import { DEFAULT_TRAVEL_SEC, recordScene, travelSecFor } from '../src/record/record.js';
 import { DEFAULTS, type AppConn, type Scene, type Step } from '../src/scene/schema.js';
 import type { ScheduledStep } from '../src/schedule.js';
@@ -17,10 +19,18 @@ const TYPES: Record<string, string> = {
   '.svg': 'image/svg+xml',
 };
 
-/** Tiny static server: real files by path, everything else falls back to index.html (client-side routes). */
+/**
+ * Tiny static server: real files by path, everything else falls back to index.html (client-side
+ * routes). `/events` (server-sent events) and `/stream` (a streamed response) stay open forever.
+ */
 function serveDemoApp(): Promise<http.Server> {
   const server = http.createServer((req, res) => {
     const urlPath = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
+    if (urlPath === '/events' || urlPath === '/stream') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+      res.write('data: 2 new updates\n\n');
+      return;
+    }
     let file = path.join(APP_DIR, path.normalize(urlPath));
     if (!file.startsWith(APP_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory())
       file = path.join(APP_DIR, 'index.html');
@@ -50,6 +60,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  server.closeAllConnections();
   await new Promise((r) => server.close(r));
   fs.rmSync(work, { recursive: true, force: true });
 });
@@ -60,6 +71,34 @@ function scene(id: string, route: string, steps: Step[]): Scene {
 function sched(steps: Step[], startAts: number[]): ScheduledStep[] {
   return steps.map((step, index) => ({ index, step, cueTime: null, startAt: startAts[index]! }));
 }
+/** The ffmpeg that ships with the toolchain (imageio-ffmpeg), else one on PATH. */
+function ffmpegBin(): string {
+  const uv = findUv();
+  if (uv) {
+    try {
+      const py = path.resolve(import.meta.dirname, '../../../py');
+      const cmd = 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())';
+      return execFileSync(uv, ['run', '--project', py, 'python', '-c', cmd], { encoding: 'utf8', env: uvEnv() }).trim();
+    } catch {
+      // fall through
+    }
+  }
+  return 'ffmpeg';
+}
+
+const VIDEO_FPS = 25; // Playwright's webm frame rate
+/** RGB at (x, y) (a 2×2 crop: yuv420 needs even sizes) in every frame of `file`, resampled to a constant 25 fps. */
+function pixelTrack(file: string, x: number, y: number): [number, number, number][] {
+  const raw = execFileSync(
+    ffmpegBin(),
+    ['-v', 'error', '-i', file, '-vf', `fps=${VIDEO_FPS},crop=2:2:${2 * Math.floor(x / 2)}:${2 * Math.floor(y / 2)}`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
+    { maxBuffer: 64 * 1024 * 1024 },
+  );
+  const px: [number, number, number][] = [];
+  for (let i = 0; i + 11 < raw.length; i += 12) px.push([raw[i]!, raw[i + 1]!, raw[i + 2]!]);
+  return px;
+}
+
 const inFrame = (b: { x: number; y: number; w: number; h: number }) =>
   b.w > 0 && b.h > 0 && b.x >= 0 && b.y >= 0 && b.x + b.w <= DEFAULTS.video.width && b.y + b.h <= DEFAULTS.video.height;
 
@@ -95,6 +134,20 @@ describe('recordScene', () => {
     expect(Math.abs(take.events[3]!.at - 4.0)).toBeLessThanOrEqual(0.15);
     expect(inFrame(take.events[3]!.target!)).toBe(true);
     expect(take.events.every((e) => e.panels.length === 0 && e.loading === false)).toBe(true);
+
+    // Real sync check against the video: the gap from the first magenta frame to the first frame
+    // showing the green "Signed by" line must equal the logged gap from the flash to the Sign click.
+    const magenta = pixelTrack(take.file, DEFAULTS.video.width / 2, DEFAULTS.video.height / 2).findIndex(
+      ([r, g, b]) => r > 200 && g < 80 && b > 200,
+    );
+    const ring = take.events[3]!.target!; // #signed padded by 8 px
+    const signedAt = pixelTrack(take.file, ring.x + 8 + 4, ring.y + ring.h / 2).findIndex(
+      ([r, g, b], i) => i > magenta && g - r > 8 && r < 245 && b < 250,
+    );
+    expect(magenta).toBeGreaterThanOrEqual(0);
+    expect(signedAt).toBeGreaterThan(magenta);
+    const videoGap = (signedAt - magenta) / VIDEO_FPS;
+    expect(Math.abs(videoGap - take.events[2]!.at)).toBeLessThanOrEqual(2 / VIDEO_FPS);
   }, 60_000);
 
   it('slow route still lands on cue', async () => {
@@ -119,6 +172,22 @@ describe('recordScene', () => {
       'scene "s1" step 1 selector "#nope" not found',
     );
   }, 60_000);
+
+  it('open event streams and a determinate progress bar do not stall a step', async () => {
+    const steps: Step[] = [{ do: 'click', sel: '#live-action' }];
+    const take = await recordScene(scene('live', '/live', steps), sched(steps, [0.8]), app, path.join(work, 'takes'));
+    const e = take.events[0]!;
+    expect(e.settleTimedOut).toBeUndefined();
+    expect(e.loading).toBe(false);
+    expect(Math.abs(e.at - (0.8 + DEFAULT_TRAVEL_SEC))).toBeLessThanOrEqual(0.15);
+  }, 60_000);
+
+  it('pointer step without sel fails like ring and zoom', async () => {
+    const steps: Step[] = [{ do: 'click' }];
+    await expect(recordScene(scene('s2', '/dashboard', steps), sched(steps, [0]), app, path.join(work, 'takes'))).rejects.toThrow(
+      'scene "s2" step 0: click needs sel',
+    );
+  });
 
   it('open panel boxes logged', async () => {
     const steps: Step[] = [{ do: 'click', sel: '#menu-button' }];

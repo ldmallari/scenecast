@@ -83,6 +83,8 @@ td:first-child { white-space: nowrap; }
 .signed[hidden] { display: none; }
 .login { max-width: 380px; margin: 10vh auto; }
 
+.meter { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.meter span { display: block; height: 100%; background: var(--accent); }
 .is-loading { display: flex; align-items: center; gap: 12px; color: var(--muted); }
 .is-loading::before {
   content: '';

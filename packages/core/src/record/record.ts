@@ -17,7 +17,21 @@ const POINTER = new Set<Step['do']>(['click', 'hover', 'type']);
 const CURSOR_PX = 28;
 /** Where the arrow's tip sits inside its 28 px box (see overlay.js). */
 const CURSOR_TIP = { x: 3, y: 2 };
-const FLASH_FRAMES = 2;
+/** The flash stays up this long: 2 frames of a 25 fps webm plus a vsync. */
+const FLASH_MIN_MS = 100;
+/** Re-check the target this long before the action fires. */
+const AIM_CHECK_MS = 40;
+/**
+ * The glide ends this long before the action fires. While anything animates at 1080p, Playwright's
+ * screencast runs about 100 ms behind (Chromium holds swaps while 5 JPEG frames are in flight), so an
+ * action right at the end of the glide shows up late in the video. A short still moment lets that
+ * backlog drain, and the action lands on its logged time (checked against the video in the tests).
+ */
+const GLIDE_LEAD_MS = 150;
+/** Once a settle in a take has hit its full `maxMs`, later settles in that take are capped at this. */
+const SHORT_SETTLE_MS = 1500;
+/** Round trips used to measure the page clock against Node's. */
+const CLOCK_SAMPLES = 5;
 const TYPE_DELAY_MS = 35;
 const RING_HOLD_MS = 1200;
 const RING_FADE_MS = 150;
@@ -52,6 +66,8 @@ export interface TakeEvent {
   panels: Box[];
   /** A loading indicator was visible right after the action. */
   loading: boolean;
+  /** The settle before this step gave up (its cap ran out); the step ran anyway. */
+  settleTimedOut?: boolean;
 }
 
 export interface Take {
@@ -68,7 +84,7 @@ interface OverlayApi {
   moveTo(x: number, y: number, endAt: number): void;
   ripple(x: number, y: number): void;
   ring(box: Box, holdMs: number): void;
-  flash(frames: number, fps: number): Promise<number>;
+  flash(minMs: number): Promise<number>;
 }
 declare global {
   interface Window {
@@ -109,11 +125,14 @@ async function findVisible(page: Page, sceneId: string, index: number, sel: stri
   throw new Error(`scene "${sceneId}" step ${index} selector "${sel}" not found`, { cause });
 }
 
-/** Resolve every selector, scroll the first into view, and return the first element's box and the union box. */
-async function measure(page: Page, sceneId: string, index: number, sels: string[]): Promise<{ first: Box; union: Box }> {
-  const els: Locator[] = [];
-  for (const sel of sels) els.push(await findVisible(page, sceneId, index, sel));
-  await els[0]!.scrollIntoViewIfNeeded().catch(() => {});
+interface Measured {
+  els: Locator[];
+  first: Box;
+  union: Box;
+}
+
+/** Boxes of already-resolved elements: the first one's, and the union of all. */
+async function boxesOf(els: Locator[], sels: string[], sceneId: string, index: number): Promise<Measured> {
   const boxes: Box[] = [];
   for (const [i, el] of els.entries()) {
     const b = await el.boundingBox();
@@ -124,7 +143,56 @@ async function measure(page: Page, sceneId: string, index: number, sels: string[
   const y = Math.min(...boxes.map((b) => b.y));
   const r = Math.max(...boxes.map((b) => b.x + b.w));
   const btm = Math.max(...boxes.map((b) => b.y + b.h));
-  return { first: boxes[0]!, union: { x, y, w: round(r - x), h: round(btm - y) } };
+  return { els, first: boxes[0]!, union: { x, y, w: round(r - x), h: round(btm - y) } };
+}
+
+/** Resolve every selector, scroll the first into view, and measure. */
+async function measure(page: Page, sceneId: string, index: number, sels: string[]): Promise<Measured> {
+  const els: Locator[] = [];
+  for (const sel of sels) els.push(await findVisible(page, sceneId, index, sel));
+  await els[0]!.scrollIntoViewIfNeeded().catch(() => {});
+  return boxesOf(els, sels, sceneId, index);
+}
+
+const centre = (b: Box) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
+
+/**
+ * Re-measure the target just before the pointer lands and check the element at its centre is the
+ * target (or inside it). If not, scroll it into view and try once more; still covered is an error.
+ */
+async function aim(m: Measured, sels: string[], sceneId: string, index: number): Promise<Measured> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const now = await boxesOf(m.els, sels, sceneId, index);
+    const c = centre(now.first);
+    const onTarget = await m.els[0]!
+      .evaluate((e, [x, y]) => {
+        const hit = document.elementFromPoint(x, y);
+        return !!hit && (hit === e || e.contains(hit));
+      }, [c.x, c.y] as const)
+      .catch(() => false);
+    if (onTarget) return now;
+    if (attempt === 0) await m.els[0]!.scrollIntoViewIfNeeded().catch(() => {});
+  }
+  throw new Error(`scene "${sceneId}" step ${index} selector "${sels[0]}" is covered by another element at its centre`);
+}
+
+/**
+ * Page epoch minus Node epoch, in ms: the fastest of CLOCK_SAMPLES `evaluate` round trips, assuming
+ * the page read its clock halfway through.
+ */
+async function clockOffset(page: Page): Promise<number> {
+  let best = Infinity;
+  let offset = 0;
+  for (let i = 0; i < CLOCK_SAMPLES; i++) {
+    const t0 = epoch();
+    const pageNow = await page.evaluate(() => performance.timeOrigin + performance.now());
+    const t1 = epoch();
+    if (t1 - t0 < best) {
+      best = t1 - t0;
+      offset = pageNow - (t0 + t1) / 2;
+    }
+  }
+  return offset;
 }
 
 const padBox = (b: Box, pad = 0): Box => ({ x: b.x - pad, y: b.y - pad, w: b.w + 2 * pad, h: b.h + 2 * pad });
@@ -243,6 +311,9 @@ async function loginStep(page: Page, app: AppConn, step: Step, i: number): Promi
  * `<out>/<scene>.webm` and `<out>/<scene>.boxes.json`.
  */
 export async function recordScene(scene: Scene, scheduled: ScheduledStep[], app: AppConn, out: string): Promise<Take> {
+  for (const { index, step } of scheduled)
+    if ((POINTER.has(step.do) || step.do === 'ring' || step.do === 'zoom') && selectors(step).length === 0)
+      throw new Error(`scene "${scene.id}" step ${index}: ${step.do} needs sel`);
   fs.mkdirSync(out, { recursive: true });
   const phone = scene.viewport === 'phone';
   const viewport = phone
@@ -291,12 +362,19 @@ async function runTake(
 ): Promise<Omit<Take, 'file'>> {
   const url = (p: string) => new URL(p, app.baseUrl).href;
   trackNetwork(page);
+  // Per-take settle budget: after one settle runs out its full cap, the rest get a short one.
+  let capped = false;
+  const settleTake = async (): Promise<boolean> => {
+    const ok = await settle(page, capped ? { maxMs: SHORT_SETTLE_MS } : {});
+    if (!ok) capped = true;
+    return ok;
+  };
   for (const route of scene.prewarm ?? []) {
     await page.goto(url(route));
-    await settle(page);
+    await settleTake();
   }
   await page.goto(url(scene.route ?? '/'));
-  await settle(page);
+  await settleTake();
 
   const steps = [...scheduled].sort((a, b) => a.index - b.index);
   let cursor = { x: viewport.width / 2, y: viewport.height / 2 };
@@ -307,43 +385,48 @@ async function runTake(
   }
   await page.evaluate(([x, y]) => window.__scenecast.cursor(x, y), [cursor.x, cursor.y] as const);
 
-  // t = 0: the flash's first frame on screen, in epoch ms. The page and Node share the epoch clock,
-  // so Node's monotonic high-resolution clock measures every later event against it, across navigations.
-  const flashEpoch = await page.evaluate(([f, fps]) => window.__scenecast.flash(f, fps), [FLASH_FRAMES, DEFAULTS.video.fps] as const);
+  // t = 0 is the flash's first painted frame. The page stamps it on its own epoch clock; we convert it
+  // to Node's epoch clock through a measured offset, and from then on Node's monotonic high-resolution
+  // clock times every event (the page clock restarts on each navigation; Node's doesn't).
+  const offset = await clockOffset(page);
+  const flashEpoch = (await page.evaluate((ms) => window.__scenecast.flash(ms), FLASH_MIN_MS)) - offset;
   const sinceFlash = () => Math.round((epoch() - flashEpoch) * 10) / 10000; // seconds, 0.1 ms resolution
   const events: TakeEvent[] = [];
   const quiet = (p: Promise<unknown>) => void p.catch(() => {});
 
   let holdUntil = 0;
   for (const { index, step, startAt } of steps) {
-    if (step.settle !== false) await settle(page);
     const sels = selectors(step);
     const due = flashEpoch + startAt * 1000;
     const ev: Partial<TakeEvent> & { index: number; kind: Step['do'] } = { index, kind: step.do };
+    if (step.settle !== false && !(await settleTake())) ev.settleTimedOut = true;
 
     if (POINTER.has(step.do)) {
-      const box = sels.length ? await measure(page, scene.id, index, sels) : undefined;
+      let m = await measure(page, scene.id, index, sels);
       await sleepUntil(due);
       const arrive = Math.max(epoch(), due) + DEFAULT_TRAVEL_SEC * 1000;
-      if (box) {
-        ev.target = box.union;
-        cursor = { x: box.first.x + box.first.w / 2, y: box.first.y + box.first.h / 2 };
-        ev.cursorTo = { x: round(cursor.x - CURSOR_TIP.x), y: round(cursor.y - CURSOR_TIP.y), w: CURSOR_PX, h: CURSOR_PX };
-        const { x, y } = cursor;
-        quiet(page.evaluate(([x, y, end]) => window.__scenecast.moveTo(x, y, end), [x, y, arrive] as const));
-      }
+      cursor = centre(m.first);
+      const glide = [cursor.x, cursor.y, arrive - GLIDE_LEAD_MS + offset] as const;
+      quiet(page.evaluate(([x, y, end]) => window.__scenecast.moveTo(x, y, end), glide));
+      await sleepUntil(arrive - AIM_CHECK_MS);
+      m = await aim(m, sels, scene.id, index);
+      const aimed = centre(m.first);
+      await page.mouse.move(aimed.x, aimed.y); // the real pointer moves ahead so the action itself is one press
       await sleepUntil(arrive);
       ev.at = sinceFlash();
-      if (box) await page.mouse.move(cursor.x, cursor.y);
+      if (Math.abs(aimed.x - cursor.x) > 1 || Math.abs(aimed.y - cursor.y) > 1) {
+        cursor = aimed; // the target moved during travel: snap onto it
+        quiet(page.evaluate(([x, y]) => window.__scenecast.cursor(x, y), [cursor.x, cursor.y] as const));
+      }
+      ev.target = m.union;
+      ev.cursorTo = { x: round(cursor.x - CURSOR_TIP.x), y: round(cursor.y - CURSOR_TIP.y), w: CURSOR_PX, h: CURSOR_PX };
       if (step.do === 'click' || step.do === 'type') {
-        if (box) {
-          quiet(page.evaluate(([x, y]) => window.__scenecast.ripple(x, y), [cursor.x, cursor.y] as const));
-          await page.mouse.click(cursor.x, cursor.y);
-        }
+        quiet(page.evaluate(([x, y]) => window.__scenecast.ripple(x, y), [cursor.x, cursor.y] as const));
+        await page.mouse.down();
+        await page.mouse.up();
         if (step.do === 'type') await page.keyboard.type(step.text ?? '', { delay: TYPE_DELAY_MS });
       }
     } else if (step.do === 'ring' || step.do === 'zoom') {
-      if (!sels.length) throw new Error(`scene "${scene.id}" step ${index}: ${step.do} needs sel`);
       const { union } = await measure(page, scene.id, index, sels);
       const box = padBox(union, step.pad);
       ev.target = box;
