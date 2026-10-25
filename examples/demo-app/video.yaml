@@ -50,7 +50,7 @@ scenes:
       Each item shows when it is due, so the most urgent work comes first.
     steps:
       - { cue: worklist, do: ring, sel: ".worklist", pad: 10 }
-      - { cue: due, do: zoom, sel: ".worklist li:first-child", pad: 16, ms: 2500 }
+      - { cue: due, do: zoom, sel: ".worklist", pad: 16, ms: 2500 }
 
   - id: sign-form
     kind: app
@@ -75,13 +75,11 @@ scenes:
       - { cue: Open, do: click, sel: "#menu-button" }
       - { cue: profile, do: ring, sel: "#account-menu", pad: 6 }
 
-  # A narrated chapter card. (The schema asks every title scene for a `page`; v1 draws chapter cards
-  # from the brand instead of recording a page, so it is not used.)
+  # A narrated chapter card, drawn in the brand colours.
   - id: on-the-go
     kind: title
     title: On the go
     seconds: 3
-    page: ./index.html
     narration: >-
       Next, the same app on a phone.
 

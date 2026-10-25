@@ -2,18 +2,15 @@
 // the plan's scene starts give the voice placements, chapters and the final-time captions.
 import {
   DEFAULTS,
-  clampZoom,
   layoutCaptions,
+  onScreen,
   outputTimeOf,
-  phoneFrame,
-  phoneToFrame,
   retime,
   RING_FADE_MS,
   RING_HOLD_MS,
   toSrt,
   travelSecFor,
   type Box,
-  type CaptionEvent,
   type Cue,
   type Scene,
   type SceneVoice,
@@ -21,8 +18,12 @@ import {
   type Segment,
   type Take,
   type VideoSpec,
+  zoomedCaptionEvents as captionEvents,
 } from '@scenecast/core';
 import type { ComposePlan, PlanScene, Timed } from '@scenecast/compose';
+
+// The zoom-aware caption events live in core (captions.ts); re-exported for the CLI's tests and callers.
+export { onScreen, captionEvents };
 
 /** Intro and outro cards: silent, music only. */
 export const INTRO_SEC = 3;
@@ -30,7 +31,6 @@ export const OUTRO_SEC = 3;
 /** A zoom with no `ms` holds this long once it has eased in. */
 export const ZOOM_HOLD_MS = 2000;
 
-const FRAME: Box = { x: 0, y: 0, w: DEFAULTS.video.width, h: DEFAULTS.video.height };
 const EPS = 1e-6;
 
 /** Seconds rounded to the output frame grid (what retime's segments add up to). */
@@ -71,34 +71,6 @@ export interface BuiltVideo {
 
 const padBox = (b: Box, pad: number): Box => ({ x: b.x - pad, y: b.y - pad, w: b.w + 2 * pad, h: b.h + 2 * pad });
 
-/** Where `box` (frame px) shows on screen while the composer shows the region `zoom`. */
-export function onScreen(box: Box, zoom: Box | null): Box {
-  if (!zoom) return box;
-  const s = FRAME.w / zoom.w;
-  return { x: (box.x - zoom.x) * s, y: (box.y - zoom.y) * s, w: box.w * s, h: box.h * s };
-}
-
-/**
- * The views on screen during [lo, hi): null (the whole frame) and/or each zoom region, the way the
- * audit reads them: a held zoom shows only its region; while one eases in or out, both ends count.
- */
-function views(lo: number, hi: number, zooms: Timed[], ease: number): (Box | null)[] {
-  let rest: [number, number][] = [[lo, hi]];
-  for (const z of zooms) {
-    const [hl, hh] = [z.start + ease, z.end];
-    rest = rest.flatMap(([a, b]): [number, number][] => {
-      if (hh <= a || hl >= b || hl >= hh) return [[a, b]];
-      const out: [number, number][] = [];
-      if (hl > a) out.push([a, hl]);
-      if (hh < b) out.push([hh, b]);
-      return out;
-    });
-  }
-  const out: (Box | null)[] = rest.some(([a, b]) => b - a > EPS) ? [null] : [];
-  for (const z of zooms) if (lo < z.end + ease && hi > z.start) out.push(z.box);
-  return out;
-}
-
 /** Output time of every take event: where retime put it, else where the schedule meant it. */
 export function eventTimes(rec: Recorded, scheduled: ScheduledStep[], segments: Segment[]): Map<number, number> {
   const out = new Map<number, number>();
@@ -107,40 +79,6 @@ export function eventTimes(rec: Recorded, scheduled: ScheduledStep[], segments: 
     if (!sch) throw new Error(`take event ${e.index} has no scheduled step`);
     out.set(e.index, outputTimeOf(segments, rec.flashTime + e.at) ?? sch.startAt + travelSecFor(sch.step));
   }
-  return out;
-}
-
-/**
- * Caption events on screen: each take event's boxes (target, ring, cursor, panels; phone boxes mapped
- * into the frame once) stay active until the next event. Every window is split where a zoom starts,
- * finishes easing, ends or finishes easing out, and each piece carries the boxes as they look on
- * screen in every view of that piece, so a caption clear of these is clear of what the audit checks.
- */
-export function captionEvents(take: Take, times: Map<number, number>, zooms: Timed[], sceneEnd: number): CaptionEvent[] {
-  const phone = take.viewport === 'phone';
-  const toFrame = (b: Box) => (phone ? phoneToFrame(b) : b);
-  const navs = (take.navs ?? []).map((n) => ({ ...n, box: toFrame(n.box) }));
-  const ease = DEFAULTS.video.zoomEaseSec;
-  const regions: Timed[] = zooms.map((z) => ({
-    ...z,
-    box: clampZoom(toFrame(z.box), FRAME, DEFAULTS.audit.zoomPadPx, undefined, phone ? phoneFrame().x : 0, navs),
-  }));
-  const timed = take.events
-    .map((e) => ({ e, t: times.get(e.index)! }))
-    .sort((a, b) => a.t - b.t);
-  const out: CaptionEvent[] = [];
-  timed.forEach(({ e, t }, i) => {
-    const end = i + 1 < timed.length ? timed[i + 1]!.t : sceneEnd;
-    const boxes = [e.target, e.ringBox, e.cursorTo, ...e.panels].filter((b): b is Box => b !== undefined).map(toFrame);
-    const cuts = [t, end];
-    for (const z of regions) for (const c of [z.start, z.start + ease, z.end, z.end + ease]) if (c > t && c < end) cuts.push(c);
-    cuts.sort((a, b) => a - b);
-    for (let k = 0; k + 1 < cuts.length; k++) {
-      const [lo, hi] = [cuts[k]!, cuts[k + 1]!];
-      if (hi - lo <= EPS) continue;
-      out.push({ start: lo, end: hi, boxes: views(lo, hi, regions, ease).flatMap((v) => boxes.map((b) => onScreen(b, v))) });
-    }
-  });
   return out;
 }
 

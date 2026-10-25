@@ -251,6 +251,21 @@ def test_caption_with_layout_reason_fails_and_zoom_moves_the_target(tmp_path):
     assert only_row(zoomed)["verdict"] == "FAIL"
 
 
+def test_caption_over_the_zoomed_target_fails_while_held_and_while_easing(tmp_path):
+    # Target x 800-1000, y 300-360; a 2x zoom on the top-left quarter shows it at x 1600-2000, y 600-720.
+    zbox = {"x": 0, "y": 0, "w": 960, "h": 540}
+    cap = {"x": 1400, "y": 650, "w": 400, "h": 100}  # clear of the target unzoomed, over it zoomed (x 1600-2000)
+    zooms = [{"start": 1.0, "end": 4.0, "box": zbox}]
+    held = run(fixture(tmp_path, cues=[{"start": 2.0, "end": 3.0, "side": "bottom", "box": cap, "text": "x"}], zooms=zooms))
+    row = only_row(held)
+    assert row["verdict"] == "FAIL"
+    assert any(c["name"] == "captions" and "zoomed" in c["detail"] for c in row["checks"])
+    easing = run(fixture(tmp_path, cues=[{"start": 1.1, "end": 1.5, "side": "bottom", "box": cap, "text": "x"}], zooms=zooms))
+    assert only_row(easing)["verdict"] == "FAIL"
+    before = run(fixture(tmp_path, cues=[{"start": 0.0, "end": 0.9, "side": "bottom", "box": cap, "text": "x"}], zooms=zooms))
+    assert only_row(before)["verdict"] == "PASS"
+
+
 def test_spinner_visible_at_cue_fails(tmp_path):
     row = only_row(run(fixture(tmp_path, moments=[moment(loading=True)])))
     assert row["verdict"] == "FAIL"

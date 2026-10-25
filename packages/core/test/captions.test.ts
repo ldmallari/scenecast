@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { eventsForCaptions, layoutCaptions, parseSrt, toSrt, type CaptionEvent } from '../src/captions.js';
+import { eventsForCaptions, layoutCaptions, parseSrt, toSrt, zoomedCaptionEvents, type CaptionEvent } from '../src/captions.js';
 import { phoneToFrame } from '../src/frame.js';
 import type { Take } from '../src/record/record.js';
 import type { ScheduledStep } from '../src/schedule.js';
@@ -195,5 +195,46 @@ describe('captions', () => {
     expect(ev[0]!.end).toBe(ev[1]!.start);
     expect(ev[0]!.end).toBeGreaterThan(ev[0]!.start);
     expect(ev[1]!.end).toBe(9);
+  });
+});
+
+describe('captions during a zoom (on-screen geometry)', () => {
+  const zoomTake = (target: { x: number; y: number; w: number; h: number }): Take => ({
+    file: 'z.webm',
+    flashAt: 0,
+    events: [{ index: 0, kind: 'zoom', at: 1, target, panels: [], loading: false }],
+  });
+  const times = new Map([[0, 1]]);
+
+  it('a held zoom that brings the target into the bottom moves the caption to the top', () => {
+    // Unzoomed, the target (y 1010-1040) sits under a bottom caption (y 915-1008), not in it.
+    const target = box(900, 1010, 120, 30);
+    const v = voice('Look at this.', 0.2, 4.5);
+    const plain = layoutCaptions(scene, v, zoomedCaptionEvents(zoomTake(target), times, [], 5));
+    expect(plain.map((c) => c.side)).toEqual(['bottom']);
+    // The zoom clamps at the frame bottom (region y 648-1080, 2.5x): on screen the target is y 905-980.
+    const zooms = [{ start: 1, end: 4, box: target }];
+    const events = zoomedCaptionEvents(zoomTake(target), times, zooms, 5);
+    const held = events.find((e) => e.start >= 1.7 - 1e-6 && e.end <= 4 + 1e-6)!;
+    expect(held.boxes[0]!.y).toBeCloseTo((1010 - 648) * 2.5, 6);
+    const [cue] = layoutCaptions(scene, v, events);
+    expect(cue!.side).toBe('top');
+    expect(cue!.reason).toBeUndefined();
+  });
+
+  it('no free side during a zoom keeps the least-overlap side with a reason', () => {
+    // A tall target zoomed 1.44x covers both caption bands on screen.
+    const target = box(900, 200, 100, 700);
+    const v = voice('Look at this.', 0.2, 4.5);
+    const [cue] = layoutCaptions(scene, v, zoomedCaptionEvents(zoomTake(target), times, [{ start: 1, end: 4, box: target }], 5));
+    expect(cue!.reason).toMatch(/both sides overlap the target/);
+  });
+
+  it('while the zoom eases in, both the unzoomed and the zoomed boxes count', () => {
+    const target = box(900, 1010, 120, 30);
+    const events = zoomedCaptionEvents(zoomTake(target), times, [{ start: 1, end: 4, box: target }], 5);
+    const easing = events.find((e) => e.start >= 1 - 1e-6 && e.end <= 1.7 + 1e-6)!;
+    expect(easing.boxes).toHaveLength(2);
+    expect(easing.boxes[0]).toEqual(target);
   });
 });

@@ -39,6 +39,16 @@ export const RING_HOLD_MS = 1200;
 export const RING_FADE_MS = 150;
 /** The ring is at full strength this long after its fade-in ends (two animation frames, plus the screencast lag). */
 const RING_PEAK_LAG_MS = 100;
+/** Longest wait for the overlay to report its rings gone (a navigation takes them with it anyway). */
+const RINGS_GONE_MAX_MS = 2000;
+/** The overlay's repaints after a ring take about this long (8 frames), so waiting then never delays a step. */
+const RINGS_GONE_MARGIN_MS = 300;
+
+/** Waits until no ring is up and the overlay has repainted the page without it (see overlay.js nudge). */
+async function ringsGone(page: Page): Promise<void> {
+  await Promise.race([page.evaluate(() => window.__scenecast.ringsGone()).catch(() => {}), sleep(RINGS_GONE_MAX_MS)]);
+}
+
 /** Keep recording this long after the last step so its result is on screen. */
 const TAIL_SEC = 1;
 
@@ -102,6 +112,7 @@ interface OverlayApi {
   moveTo(x: number, y: number, endAt: number): void;
   ripple(x: number, y: number): void;
   ring(box: Box, holdMs: number): void;
+  ringsGone(): Promise<void>;
   flash(minMs: number): Promise<number>;
 }
 declare global {
@@ -420,12 +431,20 @@ async function runTake(
   const quiet = (p: Promise<unknown>) => void p.catch(() => {});
 
   let holdUntil = 0;
+  /** When the latest ring is removed (Node epoch ms); a later step first waits for the page to show it gone. */
+  let ringGoneAt = 0;
   const peakMeasures: Promise<void>[] = [];
   for (const { index, step, startAt } of steps) {
     const sels = selectors(step);
     const due = flashEpoch + startAt * 1000;
     const ev: Partial<TakeEvent> & { index: number; kind: Step['do'] } = { index, kind: step.do };
     if (step.settle !== false && !(await settleTake())) ev.settleTimedOut = true;
+    // A ring that ends before this step must be off screen in the take before it goes ahead. (One that
+    // ends just before the step needs no wait: the step's own glide or ring repaints the page anyway.)
+    if (ringGoneAt && ringGoneAt + RINGS_GONE_MARGIN_MS <= due) {
+      await ringsGone(page);
+      ringGoneAt = 0;
+    }
 
     if (POINTER.has(step.do)) {
       let m = await measure(page, scene.id, index, sels);
@@ -463,6 +482,7 @@ async function runTake(
         const hold = step.ms ?? RING_HOLD_MS;
         quiet(page.evaluate(([b, ms]) => window.__scenecast.ring(b, ms), [box, hold] as const));
         holdUntil = Math.max(holdUntil, epoch() + hold + 2 * RING_FADE_MS);
+        ringGoneAt = Math.max(ringGoneAt, epoch() + hold + 2 * RING_FADE_MS + 50);
         ev.ringBox = box;
         // The element as it is when the ring peaks, measured without holding up the next step.
         const peakAt = epoch() + ringPeakSec(hold) * 1000;
@@ -500,7 +520,9 @@ async function runTake(
     events.push(ev as TakeEvent);
     holdUntil = Math.max(holdUntil, due + (step.ms ?? 0));
   }
-  await sleepUntil(Math.max(holdUntil, epoch()) + TAIL_SEC * 1000);
+  await sleepUntil(Math.max(holdUntil, epoch()));
+  if (ringGoneAt) await ringsGone(page);
+  await sleepUntil(epoch() + TAIL_SEC * 1000);
   await Promise.all(peakMeasures);
   return { flashAt: Math.round(flashEpoch - videoStart) / 1000, ...(navs.length ? { navs } : {}), events };
 }

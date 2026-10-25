@@ -40,9 +40,15 @@ describe('scene loader', () => {
     expect(() => parseScene(base('Tick, then the box.', 'tick the box'))).toThrow('not in narration');
   });
 
-  it('title scene needs page and seconds', async () => {
-    await expect(loadScene(fx('title-bad.yaml'))).rejects.toThrow(/page/);
-    await expect(loadScene(fx('title-bad.yaml'))).rejects.toThrow(/seconds/);
+  it('title scene needs seconds; page is optional', async () => {
+    const err = await loadScene(fx('title-bad.yaml')).then(() => null, (e: Error) => e.message);
+    expect(err).toMatch(/requires seconds/);
+    expect(err).not.toMatch(/page/);
+    const noPage = VideoSpecSchema.safeParse({
+      id: 'v', title: 'V', output: 'v', brand: { primary: '#000', accent: '#fff', font: 'Inter', introTitle: 'V' },
+      app: { baseUrl: 'http://x' }, scenes: [{ id: 't', kind: 'title', narration: 'Hi.', seconds: 2 }],
+    });
+    expect(noPage.success).toBe(true);
     const spec = await loadScene(fx('title-ok.yaml'));
     const dir = path.dirname(fx('title-ok.yaml'));
     expect(spec.scenes[0]!.page).toBe(path.join(dir, 'title.html'));

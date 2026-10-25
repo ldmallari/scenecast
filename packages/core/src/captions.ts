@@ -1,4 +1,4 @@
-import { phoneToFrame } from './frame.js';
+import { clampZoom, phoneFrame, phoneToFrame } from './frame.js';
 import { travelSecFor, type Box, type Take } from './record/record.js';
 import { DEFAULTS, type Scene } from './scene/schema.js';
 import type { ScheduledStep } from './schedule.js';
@@ -42,6 +42,80 @@ export function eventsForCaptions(take: Take, scheduled: ScheduledStep[], opts: 
     end: i + 1 < timed.length ? timed[i + 1]!.t : opts.sceneEnd,
     boxes: [e.target, e.ringBox, e.cursorTo, ...e.panels].filter((b): b is Box => b !== undefined).map(map),
   }));
+}
+
+const EPS = 1e-6;
+
+/** Where `box` (frame px) shows on screen while the composer shows the region `zoom`. */
+export function onScreen(box: Box, zoom: Box | null): Box {
+  if (!zoom) return box;
+  const s = DEFAULTS.video.width / zoom.w;
+  return { x: (box.x - zoom.x) * s, y: (box.y - zoom.y) * s, w: box.w * s, h: box.h * s };
+}
+
+/**
+ * The views on screen during [lo, hi): null (the whole frame) and/or each zoom region, the way the
+ * audit reads them: a held zoom shows only its region; while one eases in or out, both ends count.
+ */
+function views(lo: number, hi: number, zooms: TimedBox[], ease: number): (Box | null)[] {
+  let rest: [number, number][] = [[lo, hi]];
+  for (const z of zooms) {
+    const [hl, hh] = [z.start + ease, z.end];
+    rest = rest.flatMap(([a, b]): [number, number][] => {
+      if (hh <= a || hl >= b || hl >= hh) return [[a, b]];
+      const out: [number, number][] = [];
+      if (hl > a) out.push([a, hl]);
+      if (hh < b) out.push([hh, b]);
+      return out;
+    });
+  }
+  const out: (Box | null)[] = rest.some(([a, b]) => b - a > EPS) ? [null] : [];
+  for (const z of zooms) if (lo < z.end + ease && hi > z.start) out.push(z.box);
+  return out;
+}
+
+/** Something shown from `start` to `end` (scene seconds) around `box`: a plan zoom (take px on phone scenes). */
+export interface TimedBox {
+  start: number;
+  end: number;
+  box: Box;
+}
+
+/**
+ * Caption events on screen, for a scene with zooms. `times` is each take event's output time (where
+ * retime put it); `zooms` are the plan's zooms (unclamped, as the composer gets them). Each take event's
+ * boxes (target, ring, cursor, panels; phone boxes mapped into the frame once) stay active until the
+ * next event. each take event's boxes (target, ring, cursor, panels; phone boxes mapped
+ * into the frame once) stay active until the next event. Every window is split where a zoom starts,
+ * finishes easing, ends or finishes easing out, and each piece carries the boxes as they look on
+ * screen in every view of that piece, so a caption clear of these is clear of what the audit checks.
+ */
+export function zoomedCaptionEvents(take: Take, times: Map<number, number>, zooms: TimedBox[], sceneEnd: number): CaptionEvent[] {
+  const phone = take.viewport === 'phone';
+  const toFrame = (b: Box) => (phone ? phoneToFrame(b) : b);
+  const navs = (take.navs ?? []).map((n) => ({ ...n, box: toFrame(n.box) }));
+  const ease = DEFAULTS.video.zoomEaseSec;
+  const regions: TimedBox[] = zooms.map((z) => ({
+    ...z,
+    box: clampZoom(toFrame(z.box), { x: 0, y: 0, w: DEFAULTS.video.width, h: DEFAULTS.video.height }, DEFAULTS.audit.zoomPadPx, undefined, phone ? phoneFrame().x : 0, navs),
+  }));
+  const timed = take.events
+    .map((e) => ({ e, t: times.get(e.index)! }))
+    .sort((a, b) => a.t - b.t);
+  const out: CaptionEvent[] = [];
+  timed.forEach(({ e, t }, i) => {
+    const end = i + 1 < timed.length ? timed[i + 1]!.t : sceneEnd;
+    const boxes = [e.target, e.ringBox, e.cursorTo, ...e.panels].filter((b): b is Box => b !== undefined).map(toFrame);
+    const cuts = [t, end];
+    for (const z of regions) for (const c of [z.start, z.start + ease, z.end, z.end + ease]) if (c > t && c < end) cuts.push(c);
+    cuts.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < cuts.length; k++) {
+      const [lo, hi] = [cuts[k]!, cuts[k + 1]!];
+      if (hi - lo <= EPS) continue;
+      out.push({ start: lo, end: hi, boxes: views(lo, hi, regions, ease).flatMap((v) => boxes.map((b) => onScreen(b, v))) });
+    }
+  });
+  return out;
 }
 
 /** Breaks any word longer than a line into line-sized pieces. */

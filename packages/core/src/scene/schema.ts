@@ -114,7 +114,7 @@ export const VideoSpecSchema = z
   .superRefine((spec, ctx) => {
     spec.scenes.forEach((scene, si) => {
       if (scene.kind === 'title') {
-        for (const key of ['page', 'seconds'] as const) {
+        for (const key of ['seconds'] as const) {
           if (scene[key] === undefined) {
             ctx.addIssue({
               code: 'custom',

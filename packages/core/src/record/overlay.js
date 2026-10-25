@@ -26,14 +26,49 @@
       .ring { position: absolute; box-sizing: border-box; border: ${RING.width}px solid ${RING.color};
         border-radius: ${RING.radius}px; opacity: 0; transition: opacity ${RING.fadeMs}ms ease; }
       .flash { position: fixed; inset: 0; background: #FF00FF; }
+      .nudge { position: absolute; left: 0; top: 0; width: 1px; height: 1px; background: #000; opacity: 0.01; }
     </style>
     <div class="layer">
+      <div class="nudge"></div>
       <svg class="cursor" viewBox="0 0 28 28" aria-hidden="true">
         <path d="M3 2 L3 23 L8.6 18 L12.4 26.2 L16.2 24.5 L12.5 16.6 L20 16.4 Z"
           fill="#ffffff" stroke="#1a1a1a" stroke-width="1.6" stroke-linejoin="round" />
       </svg>
     </div>`;
   const layer = shadow.querySelector('.layer');
+  const nudgeEl = shadow.querySelector('.nudge');
+  /** Frames repainted after a ring goes: a frame with the ring half faded must not be the take's last. */
+  const NUDGE_FRAMES = 8;
+  let ringsUp = 0;
+  let nudging = Promise.resolve();
+  let idleWaiters = [];
+
+  /**
+   * Repaint a 1 px, 1% speck for a few frames. While the page is otherwise still, Chromium's screencast
+   * only sends a frame when something changes; under load it can drop the frame that removed the ring and
+   * keep showing a half-faded ring until the next change. These changed frames carry the ring-free page.
+   */
+  function nudge() {
+    nudging = new Promise((resolve) => {
+      let n = 0;
+      const step = () => {
+        nudgeEl.style.opacity = n % 2 ? '0.01' : '0.02';
+        if (++n < NUDGE_FRAMES) requestAnimationFrame(step);
+        else resolve();
+      };
+      requestAnimationFrame(step);
+    });
+    return nudging;
+  }
+  function settleIdle() {
+    if (ringsUp > 0) return;
+    nudging.then(() => {
+      if (ringsUp > 0) return;
+      const waiters = idleWaiters;
+      idleWaiters = [];
+      waiters.forEach((w) => w());
+    });
+  }
   const cursor = shadow.querySelector('.cursor');
 
   let pos = null;
@@ -113,9 +148,20 @@
       r.className = 'ring';
       Object.assign(r.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
       layer.insertBefore(r, cursor);
+      ringsUp++;
       requestAnimationFrame(() => requestAnimationFrame(() => (r.style.opacity = String(RING.opacity))));
       setTimeout(() => (r.style.opacity = '0'), RING.fadeMs + holdMs);
-      setTimeout(() => r.remove(), 2 * RING.fadeMs + holdMs + 50);
+      setTimeout(() => {
+        r.remove();
+        ringsUp--;
+        nudge();
+        settleIdle();
+      }, 2 * RING.fadeMs + holdMs + 50);
+    },
+    /** Resolves once no ring is up and the repaints after the last one removed have run. */
+    ringsGone() {
+      if (ringsUp === 0) return nudging;
+      return new Promise((resolve) => idleWaiters.push(resolve));
     },
     /**
      * Full-viewport magenta flash held for at least `minMs`. Resolves with the epoch ms stamped in the

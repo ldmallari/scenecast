@@ -206,6 +206,29 @@ describe('recordScene', () => {
     expect(inFrame(e.panels[0]!)).toBe(true);
   }, 60_000);
 
+  it('a ring is gone from the take before the next event', async () => {
+    const steps: Step[] = [
+      { do: 'ring', sel: '.worklist', pad: 8, ms: 300 },
+      { do: 'click', sel: '#menu-button' },
+    ];
+    const take = await recordScene(scene('ringgone', '/dashboard', steps), sched(steps, [0.5, 2.0]), app, path.join(work, 'takes'));
+    const [ring, next] = take.events;
+    const rb = ring!.ringBox!;
+    // A point on the ring's left border (3 px wide), halfway down.
+    const track = pixelTrack(take.file, rb.x + 1, rb.y + rb.h / 2);
+    const magenta = track.findIndex(([r, g, b]) => r > 200 && g < 80 && b > 200);
+    expect(magenta).toBeGreaterThanOrEqual(0);
+    const frameAt = (t: number) => magenta + Math.round(t * VIDEO_FPS);
+    const isRing = ([r, g, b]: [number, number, number]) => r > 200 && g > 150 && b < 120; // #F5C518
+    // Positive control: the ring shows while it holds.
+    const during = track.slice(frameAt(ring!.at + 0.25), frameAt(ring!.at + 0.45));
+    expect(during.some(isRing)).toBe(true);
+    // Removed 0.65 s after it fired (150 fade + 300 hold + 150 fade + 50); none of it from then until the next event.
+    const after = track.slice(frameAt(ring!.at + 0.8), frameAt(next!.at));
+    expect(after.length).toBeGreaterThan(5);
+    expect(after.filter(isRing)).toEqual([]);
+  }, 60_000);
+
   it('declared navs are logged with their boxes; missing ones are skipped', async () => {
     const steps: Step[] = [{ do: 'click', sel: '#menu-button' }];
     const withNav = { ...app, nav: [{ selector: 'header.topbar', edge: 'top' as const }, { selector: '#no-such-nav', edge: 'left' as const }] };
