@@ -10,6 +10,7 @@ import {
   RING_HOLD_MS,
   toSrt,
   travelSecFor,
+  type BlankRange,
   type Box,
   type Cue,
   type Scene,
@@ -45,6 +46,8 @@ export interface Recorded {
   flashEnd: number;
   /** Length of the take file in seconds. */
   srcDuration: number;
+  /** Runs of near-uniform frames after the flash (scanBlank), frozen over by retime. */
+  blanks?: BlankRange[];
 }
 
 export interface SceneInput {
@@ -88,6 +91,7 @@ export function appPlanScene(scene: Scene, voice: SceneVoice, scheduled: Schedul
     sceneId: scene.id,
     flashTime: rec.flashTime,
     flashEnd: rec.flashEnd,
+    blanks: rec.blanks ?? [],
     srcDuration: rec.srcDuration,
   });
   const duration = toFrames(voice.duration + DEFAULTS.video.breathSec);

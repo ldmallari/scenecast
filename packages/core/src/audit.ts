@@ -131,7 +131,7 @@ export function buildAuditInput(
     }));
     if (scene.kind === 'title') {
       if (!ps || ps.kind !== 'card') throw new Error(`audit: title scene "${scene.id}" has no card at plan index ${planIndex}`);
-      const base = { id: scene.id, start: round(start), end: round(start + ps.duration), narration: scene.narration, cues, phrases };
+      const base = { id: scene.id, kind: 'title', start: round(start), end: round(start + ps.duration), narration: scene.narration, cues, phrases };
       return { ...base, zooms: [], navBox: null, navs: [], events: [], moments: [] };
     }
     if (!ps || ps.kind !== 'app') throw new Error(`audit: scene "${scene.id}" has no app scene at plan index ${planIndex}`);
@@ -215,8 +215,13 @@ export function buildAuditInput(
         };
       });
 
+    // The app's screen in the frame: the whole frame, or the phone screen (the blank-frame check looks only here).
+    const pf = phoneFrame();
+    const screen = phone ? { x: pf.x, y: pf.y, w: pf.w, h: pf.h } : frame;
     return {
       id: scene.id,
+      kind: 'app',
+      screen,
       start: round(start),
       end: round(start + ps.duration),
       narration: scene.narration,
@@ -246,6 +251,8 @@ export function buildAuditInput(
       toleranceLu: L.toleranceLu,
       truePeakDb: L.truePeakDb,
       zoomEaseSec,
+      blank: { ...DEFAULTS.blank },
+      dissolveSec: DEFAULTS.video.dissolveSec,
     },
     loudness: opts.loudness,
     music: opts.plan.brand.music ? { licence: opts.plan.brand.music.licence } : null,

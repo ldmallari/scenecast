@@ -38,6 +38,9 @@ def fetch_nltk_data() -> None:
 
     d = _setup_nltk()
     d.mkdir(parents=True, exist_ok=True)
+    # NLTK refuses to install into a folder other accounts can write to; with a umask of 002 (common on
+    # Linux) a new folder is group-writable. Keep it private to its owner.
+    d.chmod(d.stat().st_mode & 0o7755)
     for path, name in NLTK_PACKAGES.items():
         try:
             nltk.data.find(path, paths=[str(d)])

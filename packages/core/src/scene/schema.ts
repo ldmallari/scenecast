@@ -23,6 +23,13 @@ export const DEFAULTS = {
   },
   phone: { width: 390, height: 844 },
   audit: { syncMaxSec: 0.3, zoomPadPx: 24 },
+  /**
+   * A near-uniform ("blank") frame: the frame shrunk to gridW×gridH grey cells (area average) has a luma
+   * standard deviation at or below lumaStdMax (0–255). A real page measures about 9 or more; a white page
+   * mid-navigation measures under 0.2. Retime freezes the last good frame over blank frames in a take, and
+   * the audit FAILs any blank frame left in an app scene.
+   */
+  blank: { gridW: 128, gridH: 72, lumaStdMax: 2 },
 } as const;
 
 const StepSchema = z.object({

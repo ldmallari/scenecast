@@ -17,8 +17,8 @@ production set in `py/uv.lock`), and fails when one of them:
 - is missing from the tables below.
 
 A few permissive licences outside the allow-list (MIT-0, MIT-CMU, Zlib, PSF-2.0, CNRI-Python) pass only through a
-reviewed override, never on metadata alone. A tool binary that scenecast runs as a separate program, or never runs,
-passes only through an override marked `tool`. The test suite runs the check on fixtures and, once `scenecast doctor`
+reviewed override, never on metadata alone. A tool binary that scenecast runs as a separate program passes only through
+an override marked `tool`. The test suite runs the check on fixtures and, once `scenecast doctor`
 has set up the Python environment, on the real tree.
 
 ## Models and data
@@ -68,27 +68,30 @@ the GPL of the ffmpeg builds, apply to those binaries only.
 
 | Tool | Licence | Source | How scenecast uses it |
 |---|---|---|---|
-| ffmpeg bundled with `imageio-ffmpeg` | GPL-2.0-or-later build (`--enable-gpl`, with libx264) | https://ffmpeg.org/legal.html, https://github.com/imageio/imageio-ffmpeg | The toolchain ffmpeg: encoding, mixing, loudness, frame extraction. Run as a subprocess. |
-| ffprobe from `@ffprobe-installer/*` | LGPL-2.1 (an LGPL build) | https://github.com/SavageCore/node-ffprobe-installer | Run by Revideo to read media. |
-| ffmpeg from `@ffmpeg-installer/*` | GPL build of FFmpeg (the darwin-arm64 binary reports `--enable-gpl --enable-nonfree`) | https://github.com/kribblo/node-ffmpeg-installer | Installed as a dependency of `@revideo/ffmpeg`, **never run**: scenecast points Revideo at the toolchain ffmpeg (`FFMPEG_PATH`). |
-| Chromium (Playwright's build) | BSD-3-Clause, with third-party parts under their own licences | https://playwright.dev, https://www.chromium.org | Records the app and renders the composition. Installed with `npx playwright install chromium`. |
+| ffmpeg bundled with `imageio-ffmpeg` | macOS arm64: a GPL-2.0-or-later build (`--enable-gpl`, with libx264). Linux x86_64: a GPL-3.0-or-later static build (`--enable-gpl --enable-version3`, with libx264) | https://ffmpeg.org/legal.html, https://github.com/imageio/imageio-ffmpeg | The toolchain ffmpeg: encoding, mixing, loudness, frame extraction. Run as a subprocess. |
+| ffprobe from `@ffprobe-installer/*` (one build per platform) | darwin-arm64: LGPL-2.1 (an LGPL build, checked). darwin-x64 and the Linux builds: GPL-3.0 (static builds; npm registry metadata, 2026-10-25) | https://github.com/SavageCore/node-ffprobe-installer | Run by Revideo to read media (`FFPROBE_PATH`). |
+| `@ffmpeg-installer/ffmpeg` | not installed | https://github.com/kribblo/node-ffmpeg-installer | `@revideo/ffmpeg` asks for it. A pnpm override replaces it with `stubs/ffmpeg-installer`, a small stand-in (MIT, part of this repository) that points at the toolchain ffmpeg, so no ffmpeg binary is downloaded with the npm packages. |
+| Chromium (Playwright's build) | BSD-3-Clause, with third-party parts under their own licences | https://playwright.dev, https://www.chromium.org | Records the app and renders the composition. Installed with `pnpm -C packages/cli exec playwright install chromium`. |
 | uv | MIT OR Apache-2.0 | https://github.com/astral-sh/uv | Manages the Python environment. `scenecast doctor` installs it into your home folder if it is missing. |
 
 ## Native libraries inside Python wheels
 
-Some Python wheels ship native libraries that load into the Python process:
+Some Python wheels ship native libraries:
 
-- **`av` (PyAV)**, a dependency of faster-whisper. Its wheel bundles the FFmpeg libraries (built as LGPL-3.0-or-later)
-  and also libx264 and libx265, which are GPL-2.0-or-later. faster-whisper imports `av` when it loads, so these
-  libraries are loaded into the process that runs speech recognition. scenecast never calls PyAV (audio is decoded by
-  the ffmpeg tool above), but the libraries are still loaded. **Known issue for v1:** this does not meet the
-  project's own "no GPL in imported libraries" rule and is under review.
+- **`av` (PyAV)** is installed because faster-whisper depends on it, but scenecast **never loads it**. Its wheel bundles
+  the FFmpeg libraries (built as LGPL-3.0-or-later) and also libx264 and libx265, which are GPL-2.0-or-later.
+  faster-whisper imports `av` when it loads, only to decode audio files. scenecast decodes audio with the ffmpeg tool
+  above into a 16 kHz array, and puts a stub in place of `av` before importing faster-whisper
+  (`py/scenecast_py/whisper.py`), so PyAV and its libraries never load. `py/tests/test_whisper.py` checks this, and a
+  real transcription was checked by hand on macOS (`DYLD_PRINT_LIBRARIES`) and Linux (`LD_DEBUG=libs`): neither x264
+  nor x265 loaded.
 - **`soundfile`** bundles libsndfile (LGPL-2.1).
 - **`pillow`** bundles image codecs (libjpeg, libpng, libtiff, libwebp, FreeType, HarfBuzz and others) under their own
   permissive licences.
 - **`ctranslate2`**, **`onnxruntime`**, **`numpy`** ship their own compiled code under the licences in the table.
 
-Wheels differ per platform. These notes describe the macOS arm64 wheels; Linux wheels may bundle different libraries.
+Wheels differ per platform. These notes describe the macOS arm64 wheels; the Linux x86_64 `av` wheel bundles x264 and
+x265 too (in `av.libs/`). Other Linux wheels may bundle different libraries.
 
 ## Deprecated packages
 
@@ -117,8 +120,6 @@ here, and its licence was not verified.
 | `@codemirror/state` | MIT | https://code.haverbeke.berlin/codemirror/state |
 | `@codemirror/streamparser` | MIT | https://code.haverbeke.berlin/codemirror/streamparser |
 | `@codemirror/view` | MIT | https://code.haverbeke.berlin/codemirror/view |
-| `@ffmpeg-installer/darwin-arm64` | GPL build of FFmpeg (package.json gives only a link to FFmpeg's LICENSE.md): installed, never run (see "Tools") | https://www.osxexperts.net/ |
-| `@ffmpeg-installer/ffmpeg` | LGPL-2.1 | https://github.com/kribblo/node-ffmpeg-installer |
 | `@ffprobe-installer/darwin-arm64` | LGPL-2.1 | https://formulae.brew.sh/formula/ffmpeg |
 | `@ffprobe-installer/ffprobe` | LGPL-2.1 | https://github.com/SavageCore/node-ffprobe-installer |
 | `@lezer/common` | MIT | https://code.haverbeke.berlin/lezer/common |
@@ -243,7 +244,7 @@ here, and its licence was not verified.
 | `zod` | MIT | https://zod.dev |
 | `@rolldown/binding-*` | MIT | https://rolldown.rs/ (the build for your platform; darwin-arm64 checked) |
 | `lightningcss-*` | MPL-2.0 | https://github.com/parcel-bundler/lightningcss (the build for your platform; darwin-arm64 checked) |
-| `@ffprobe-installer/*` | LGPL-2.1 | https://github.com/SavageCore/node-ffprobe-installer (the build for your platform; darwin-arm64 checked) |
+| `@ffprobe-installer/*` | darwin-arm64: LGPL-2.1; darwin-x64, linux-x64, linux-arm64, linux-arm, linux-ia32: GPL-3.0 (run as a separate program, see "Tools") | https://github.com/SavageCore/node-ffprobe-installer (the build for your platform) |
 
 ## Python production packages
 
@@ -253,7 +254,7 @@ here, and its licence was not verified.
 | `annotated-doc` | MIT | https://github.com/fastapi/annotated-doc |
 | `annotated-types` | MIT | https://github.com/annotated-types/annotated-types |
 | `anyio` | MIT | https://github.com/agronholm/anyio |
-| `av` | BSD-3-Clause (bundles native FFmpeg, x264 and x265 libraries: see "Native libraries inside Python wheels") | https://github.com/PyAV-Org/PyAV |
+| `av` | BSD-3-Clause (installed for faster-whisper, never loaded: see "Native libraries inside Python wheels") | https://github.com/PyAV-Org/PyAV |
 | `blis` | BSD-3-Clause | https://github.com/explosion/cython-blis |
 | `catalogue` | MIT | https://github.com/explosion/catalogue |
 | `certifi` | MPL-2.0 | https://github.com/certifi/python-certifi |

@@ -20,10 +20,11 @@ Expect, for each minute of finished video:
 | Stage | Time |
 |---|---|
 | Compose (drawing the video with zoom, rings, captions and cards) | about 2× the video length |
-| A whole cold render | about 5 to 7× the video length: recording runs in real time, and the voice and speech recognition add to it |
+| A whole cold render | about 3.5 to 7× the video length: recording runs in real time, and the voice and speech recognition add to it |
 | A re-run with nothing changed | under a second: every stage is reused from `work/<id>/` |
 
-The demo (about 44 s of video) took 4 to 5 minutes cold on an Apple silicon Mac. A busy machine is slower.
+The demo (about 44 s of video) took about 2.5 minutes cold on a 12-core Linux PC and 4 to 5 minutes on an Apple
+silicon Mac. A busy machine is slower.
 `scenecast render` prints the time of each stage that ran at the end.
 
 The cache is keyed on the scene file, the saved session, the login hook and the seed script, not on the app itself.
@@ -87,6 +88,13 @@ audit:
 A narration WARN never fails the render, but read it: it is also how you catch a word that was mispronounced or
 dropped. In the demo, the first word after the silent intro card ("Welcome") is sometimes not heard; that WARN is
 known.
+
+## Blank frame FAILs
+
+A page that goes blank while it navigates is frozen over automatically: when recording, scenecast finds near-uniform
+frames in each take and holds the last good frame over them. A blank-frame FAIL means one got through, usually because
+the page stayed blank for a long time or the take came from an older cache. Render with `--fresh`; if the page is
+really slow to paint, add `prewarm` or a cue-less `wait`.
 
 ## Loading FAILs
 

@@ -22,3 +22,24 @@ def test_fallback_handles_unknown_word(g2p):
     fb = G2PFallback()
     out, _ = fb(MToken(text="zorblatrix", tag="NN", whitespace=""))
     assert out
+
+
+def test_fetch_keeps_the_nltk_folder_private_under_umask_002(tmp_path, monkeypatch):
+    """NLTK refuses to install into a group-writable folder; a umask of 002 would make one."""
+    import os
+    import stat
+
+    import nltk
+
+    d = tmp_path / "nltk"
+    monkeypatch.setenv("NLTK_DATA", str(d))
+    seen = []
+    monkeypatch.setattr(nltk.data, "find", lambda *a, **k: (_ for _ in ()).throw(LookupError("missing")))
+    monkeypatch.setattr(nltk, "download", lambda name, download_dir, quiet: seen.append(oct(os.stat(download_dir).st_mode)) or True)
+    old = os.umask(0o002)
+    try:
+        fetch_nltk_data()
+    finally:
+        os.umask(old)
+    assert len(seen) == 3
+    assert not stat.S_IMODE(d.stat().st_mode) & (stat.S_IWGRP | stat.S_IWOTH)

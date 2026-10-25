@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { DEFAULTS } from './scene/schema.js';
 import { ensureToolchain } from './toolchain.js';
 
 export interface FlashScan {
@@ -51,4 +52,70 @@ export async function scanFlash(file: string): Promise<FlashScan> {
 /** Presentation time (seconds) of the first magenta frame. */
 export async function detectFlash(file: string): Promise<number> {
   return (await scanFlash(file)).start;
+}
+
+/** A run of near-uniform frames in a take, in source seconds (see `DEFAULTS.blank`). */
+export interface BlankRange {
+  /** Presentation time of the first blank frame. */
+  start: number;
+  /** Presentation time of the first good frame after the run (the file's end when none follows). */
+  end: number;
+  /** Presentation time of the last good frame before the run: the frame to freeze over it. */
+  holdAt: number;
+}
+
+/** Luma standard deviation of one grey frame (one byte per cell). */
+export function lumaStd(px: Uint8Array): number {
+  let s = 0;
+  let s2 = 0;
+  for (const v of px) {
+    s += v;
+    s2 += v * v;
+  }
+  const m = s / px.length;
+  return Math.sqrt(Math.max(0, s2 / px.length - m * m));
+}
+
+/**
+ * Runs of blank frames at or after `from` (the first frame after the flash), from each frame's time and
+ * luma standard deviation. A run with no good frame before it holds the first good frame after it.
+ */
+export function blankRanges(times: number[], stds: number[], from: number, max: number = DEFAULTS.blank.lumaStdMax): BlankRange[] {
+  const out: BlankRange[] = [];
+  let lastGood: number | undefined;
+  let runStart: number | undefined;
+  for (let i = 0; i < times.length; i++) {
+    const t = times[i]!;
+    if (t < from - 1e-6) continue;
+    const blank = stds[i]! <= max;
+    if (blank && runStart === undefined) runStart = t;
+    if (!blank) {
+      if (runStart !== undefined) out.push({ start: runStart, end: t, holdAt: lastGood ?? t });
+      runStart = undefined;
+      lastGood = t;
+    }
+  }
+  if (runStart !== undefined) {
+    const last = times.at(-1)!;
+    const end = last + (times.length > 1 ? last - times.at(-2)! : 1 / 25);
+    out.push({ start: runStart, end, holdAt: lastGood ?? runStart });
+  }
+  return out;
+}
+
+/** Finds the runs of near-uniform frames (a blank page mid-navigation, say) at or after `from` seconds. */
+export async function scanBlank(file: string, from: number): Promise<BlankRange[]> {
+  const { ffmpeg } = await ensureToolchain({ offline: true }).catch(() => ensureToolchain());
+  const { gridW: w, gridH: h } = DEFAULTS.blank;
+  const { out, err } = await runFfmpeg(ffmpeg, [
+    '-hide_banner', '-nostdin', '-i', file,
+    '-vf', `scale=${w}:${h}:flags=area,format=gray,showinfo`,
+    '-fps_mode', 'passthrough', '-f', 'rawvideo', '-',
+  ]);
+  const times = [...err.matchAll(/pts_time:\s*(-?[\d.]+)/g)].map((m) => Number(m[1]));
+  const size = w * h;
+  const frames = Math.min(times.length, Math.floor(out.length / size));
+  const stds: number[] = [];
+  for (let i = 0; i < frames; i++) stds.push(lumaStd(out.subarray(i * size, (i + 1) * size)));
+  return blankRanges(times.slice(0, frames), stds, from);
 }

@@ -53,6 +53,9 @@ jobs:
       - name: scenecast doctor
         run: node packages/cli/bin/scenecast.js doctor
 
+      - name: Check dependency licences
+        run: node scripts/check-licences.mjs
+
       - name: Render the demo and audit it
         run: pnpm -C packages/cli exec vitest run -t e2e
 

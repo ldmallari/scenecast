@@ -21,7 +21,7 @@ no sound; the video is narrated.*
   the app changes, render again. There is no timeline to edit by hand.
 - **An audit of every moment.** After the render, scenecast transcribes the final video with Whisper and checks every
   cued step: was the action within 0.30 s of its word, does the ring or zoom contain the element, does any caption
-  cover the target, the cursor or an open panel, is the zoom cropped, was a spinner showing, is the loudness right. The
+  cover the target, the cursor or an open panel, is the zoom cropped, was a spinner or a blank page showing, is the loudness right. The
   result is a table, a contact sheet and an exit code. The included demo passes every cued moment with a median gap of
   0.0165 s and a largest gap of 0.127 s.
 - **Captions that know the UI.** Captions move out of the way of whatever is being clicked, typed into or highlighted,
@@ -93,8 +93,8 @@ did not change are reused from `work/<id>/`; `--fresh` redoes them all, for exam
 Recording happens in real time, so a render takes several times the length of the video:
 
 - composing the video (zoom, rings, captions, cards): about 2× the video length;
-- a whole first render: about 5 to 7× the video length, because recording, the voice and speech recognition add to
-  it. The 44-second demo took 4 to 5 minutes on an Apple silicon Mac;
+- a whole first render: about 3.5 to 7× the video length, because recording, the voice and speech recognition add
+  to it. The 44-second demo took about 2.5 minutes on a 12-core Linux PC and 4 to 5 minutes on an Apple silicon Mac;
 - a re-run with nothing changed: under a second, as every stage comes from the cache.
 
 ## Use it from Claude Code

@@ -156,13 +156,12 @@ def run(spec, out_dir, fake=False):
     if fake:
         tts, whisper = FakeTTS(), None
     else:
-        from faster_whisper import WhisperModel
-
         from scenecast_py.kokoro import Kokoro
+        from scenecast_py.whisper import whisper_model
 
         models = spec["models"]
         tts = Kokoro(models["kokoro"], models["voices"])
-        whisper = WhisperModel(models["whisper"], device="cpu", compute_type="int8")
+        whisper = whisper_model(models["whisper"])
 
     scenes = {}
     for scene in spec["scenes"]:

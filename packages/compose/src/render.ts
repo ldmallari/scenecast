@@ -190,6 +190,9 @@ export async function preview(plan: ComposePlan, opts: { open?: boolean; port?: 
   let started = false;
   try {
     const resolved = await resolvePlan(plan, publicDir, ffmpeg, encoder);
+    // As in the render worker: Revideo's ffmpeg settings read these when @revideo/ffmpeg loads.
+    process.env.FFMPEG_PATH = ffmpeg;
+    process.env.FFPROBE_PATH = ffprobePath();
     const { createServer } = await import('vite');
     const motionCanvas = (require('@revideo/vite-plugin') as { default: (o: object) => unknown[] }).default;
     server = await createServer({

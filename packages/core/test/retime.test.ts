@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { detectFlash } from '../src/ffmpeg.js';
+import { blankRanges, detectFlash, scanBlank } from '../src/ffmpeg.js';
 import { DEFAULT_TRAVEL_SEC, type Take, type TakeEvent } from '../src/record/record.js';
 import { outputTimeOf, retime, type Segment } from '../src/retime.js';
 import type { ScheduledStep } from '../src/schedule.js';
@@ -192,4 +192,78 @@ describe('outputTimeOf', () => {
     // Up to a frame past a clip's end (frame-grid rounding) lands on the clip's end.
     expect(outputTimeOf(segs, 2.21)).toBeCloseTo(2.0, 9);
   });
+});
+
+describe('blank frames', () => {
+  it('blankRanges: runs after the flash, each holding the last good frame before it', () => {
+    const t = [0, 0.04, 0.08, 0.12, 0.16, 0.2, 0.24, 0.28];
+    const std = [0, 0, 12, 11, 0.1, 0.0, 10, 0.3];
+    // Frames before `from` (the flash and anything earlier) never count.
+    const r6 = (r: { start: number; end: number; holdAt: number }) => ({ start: +r.start.toFixed(6), end: +r.end.toFixed(6), holdAt: +r.holdAt.toFixed(6) });
+    expect(blankRanges(t, std, 0.08, 2).map(r6)).toEqual([
+      { start: 0.16, end: 0.24, holdAt: 0.12 },
+      { start: 0.28, end: 0.32, holdAt: 0.24 },
+    ]);
+    expect(blankRanges(t, std.map(() => 9), 0, 2)).toEqual([]);
+  });
+
+  it('retime freezes the last good frame over a blank run, keeping the scene length and the sync', () => {
+    const blank = { start: FLASH + 1.6, end: FLASH + 1.68, holdAt: FLASH + 1.56 };
+    const t = take([{ index: 0, kind: 'click', at: 1.0 }]);
+    const s = sched([{ index: 0, do: 'click', startAt: 1.0 - DEFAULT_TRAVEL_SEC }]);
+    const plain = retime(t, s, voice(4), opts);
+    const segs = retime(t, s, voice(4), { ...opts, blanks: [blank] });
+    expect(sceneLen(segs)).toBeCloseTo(sceneLen(plain), 9);
+    const freeze = segs.find((g) => g.hold !== undefined && g.srcIn === blank.holdAt);
+    expect(freeze).toBeDefined();
+    expect(freeze!.hold!).toBeGreaterThan(0);
+    // No clip shows a blank frame: nothing plays source time inside the run.
+    for (const g of segs.filter((x) => x.hold === undefined))
+      // ...with two output frames of margin before the run and one after (re-encoding rounds to the nearest frame).
+      expect(g.srcOut <= blank.start - 2 * FRAME + FRAME / 2 + 1e-9 || g.srcIn >= blank.end + FRAME - 1e-9).toBe(true);
+    expect(outTimeOf(segs, FLASH + 1.0)).toBeCloseTo(outTimeOf(plain, FLASH + 1.0), 9);
+  });
+
+  it('keeps an action just before a blank run on screen (the click that starts a navigation)', () => {
+    // The click lands one source frame before the page goes blank.
+    const blank = { start: FLASH + 1.04, end: FLASH + 1.08, holdAt: FLASH + 1.0 };
+    const t = take([{ index: 0, kind: 'click', at: 1.0 }]);
+    const s = sched([{ index: 0, do: 'click', startAt: 1.0 - DEFAULT_TRAVEL_SEC }]);
+    const segs = retime(t, s, voice(4), { ...opts, blanks: [blank] });
+    expect(outputTimeOf(segs, FLASH + 1.0)).not.toBeNull();
+    expect(segs.some((g) => g.hold !== undefined && g.srcIn === blank.holdAt)).toBe(true);
+  });
+
+  it('maps an action logged inside a blank run to its place in the freeze', () => {
+    // The click is logged a few ms after the first blank frame (the two clocks agree only to a frame).
+    const blank = { start: FLASH + 1.0, end: FLASH + 1.04, holdAt: FLASH + 0.96 };
+    const t = take([{ index: 0, kind: 'click', at: 1.008 }]);
+    const s = sched([{ index: 0, do: 'click', startAt: 1.008 - DEFAULT_TRAVEL_SEC }]);
+    const plain = retime(t, s, voice(4), opts);
+    const segs = retime(t, s, voice(4), { ...opts, blanks: [blank] });
+    const out = outputTimeOf(segs, FLASH + 1.008);
+    expect(out).not.toBeNull();
+    expect(Math.abs(out! - outputTimeOf(plain, FLASH + 1.008)!)).toBeLessThanOrEqual(FRAME);
+  });
+
+  it('scanBlank finds a white frame run inside a take (fixture video)', async () => {
+    const { ffmpeg } = await ensureToolchain();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-blank-'));
+    const file = path.join(dir, 'take.webm');
+    // A busy test pattern with a 0.12 s plain white stretch at 1.0 s, like a page between navigations.
+    execFileSync(ffmpeg, [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=25:d=2',
+      '-f', 'lavfi', '-i', 'color=c=0xF4F6F8:s=320x180:r=25:d=2',
+      '-filter_complex', '[0:v][1:v]overlay=enable=between(t\\,1.0\\,1.1)',
+      '-c:v', 'libvpx', '-b:v', '1M', '-t', '2', file,
+    ]);
+    const runs = await scanBlank(file, 0.2);
+    expect(runs).toHaveLength(1);
+    expect(Math.abs(runs[0]!.start - 1.0)).toBeLessThanOrEqual(0.04 + 1e-6);
+    expect(runs[0]!.end).toBeGreaterThan(runs[0]!.start);
+    expect(runs[0]!.holdAt).toBeLessThan(runs[0]!.start);
+    // Before `from`, it is ignored.
+    expect(await scanBlank(file, 1.5)).toEqual([]);
+  }, 30_000);
 });

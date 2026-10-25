@@ -13,6 +13,7 @@ import {
   recordScene,
   runFfmpeg,
   runPy,
+  scanBlank,
   scanFlash,
   schedule,
   splitPhrases,
@@ -187,10 +188,14 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
           if (!opts.keepWork) fs.rmSync(path.join(dir, '.session.json'), { force: true });
         }
         const flash = await scanFlash(take.file);
-        return { take, flashTime: flash.start, flashEnd: flash.end, srcDuration: await mediaDuration(take.file) };
+        const blanks = await scanBlank(take.file, flash.end);
+        if (blanks.length) log(`record/${scene.id}: ${blanks.length} blank frame run(s) in the take; holding the last good frame over them`);
+        return { take, flashTime: flash.start, flashEnd: flash.end, srcDuration: await mediaDuration(take.file), blanks };
       },
       outputs: (r) => [r.take.file],
     });
+    // A take recorded before blank-frame scanning existed: scan it now.
+    recorded.blanks ??= await scanBlank(recorded.take.file, recorded.flashEnd);
     inputs.push({ scene, voice, scheduled, recorded });
   }
 

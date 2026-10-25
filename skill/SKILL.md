@@ -38,7 +38,7 @@ mobile apps, or Windows without WSL.
    The file is validated on load: a cue missing from the narration is an error that names the scene and step.
 
 4. **Render.** Start the app, then `scenecast render video.yaml`. It writes `out/<output>.mp4`, `.srt`,
-   `chapters.txt` and `out/audit/`, and exits 1 when the audit FAILs. A cold render takes about 5 to 7 times the
+   `chapters.txt` and `out/audit/`, and exits 1 when the audit FAILs. A cold render takes about 3.5 to 7 times the
    video's length, so tell the user before starting a long one. Use `--only <sceneId>` while working on a single
    scene.
 

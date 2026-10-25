@@ -488,3 +488,86 @@ def test_more_number_forms():
     assert normalise_words("at 10:30") == normalise_words("at ten thirty")
     assert normalise_words("9:05") == ["nine", "oh", "five"]
     assert normalise_words("$1,500.00") == normalise_words("$1,500")
+
+
+# ---------------------------------------------------------------- blank frames
+
+BLANK_RULES = {**RULES, "blank": {"gridW": 128, "gridH": 72, "lumaStdMax": 2}}
+
+
+def _scene(sid, kind, start, end, cues=(), screen=None):
+    return {"id": sid, "kind": kind, "start": start, "end": end, "cues": list(cues), **({"screen": screen} if screen else {})}
+
+
+def test_blank_frames_fails_a_uniform_frame_in_an_app_scene_only():
+    import numpy as np
+
+    from scenecast_py.audit import blank_frames
+
+    rng = np.random.default_rng(0)
+    busy = rng.integers(0, 255, size=(72, 128)).astype(np.uint8)
+    white = np.full((72, 128), 244, dtype=np.uint8)
+    # A caption box drawn over the white frame must not hide it: captions are left out of the check.
+    captioned = white.copy()
+    captioned[56:68, 30:98] = 40
+    cue = {"start": 0.0, "end": 10.0, "box": {"x": 30 * 15, "y": 56 * 15, "w": 68 * 15, "h": 12 * 15}}
+    scenes = [_scene("card", "title", 0, 1), _scene("app", "app", 1, 3, [cue])]
+    times = [0.5, 1.5, 2.0, 2.5]
+    frames = [white, busy, captioned, busy]
+    r = blank_frames(times, frames, scenes, BLANK_RULES)
+    assert r["verdict"] == "FAIL"
+    assert [f["time"] for f in r["frames"]] == [2.0]  # the white card frame at 0.5 s is not an app scene
+    assert "2.00 s (app)" in r["detail"]
+
+    ok = blank_frames([0.5, 1.5, 2.5], [white, busy, busy], scenes, BLANK_RULES)
+    assert ok["verdict"] == "PASS" and ok["frames"] == []
+
+
+def test_blank_frames_looks_only_at_the_phone_screen():
+    import numpy as np
+
+    from scenecast_py.audit import blank_frames
+
+    frame = np.full((72, 128), 30, dtype=np.uint8)  # dark backdrop
+    frame[10:62, 54:74] = 250  # a white, empty phone screen inside it
+    frame[8:64, 52:54] = 120  # the drawn outline
+    screen = {"x": 54 * 15, "y": 10 * 15, "w": 20 * 15, "h": 52 * 15}
+    r = blank_frames([1.0], [frame], [_scene("phone", "app", 0, 2, screen=screen)], BLANK_RULES)
+    assert r["verdict"] == "FAIL"
+    assert blank_frames([1.0], [frame], [_scene("phone", "app", 0, 2)], BLANK_RULES)["verdict"] == "PASS"
+
+
+def test_grey_frames_and_blank_check_on_a_video_fixture(tmp_path):
+    import imageio_ffmpeg
+
+    from scenecast_py.audit import blank_frames, grey_frames
+
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    video = tmp_path / "v.mp4"
+    subprocess.run(
+        [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+         "-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=30:d=2",
+         "-f", "lavfi", "-i", "color=c=0xF4F6F8:s=1920x1080:r=30:d=2",
+         "-filter_complex", "[0:v][1:v]overlay=enable=between(t\\,1.0\\,1.1)",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-t", "2", str(video)],
+        check=True,
+    )
+    times, frames = grey_frames(str(video), ffmpeg, BLANK_RULES)
+    assert len(times) == 60 and frames.shape == (60, 72, 128)
+    r = blank_frames(times, frames, [_scene("app", "app", 0, 2)], BLANK_RULES)
+    assert r["verdict"] == "FAIL"
+    assert all(0.99 <= f["time"] <= 1.11 for f in r["frames"]) and len(r["frames"]) >= 3
+
+
+def test_blank_frames_skip_the_dissolve_to_a_card_but_not_between_app_scenes():
+    import numpy as np
+
+    from scenecast_py.audit import blank_frames
+
+    navy = np.full((72, 128), 50, dtype=np.uint8)  # a card colour before its title fades in
+    rules = {**BLANK_RULES, "dissolveSec": 0.35}
+    to_card = [_scene("a", "app", 0, 4), _scene("card", "title", 4, 6)]
+    assert blank_frames([3.9], [navy], to_card, rules)["verdict"] == "PASS"
+    assert blank_frames([3.0], [navy], to_card, rules)["verdict"] == "FAIL"
+    two_apps = [_scene("a", "app", 0, 4), _scene("b", "app", 4, 8), _scene("c", "title", 8, 9)]
+    assert blank_frames([3.9], [navy], two_apps, rules)["verdict"] == "FAIL"

@@ -1,10 +1,34 @@
 {
   "npm": {
-    "@ffmpeg-installer/darwin-arm64": {
-      "licence": "GPL-2.0-or-later",
+    "@ffprobe-installer/linux-x64": {
+      "licence": "GPL-3.0",
       "tool": true,
-      "source": "https://git.ffmpeg.org/gitweb/ffmpeg.git/blob_plain/HEAD:/LICENSE.md",
-      "reason": "Its package.json licence is only a URL to FFmpeg's LICENSE.md; the binary reports a --enable-gpl build. It is an ffmpeg executable that @revideo/ffmpeg depends on; scenecast sets FFMPEG_PATH to the toolchain ffmpeg, so this binary is installed but never run, and it is never linked."
+      "source": "https://www.johnvansickle.com/ffmpeg/",
+      "reason": "Registry metadata (npm view @ffprobe-installer/linux-x64@5.2.0, 2026-10-25): license GPL-3.0, a static ffprobe build. Installed only on that platform as Revideo's ffprobe; it is run as a separate program (FFPROBE_PATH), never linked."
+    },
+    "@ffprobe-installer/linux-arm64": {
+      "licence": "GPL-3.0",
+      "tool": true,
+      "source": "https://www.johnvansickle.com/ffmpeg/",
+      "reason": "Registry metadata (npm view @ffprobe-installer/linux-arm64@5.2.0, 2026-10-25): license GPL-3.0, a static ffprobe build. Installed only on that platform as Revideo's ffprobe; it is run as a separate program (FFPROBE_PATH), never linked."
+    },
+    "@ffprobe-installer/linux-arm": {
+      "licence": "GPL-3.0",
+      "tool": true,
+      "source": "https://www.johnvansickle.com/ffmpeg/",
+      "reason": "Registry metadata (npm view @ffprobe-installer/linux-arm@5.2.0, 2026-10-25): license GPL-3.0, a static ffprobe build. Installed only on that platform as Revideo's ffprobe; it is run as a separate program (FFPROBE_PATH), never linked."
+    },
+    "@ffprobe-installer/linux-ia32": {
+      "licence": "GPL-3.0",
+      "tool": true,
+      "source": "https://www.johnvansickle.com/ffmpeg/",
+      "reason": "Registry metadata (npm view @ffprobe-installer/linux-ia32@5.2.0, 2026-10-25): license GPL-3.0, a static ffprobe build. Installed only on that platform as Revideo's ffprobe; it is run as a separate program (FFPROBE_PATH), never linked."
+    },
+    "@ffprobe-installer/darwin-x64": {
+      "licence": "GPL-3.0",
+      "tool": true,
+      "source": "https://evermeet.cx/ffmpeg/",
+      "reason": "Registry metadata (npm view @ffprobe-installer/darwin-x64@5.1.0, 2026-10-25): license GPL-3.0, a static ffprobe build. Installed only on that platform as Revideo's ffprobe; it is run as a separate program (FFPROBE_PATH), never linked."
     }
   },
   "python": {

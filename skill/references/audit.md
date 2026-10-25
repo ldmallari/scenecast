@@ -49,6 +49,7 @@ Two checks cover the whole video:
 | Check | FAIL when |
 |---|---|
 | **loudness** | The mix is outside −16 ±1 LUFS, or its true peak is above −1.5 dBTP. |
+| **blank frames** | Any frame inside an app scene is near-uniform, such as a blank page between two navigations. Only the app's screen counts (the phone screen on phone scenes), captions are left out, and cards and the dissolves into and out of them are skipped. The times are listed. |
 | **narration** | Never FAILs. A WARN shows a diff (`-"expected" +"heard"`) when the transcript differs from the script after normalising numbers, case and punctuation. A word or name in `audit.allowList` may be heard differently, including as one more word (for example "worklist" heard as "work list"), without a WARN. |
 
 Scenes without cued steps (chapter cards, for example) get a captions check of their own.

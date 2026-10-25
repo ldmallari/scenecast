@@ -38,7 +38,6 @@ PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 _RANK = {PASS: 0, WARN: 1, FAIL: 2}
 EPS = 1e-6
 PX_TOL = 0.5  # boxes come from rounded CSS px and float scaling
-WHISPER_RATE = 16000
 SHEET_COLUMNS = 6
 THUMB_W = 320
 LABEL_H = 44
@@ -274,22 +273,92 @@ def audit_loudness(loud, rules):
     return {"lufs": lufs, "truePeak": tp, "verdict": FAIL if problems else PASS, "detail": "; ".join(problems)}
 
 
+# ---------------------------------------------------------------- blank frames
+
+CAPTION_MARGIN_PX = 6  # a caption box's shadow and anti-aliasing reach a little past its box
+
+
+def blank_frames(times, frames, scenes, rules):
+    """A whole-video check: FAIL when any frame inside an app scene is near-uniform (a blank page mid-navigation,
+    say). Each frame is a gridW x gridH grey array covering the whole 1920x1080 frame; only the app's screen
+    (the phone screen on phone scenes) counts, and captions shown at that moment are left out. Intro, outro and
+    chapter cards are not app scenes, so they never count, and neither does the dissolve between an app scene and
+    a card (a plain card colour before its title fades in); a dissolve between two app scenes is still checked."""
+    import numpy as np
+
+    b = rules["blank"]
+    gw, gh, limit = b["gridW"], b["gridH"], b["lumaStdMax"]
+    sx, sy = gw / rules["width"], gh / rules["height"]
+
+    def cells(box, margin=0.0):
+        x0 = max(0, int(np.floor((box["x"] - margin) * sx)))
+        y0 = max(0, int(np.floor((box["y"] - margin) * sy)))
+        x1 = min(gw, int(np.ceil((box["x"] + box["w"] + margin) * sx)))
+        y1 = min(gh, int(np.ceil((box["y"] + box["h"] + margin) * sy)))
+        return slice(y0, y1), slice(x0, x1)
+
+    ordered = sorted(scenes, key=lambda sc: sc["start"])
+    d = rules.get("dissolveSec", 0.35)
+    apps, exempt = [], []
+    for i, sc in enumerate(ordered):
+        if sc.get("kind") != "app":
+            continue
+        apps.append(sc)
+        before = ordered[i - 1] if i > 0 else None  # None: the intro card (or nothing) comes first
+        after = ordered[i + 1] if i + 1 < len(ordered) else None  # None: the outro card (or nothing)
+        if before is None or before.get("kind") != "app":
+            exempt.append((sc["start"] - d, sc["start"] + d))
+        if after is None or after.get("kind") != "app":
+            exempt.append((sc["end"] - d, sc["end"] + d))
+    hits = []
+    for t, f in zip(times, frames):
+        scene = next((sc for sc in apps if sc["start"] - EPS <= t < sc["end"] - EPS), None)
+        if scene is None or any(lo - EPS <= t <= hi + EPS for lo, hi in exempt):
+            continue
+        mask = np.zeros((gh, gw), dtype=bool)
+        mask[cells(scene.get("screen") or {"x": 0, "y": 0, "w": rules["width"], "h": rules["height"]})] = True
+        for cue in scene["cues"]:
+            if cue["start"] - EPS <= t < cue["end"] + EPS:
+                mask[cells(cue["box"], CAPTION_MARGIN_PX)] = False
+        if mask.sum() < 16:
+            continue
+        std = float(np.asarray(f, dtype=np.float64)[mask].std())
+        if std <= limit + EPS:
+            hits.append({"scene": scene["id"], "time": round(float(t), 3), "std": round(std, 2)})
+    if not hits:
+        return {"verdict": PASS, "detail": "", "frames": []}
+    shown = ", ".join(f'{h["time"]:.2f} s ({h["scene"]})' for h in hits[:10])
+    more = f" and {len(hits) - 10} more" if len(hits) > 10 else ""
+    return {"verdict": FAIL, "detail": f"{len(hits)} near-uniform frame(s) in app scenes: {shown}{more}", "frames": hits}
+
+
+def grey_frames(video, ffmpeg, rules):
+    """Every frame of the video as a small grey array (area-averaged), with its presentation time."""
+    import numpy as np
+
+    b = rules["blank"]
+    gw, gh = b["gridW"], b["gridH"]
+    p = subprocess.run(
+        [ffmpeg, "-hide_banner", "-nostdin", "-i", video, "-vf", f"scale={gw}:{gh}:flags=area,format=gray,showinfo",
+         "-fps_mode", "passthrough", "-f", "rawvideo", "-"],
+        check=True, capture_output=True,
+    )
+    times = [float(m) for m in re.findall(r"pts_time:\s*(-?[\d.]+)", p.stderr.decode("utf-8", "replace"))]
+    n = min(len(times), len(p.stdout) // (gw * gh))
+    frames = np.frombuffer(p.stdout[: n * gw * gh], dtype=np.uint8).reshape(n, gh, gw)
+    return times[:n], frames
+
+
 # ---------------------------------------------------------------- media
 
 
 def transcribe(video, model_dir, ffmpeg):
     """faster-whisper word timestamps for the video's audio. The audio is decoded by the toolchain's ffmpeg
-    to 16 kHz mono float (skipping PyAV's decoder)."""
-    import numpy as np
-    from faster_whisper import WhisperModel
+    to 16 kHz mono float, and PyAV is never loaded (see scenecast_py.whisper)."""
+    from scenecast_py.whisper import decode_audio, whisper_model
 
-    raw = subprocess.run(
-        [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-i", video, "-vn", "-ac", "1",
-         "-ar", str(WHISPER_RATE), "-f", "f32le", "-"],
-        check=True, capture_output=True,
-    ).stdout
-    pcm = np.frombuffer(raw, dtype=np.float32)
-    model = WhisperModel(model_dir, device="cpu", compute_type="int8")
+    pcm = decode_audio(video, ffmpeg)
+    model = whisper_model(model_dir)
     segments, _ = model.transcribe(pcm, language="en", word_timestamps=True, beam_size=5)
     return [{"w": w.word, "start": float(w.start), "end": float(w.end)} for s in segments for w in (s.words or [])]
 
@@ -389,6 +458,10 @@ def write_table(path, verdict):
         "",
         f'- Loudness: {loud["lufs"]:.1f} LUFS, true peak {loud["truePeak"]:.1f} dBTP — {loud["verdict"]}'
         + (f' ({loud["detail"]})' if loud["detail"] else ""),
+        "- Blank frames: " + (
+            f'{verdict["blankFrames"]["detail"] or "none in app scenes"} — {verdict["blankFrames"]["verdict"]}'
+            if verdict.get("blankFrames") else "not checked (no video)"
+        ),
         "- Music: " + (f'user track, licence: {music["licence"]}' if music else "synthesised bed (no licence needed)"),
         "",
         "| scene | cue | word time | action time | gap | target label | caption side | checks | verdict |",
@@ -434,16 +507,20 @@ def run(data, transcriber=transcribe):
     loudness = audit_loudness(data["loudness"], rules)
 
     frames, sheet = [], None
+    blank = None  # checked only when there is a video to read
     if data.get("video"):
         frames = extract_frames(data["video"], data["ffmpeg"], data["scenes"], rows, out_dir, rules)
         sheet = contact_sheet(out_dir, frames, rules)
+        if "blank" in rules:
+            blank = blank_frames(*grey_frames(data["video"], data["ffmpeg"], rules), data["scenes"], rules)
 
-    verdicts = [r["verdict"] for r in rows + scene_rows + narration] + [loudness["verdict"]]
+    verdicts = [r["verdict"] for r in rows + scene_rows + narration] + [loudness["verdict"]] + ([blank["verdict"]] if blank else [])
     counts = {"pass": verdicts.count(PASS), "warn": verdicts.count(WARN), "fail": verdicts.count(FAIL)}
     verdict = {
         "pass": counts["fail"] == 0,
         "counts": counts,
         "loudness": loudness,
+        "blankFrames": blank,
         "music": data.get("music"),
         "moments": rows,
         "scenes": scene_rows,

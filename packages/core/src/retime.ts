@@ -1,4 +1,5 @@
 import { DEFAULTS } from './scene/schema.js';
+import type { BlankRange } from './ffmpeg.js';
 import { DEFAULT_TRAVEL_SEC, travelSecFor, type Take } from './record/record.js';
 import type { ScheduledStep } from './schedule.js';
 import type { SceneVoice } from './voice.js';
@@ -13,6 +14,11 @@ export interface Segment {
   srcOut: number;
   outStart: number;
   hold?: number;
+  /**
+   * A hold frozen over blank frames: the source range [from, to) it stands in for, so an action logged
+   * inside that range still has an output time (`outputTimeOf`).
+   */
+  covers?: [number, number];
 }
 
 export interface RetimeOpts {
@@ -26,6 +32,8 @@ export interface RetimeOpts {
   srcDuration?: number;
   breathSec?: number;
   fps?: number;
+  /** Runs of near-uniform frames in the take (from scanBlank): the last good frame is frozen over each. */
+  blanks?: BlankRange[];
 }
 
 /** Frame period of the webm the recorder produces; the last decodable frame is this far before the end. */
@@ -108,12 +116,43 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
   const segs: Segment[] = [];
   let outT = 0;
   let srcT = srcStart;
+  // Widened by output frames on each side: the composer shows the take re-encoded at the output frame rate,
+  // where a frame next to a blank run can be the blank one (nearest-frame rounding), so the freeze starts up to
+  // two output frames early and ends one late. It never starts before an action plus one frame: an action
+  // (often the click that started the navigation) must stay on screen, or it would be cut from the video.
+  const blanks = [...(opts.blanks ?? [])]
+    .map((b) => {
+      const action = Math.max(-Infinity, ...anchors.filter((a) => a.src <= b.start + EPS).map((a) => a.src));
+      const start = Math.min(b.start, Math.max(srcStart, b.start - 2 / fps, action + 1 / fps));
+      return { ...b, start, end: b.end + 1 / fps };
+    })
+    .sort((a, b) => a.start - b.start);
+  /** Plays source [from, to) at outT, freezing the last good frame over any blank frames in it. */
+  const clip = (from: number, to: number) => {
+    let t = from;
+    for (const b of blanks) {
+      if (b.end <= t + EPS || b.start >= to - EPS) continue;
+      if (b.start > t + EPS) {
+        segs.push({ src: take.file, srcIn: t, srcOut: b.start, outStart: outT });
+        outT += b.start - t;
+        t = b.start;
+      }
+      const upto = Math.min(b.end, to);
+      segs.push({ src: take.file, srcIn: b.holdAt, srcOut: b.holdAt, outStart: outT, hold: upto - t, covers: [t, upto] });
+      outT += upto - t;
+      t = upto;
+    }
+    if (to - t > EPS) {
+      segs.push({ src: take.file, srcIn: t, srcOut: to, outStart: outT });
+      outT += to - t;
+    }
+  };
   const play = (from: number, len: number) => {
     if (len <= EPS) return;
     const end = Math.min(from + len, srcEnd);
     const got = Math.max(0, end - from);
-    if (got > EPS) segs.push({ src: take.file, srcIn: from, srcOut: from + got, outStart: outT });
-    outT += got;
+    if (got > EPS) clip(from, from + got);
+    else outT += got;
     if (len - got > EPS) hold(srcEnd - SRC_FRAME, len - got);
   };
   const hold = (at: number, len: number) => {
@@ -154,6 +193,9 @@ export function outputTimeOf(segments: Segment[], src: number, fps: number = DEF
   const clips = segments.filter((g) => g.hold === undefined);
   const inside = clips.find((g) => src >= g.srcIn - EPS && src < g.srcOut - EPS);
   if (inside) return inside.outStart + (src - inside.srcIn);
+  // Frozen over blank frames: the action happened there, behind the held frame.
+  const frozen = segments.find((g) => g.covers && src >= g.covers[0] - EPS && src < g.covers[1] - EPS);
+  if (frozen) return frozen.outStart + Math.min(src - frozen.covers![0], frozen.hold ?? 0);
   const near = clips.filter((g) => src >= g.srcIn - EPS && src <= g.srcOut + 1 / fps + EPS).at(-1);
   return near ? near.outStart + (near.srcOut - near.srcIn) : null;
 }
