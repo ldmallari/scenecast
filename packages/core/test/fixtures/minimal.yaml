@@ -1,0 +1,19 @@
+id: demo
+title: Demo walkthrough
+output: out/demo.mp4
+brand:
+  primary: "#2255cc"
+  accent: "#ffaa00"
+  font: Inter
+  introTitle: Demo
+app:
+  baseUrl: http://localhost:3000
+scenes:
+  - id: s1
+    kind: app
+    route: /dashboard
+    narration: Open the Dashboard and press Sign to continue.
+    steps:
+      - cue: Dashboard
+        do: zoom
+        sel: "#dashboard"

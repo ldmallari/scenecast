@@ -1,0 +1,13 @@
+id: demo
+title: Demo
+output: out/demo.mp4
+brand: { primary: "#222222", accent: "#ff0000", font: Inter, introTitle: Demo }
+app: { baseUrl: http://localhost:3000 }
+scenes:
+  - id: s1
+    kind: app
+    narration: Open the Dashboard and press Sign.
+    steps:
+      - cue: Upload
+        do: click
+        sel: "#upload"

@@ -1,0 +1,12 @@
+id: demo
+title: Demo
+output: out/demo.mp4
+brand: { primary: "#222222", accent: "#ff0000", font: Inter, introTitle: Demo, logo: logo.svg }
+app: { baseUrl: http://localhost:3000, storageState: state.json }
+scenes:
+  - id: t1
+    kind: title
+    narration: Welcome.
+    steps: []
+    page: title.html
+    seconds: 3
