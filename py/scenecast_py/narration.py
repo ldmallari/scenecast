@@ -1,0 +1,199 @@
+"""Narration check for the audit: normalise script and heard words, align them, find cue word times.
+
+Numbers are spelled out by a small built-in converter (no third-party number library), so "2" and
+"two" compare equal on both sides.
+"""
+import difflib
+import re
+
+_ONES = (
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+    "fifteen sixteen seventeen eighteen nineteen"
+).split()
+_TENS = "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()
+_SCALES = ((10**12, "trillion"), (10**9, "billion"), (10**6, "million"), (1000, "thousand"))
+_ORDINAL = {"one": "first", "two": "second", "three": "third", "five": "fifth", "eight": "eighth",
+            "nine": "ninth", "twelve": "twelfth"}
+# An allow-listed name may come back as this many more heard tokens than it has (e.g. "Ana" -> "An na").
+_ALLOW_SLACK = 1
+
+
+def _under_thousand(n):
+    out = []
+    if n >= 100:
+        out += [_ONES[n // 100], "hundred"]
+        n %= 100
+    if n >= 20:
+        out.append(_TENS[n // 10])
+        n %= 10
+        if n:
+            out.append(_ONES[n])
+    elif n or not out:
+        out.append(_ONES[n])
+    return out
+
+
+def number_to_words(n):
+    """English words for a non-negative integer, e.g. 1200 -> ["one", "thousand", "two", "hundred"]."""
+    if n >= 10**15:
+        return [_ONES[int(d)] for d in str(n)]
+    if n == 0:
+        return ["zero"]
+    out = []
+    for value, name in _SCALES:
+        if n >= value:
+            out += _under_thousand(n // value) + [name]
+            n %= value
+    if n:
+        out += _under_thousand(n)
+    return out
+
+
+def _ordinal(words):
+    last = words[-1]
+    if last in _ORDINAL:
+        last = _ORDINAL[last]
+    elif last.endswith("y"):
+        last = last[:-1] + "ieth"
+    else:
+        last += "th"
+    return words[:-1] + [last]
+
+
+_NUMBER = re.compile(r"^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(st|nd|rd|th)?$")
+_CLOCK = re.compile(r"^(\d{1,2}):(\d{2})$")
+_STRIP = ".,;:!?\"'()[]{}“”‘’…"
+
+
+def _token_words(piece):
+    w = piece.strip(_STRIP)
+    if not w:
+        return []
+    if w == "&":
+        return ["and"]
+    clock = _CLOCK.match(w)
+    if clock:
+        h, m = int(clock.group(1)), int(clock.group(2))
+        return number_to_words(h) + ([] if m == 0 else ["oh", _ONES[m]] if m < 10 else number_to_words(m))
+    post = []
+    if w.startswith("$"):
+        w, post = w[1:], ["dollars"]
+    if w.endswith("%"):
+        w, post = w[:-1], ["percent"] + post
+    m = _NUMBER.match(w)
+    if m:
+        whole, frac, suffix = m.groups()
+        words = number_to_words(int(whole.replace(",", "")))
+        if suffix and not frac:
+            words = _ordinal(words)
+        if frac and not (post == ["dollars"] and set(frac) == {"0"}):  # "$1,500.00" is "$1,500"
+            words += ["point"] + [_ONES[int(d)] for d in frac]
+        return words + post
+    w = re.sub(r"[^a-z0-9]", "", w.replace("’", "").replace("'", ""))
+    return ([w] if w else []) + post
+
+
+def normalise_words(text):
+    """Lowercase comparable tokens: punctuation dropped, hyphens split, numbers and clock times spelled out."""
+    out = []
+    for piece in re.split(r"[\s\-–—/]+", text.lower()):
+        out += _token_words(piece)
+    return out
+
+
+def _find(tokens, needle, occ):
+    """Index of the `occ`-th non-overlapping occurrence of `needle` in `tokens`, or None."""
+    if not needle:
+        return None
+    seen, i = 0, 0
+    while i + len(needle) <= len(tokens):
+        if tokens[i:i + len(needle)] == needle:
+            seen += 1
+            if seen == occ:
+                return i
+            i += len(needle)
+        else:
+            i += 1
+    return None
+
+
+def _allowed_positions(script, allow_list):
+    allowed = set()
+    for name in allow_list:
+        needle = normalise_words(name)
+        if not needle:
+            continue
+        for i in range(len(script) - len(needle) + 1):
+            if script[i:i + len(needle)] == needle:
+                allowed.update(range(i, i + len(needle)))
+    return allowed
+
+
+class SceneSpeech:
+    """The scene's script aligned to what was heard in its time window."""
+
+    def __init__(self, scene, words, allow_list):
+        # Script tokens word by word (whitespace split, as the voice timeline and scheduler count words),
+        # so a cue's word index maps to its first token.
+        self.script, self.word_token = [], []
+        for w in scene["narration"].split():
+            self.word_token.append(len(self.script))
+            self.script += normalise_words(w)
+        self.words = [w for w in words if scene["start"] - 0.05 <= w["start"] < scene["end"]]
+        self.heard, self.owner = [], []
+        for i, w in enumerate(self.words):
+            for t in normalise_words(w["w"]):
+                self.heard.append(t)
+                self.owner.append(i)
+        self.matcher = difflib.SequenceMatcher(None, self.script, self.heard, autojunk=False)
+        self.ops = self.matcher.get_opcodes()
+        self.pairs = {}
+        for tag, i1, i2, j1, _j2 in self.ops:
+            if tag == "equal":
+                for k in range(i2 - i1):
+                    self.pairs[i1 + k] = j1 + k
+        self.allowed = _allowed_positions(self.script, allow_list)
+
+    def _heard_index(self, i):
+        """Heard token for script token i: equal blocks map exactly; a replaced (misheard) span maps by position."""
+        if i in self.pairs:
+            return self.pairs[i]
+        for tag, i1, i2, j1, j2 in self.ops:
+            if tag == "replace" and i1 <= i < i2:
+                return j1 + min(i - i1, j2 - j1 - 1)
+        return None
+
+    def cue_time(self, cue, occ, word_index=None):
+        """Start time of the heard word for the cue, or None if it was not heard at all.
+
+        `word_index` is the cue's first word in the narration as the scheduler counted it; without it the
+        cue's occ-th occurrence in the normalised script is used.
+        """
+        if word_index is not None and 0 <= word_index < len(self.word_token):
+            i = self.word_token[word_index]
+        else:
+            i = _find(self.script, normalise_words(cue), occ)
+        if i is None or i >= len(self.script):
+            return None
+        j = self._heard_index(i)
+        return None if j is None else float(self.words[self.owner[j]]["start"])
+
+    def diff(self):
+        """Differences outside the allow-list, as '-"script" +"heard"' strings.
+
+        An allow-listed name may be heard differently, but only within a token of its own length:
+        extra heard words around it are still reported.
+        """
+        out = []
+        for tag, i1, i2, j1, j2 in self.ops:
+            if tag == "equal":
+                continue
+            span = range(i1, i2)
+            if tag in ("replace", "delete") and all(i in self.allowed for i in span) and j2 - j1 <= (i2 - i1) + _ALLOW_SLACK:
+                continue
+            if tag == "insert" and (i1 - 1 in self.allowed or i1 in self.allowed) and j2 - j1 <= _ALLOW_SLACK:
+                continue
+            said = " ".join(self.script[i1:i2])
+            heard = " ".join(self.heard[j1:j2])
+            out.append(f'-"{said}" +"{heard}"' if said and heard else (f'-"{said}"' if said else f'+"{heard}"'))
+        return out

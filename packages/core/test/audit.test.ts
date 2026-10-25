@@ -51,7 +51,8 @@ const mobTake: Take = {
   viewport: 'phone',
   events: [
     { index: 0, kind: 'click', at: 1.0, target: MENU, cursorTo: box(57, 118, 28, 28), panels: [box(0, 400, 390, 444)], loading: false },
-    { index: 1, kind: 'ring', at: 2.0, target: box(5, 95, 110, 50), panels: [], loading: false },
+    // The ring drawn at the cue (padded by 5) and the element's own box re-measured at the ring's peak.
+    { index: 1, kind: 'ring', at: 2.0, target: MENU, ringBox: box(5, 95, 110, 50), panels: [], loading: false },
   ],
 };
 
@@ -127,10 +128,11 @@ describe('buildAuditInput', () => {
     expect(m.events[0]!.boxes.map((b) => b.kind)).toEqual(['target', 'cursor', 'panel']);
     expect(m.events[0]!.boxes[2]!.box).toEqual(phoneToFrame(box(0, 400, 390, 444)));
     expect(m.zooms[0]!.box).toEqual(clampZoom(phoneToFrame(MENU), FRAME, 24, undefined, pf.x));
-    // The recorder's ring is the padded target it drew; it peaks after the 150 ms fade (+0.1 s settle).
+    // The recorder's ring is the padded box it drew; the target is the element at the peak (150 ms fade + 0.1 s).
     const ring = m.moments[1]!.ring;
     expect(ring.by).toBe('recorder');
     expect(ring.box).toEqual(phoneToFrame(box(5, 95, 110, 50)));
+    expect(m.moments[1]!.target).toEqual(phoneToFrame(MENU));
     expect(m.moments[1]!.actionTime).toBeCloseTo(9 + 1.9, 9);
     expect(ring.peak).toBeCloseTo(9 + 1.9 + 0.25, 9);
   });
@@ -140,6 +142,45 @@ describe('buildAuditInput', () => {
     const o = opts();
     o.scenes[1] = { ...o.scenes[1]!, take: { ...mobTake, viewport: undefined } };
     expect(() => build(o)).toThrow(/phone viewport/);
+  });
+
+  it('a ring step without a logged ring box is a problem', () => {
+    const o = opts();
+    const events = mobTake.events.map((e) => (e.kind === 'ring' ? { ...e, ringBox: undefined } : e));
+    o.scenes[1] = { ...o.scenes[1]!, take: { ...mobTake, events } };
+    const ringMoment = build(o).scenes[1]!.moments[1]!;
+    expect(ringMoment.ring).toBeNull();
+    expect(ringMoment.problems).toEqual(['no ring box was logged for this ring step']);
+  });
+
+  it('loading is judged on the sample taken just before the action', () => {
+    const withLoading = (loadingBefore: boolean | undefined, loading: boolean) => {
+      const o = opts();
+      const events = deskTake.events.map((e, i) => (i === 0 ? { ...e, loading, loadingBefore } : e));
+      o.scenes[0] = { ...o.scenes[0]!, take: { ...deskTake, events } };
+      return build(o).scenes[0]!.moments[0]!.loading;
+    };
+    expect(withLoading(false, true)).toBe(false); // the click started a spinner: its result, not a half-loaded page
+    expect(withLoading(true, false)).toBe(true); // a spinner was up when the cue came
+    expect(withLoading(undefined, true)).toBe(true); // older takes without the sample
+  });
+
+  it('the allow-list comes from the scene file; the option overrides it', () => {
+    const spec2 = { audit: { allowList: ['Ana Reyes'] } };
+    const read = (o: AuditOpts) => (buildAuditInput(o, { outDir: '/x', ffmpeg: null, whisperModel: null }) as { allowList: string[] }).allowList;
+    expect(read(opts({ spec: spec2 }))).toEqual(['Ana Reyes']);
+    expect(read(opts({ spec: spec2, allowList: ['Sam'] }))).toEqual(['Sam']);
+    expect(read(opts())).toEqual([]);
+  });
+
+  it('passes the cue word index the scheduler counted', () => {
+    const [d] = build().scenes;
+    expect(d!.moments.map((m) => m.cueWord)).toEqual([0, 7]);
+  });
+
+  it('the zoom-hold frame is never after the zoom ends', () => {
+    const p: AuditPlan = { ...plan, scenes: plan.scenes.map((s, i) => (i === 1 ? { ...s, zooms: [{ start: 2.5, end: 2.9, box: TOTALS }] } : s)) };
+    expect(build(opts({ plan: p })).scenes[0]!.moments[1]!.zoom.hold).toBeCloseTo(5.9, 9);
   });
 
   it('a zoom step with no zoom in the plan is a problem', () => {
@@ -174,6 +215,20 @@ describe.skipIf(!findUv())('audit', () => {
     for (const f of ['audit-input.json', 'audit.json', 'audit-table.md', 'contact-sheet.png']) expect(fs.existsSync(path.join(res.dir, f))).toBe(true);
     expect(fs.readdirSync(path.join(res.dir, 'frames')).sort()).toEqual(['desk-totals.png', 'mob-menu.png']);
     expect(fs.readFileSync(path.join(res.dir, 'audit-table.md'), 'utf8')).toContain('CC0, Example');
+  }, 120_000);
+
+  it('fails a ring when the element moved or grew between the cue and the peak', async () => {
+    const o = opts({ video, workDir: dir, words: HEARD });
+    // At the peak the menu had grown to the right, out of the ring drawn at the cue.
+    const events = mobTake.events.map((e) => (e.kind === 'ring' ? { ...e, target: box(10, 100, 160, 40) } : e));
+    o.scenes[1] = { ...o.scenes[1]!, take: { ...mobTake, events } };
+    const res = await audit(o);
+    expect(res.exitCode).not.toBe(0);
+    const json = JSON.parse(fs.readFileSync(path.join(res.dir, 'audit.json'), 'utf8')) as {
+      moments: { scene: string; cue: string; checks: { name: string; verdict: string }[] }[];
+    };
+    const row = json.moments.find((r) => r.scene === 'mob' && r.cue === 'menu')!;
+    expect(row.checks.find((c) => c.name === 'target')!.verdict).toBe('FAIL');
   }, 120_000);
 
   it('returns a non-zero exit code when a check fails', async () => {

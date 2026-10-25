@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Cue } from './captions.js';
 import { clampZoom, phoneFrame, phoneToFrame } from './frame.js';
-import { RING_FADE_MS, RING_HOLD_MS, travelSecFor, type Box, type Take } from './record/record.js';
+import { RING_FADE_MS, RING_HOLD_MS, ringPeakSec, travelSecFor, type Box, type Take } from './record/record.js';
 import { outputTimeOf, type Segment } from './retime.js';
 import { DEFAULTS, type Brand, type Scene } from './scene/schema.js';
-import type { ScheduledStep } from './schedule.js';
+import { cueWordIndex, type ScheduledStep } from './schedule.js';
 import { ensureToolchain, runPy } from './toolchain.js';
 
 /** A zoom or ring of the plan: scene seconds, and a box in frame px (take px on phone scenes). */
@@ -59,7 +59,9 @@ export interface AuditOpts {
   loudness: { lufs: number; truePeak: number };
   /** The video's work dir (work/<id>); the audit goes to `<workDir>/audit`. */
   workDir: string;
-  /** Names and words that speech recognition may spell differently without a WARN. */
+  /** The scene file's audit settings: `audit.allowList` is read from here. */
+  spec?: { audit?: { allowList: string[] } };
+  /** Overrides the scene file's allow-list (names speech recognition may spell differently without a WARN). */
   allowList?: string[];
   /** A transcript of the final mix (seconds on the video clock). Without it faster-whisper makes one. */
   words?: HeardWord[];
@@ -81,11 +83,6 @@ export interface AuditResult {
 
 /** A plan zoom or ring belongs to a step when it starts this close to the step's action. */
 const MATCH_SEC = 0.5;
-/**
- * The recorder's ring is grabbed this long after its fade-in ends: two animation frames pass before
- * the fade starts, and the screencast can run ~100 ms behind while anything animates.
- */
-const RING_SETTLE_SEC = 0.1;
 /** The composer's ring fades in over the same 150 ms as the recorder's (compose/src/timing.ts). */
 const RING_FADE_SEC = RING_FADE_MS / 1000;
 
@@ -126,12 +123,15 @@ export function buildAuditInput(
     const rings = (ps.rings ?? []).map((r) => ({ ...r, box: toFrame(r.box) }));
     const sceneTimeOf = (at: number) => outputTimeOf(segments, flashTime + at);
     const global = (t: number | null) => (t === null ? null : round(start + t));
+    // Counted like the voice timeline's words (the narration split on whitespace), as the scheduler does.
+    const narrationWords = scene.narration.trim().split(/\s+/);
 
     const events = take.events.map((e) => ({
       index: e.index,
       time: global(sceneTimeOf(e.at)),
       boxes: [
         ...(e.target ? [{ kind: 'target', box: toFrame(e.target) }] : []),
+        ...(e.ringBox ? [{ kind: 'ring', box: toFrame(e.ringBox) }] : []),
         ...(e.cursorTo ? [{ kind: 'cursor', box: toFrame(e.cursorTo) }] : []),
         ...e.panels.map((p) => ({ kind: 'panel', box: toFrame(p) })),
       ],
@@ -153,13 +153,17 @@ export function buildAuditInput(
           const z = nearest(zooms, ref);
           if (z) {
             actionTime = z.start;
-            zoom = { box: z.box, start: round(start + z.start), end: round(start + z.end), hold: round(start + z.start + zoomEaseSec) };
+            // Held once eased in; a zoom shorter than the ease is caught at its end, before it eases out.
+            const hold = Math.min(z.start + zoomEaseSec, z.end);
+            zoom = { box: z.box, start: round(start + z.start), end: round(start + z.end), hold: round(start + hold) };
           } else problems.push(`no zoom in the plan within ${MATCH_SEC} s of the action`);
         }
-        if (s.step.do === 'ring' && ev.target && mapped !== null) {
-          const hold = (s.step.ms ?? RING_HOLD_MS) / 1000;
-          ring = { box: toFrame(ev.target), peak: round(start + mapped + RING_FADE_SEC + Math.min(RING_SETTLE_SEC, hold / 2)), by: 'recorder' };
-        } else if (s.step.do !== 'ring') {
+        if (s.step.do === 'ring') {
+          // The ring drawn at the cue, checked against the element as it was at the ring's peak.
+          if (!ev.ringBox) problems.push('no ring box was logged for this ring step');
+          else if (mapped !== null)
+            ring = { box: toFrame(ev.ringBox), peak: round(start + mapped + ringPeakSec(s.step.ms ?? RING_HOLD_MS)), by: 'recorder' };
+        } else {
           const r = nearest(rings, ref);
           if (r) ring = { box: r.box, peak: round(start + Math.min(r.start + RING_FADE_SEC, (r.start + r.end) / 2)), by: 'composer' };
         }
@@ -172,8 +176,10 @@ export function buildAuditInput(
           label: selectors(s).join(', '),
           actionTime: global(actionTime),
           planWordTime: round(start + (s.cueTime ?? 0)),
+          cueWord: cueWordIndex(narrationWords, s.step.cue!, s.step.occ ?? 1),
           target: ev.target ? toFrame(ev.target) : null,
-          loading: ev.loading,
+          // A spinner the action itself brings up is its result; only one up before it counts.
+          loading: ev.loadingBefore ?? ev.loading,
           settleTimedOut: !!ev.settleTimedOut,
           ring,
           zoom,
@@ -220,7 +226,7 @@ export function buildAuditInput(
     },
     loudness: opts.loudness,
     music: opts.plan.brand.music ? { licence: opts.plan.brand.music.licence } : null,
-    allowList: opts.allowList ?? [],
+    allowList: opts.allowList ?? opts.spec?.audit?.allowList ?? [],
     scenes,
   };
 }

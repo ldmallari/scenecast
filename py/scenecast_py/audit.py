@@ -17,17 +17,20 @@ clock, all boxes are {x, y, w, h} in 1920x1080 frame pixels):
                             "planWordTime", "target" | null, "loading", "settleTimedOut",
                             "ring": {"box", "peak", "by"} | null,
                             "zoom": {"box", "start", "end", "hold"} | null,
+                            "cueWord": int | null,           # the cue's first word in the narration (scheduler's count)
                             "problems": [str]}]}]}           # each one is a FAIL (e.g. no zoom in the plan)
 
-Writes <outDir>/audit.json, audit-table.md, frames/<scene>-<cue>.png and contact-sheet.png.
+Writes <outDir>/audit.json, audit-table.md, frames/<scene>-<cue>.png and contact-sheet.png (whenever there is a
+video; it says so when there are no ring or zoom moments). Narration normalising and alignment live in narration.py.
 Exits 0 when the audit ran (the verdict is in audit.json); a crash exits non-zero.
 """
 import argparse
-import difflib
 import json
 import re
 import subprocess
 from pathlib import Path
+
+from scenecast_py.narration import SceneSpeech, normalise_words, number_to_words  # noqa: F401 (re-exported)
 
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 _RANK = {PASS: 0, WARN: 1, FAIL: 2}
@@ -37,172 +40,6 @@ WHISPER_RATE = 16000
 SHEET_COLUMNS = 6
 THUMB_W = 320
 LABEL_H = 44
-
-# ---------------------------------------------------------------- narration normalisation
-
-_ONES = (
-    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
-    "fifteen sixteen seventeen eighteen nineteen"
-).split()
-_TENS = "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()
-_SCALES = ((10**12, "trillion"), (10**9, "billion"), (10**6, "million"), (1000, "thousand"))
-_ORDINAL = {"one": "first", "two": "second", "three": "third", "five": "fifth", "eight": "eighth",
-            "nine": "ninth", "twelve": "twelfth"}
-
-
-def _under_thousand(n):
-    out = []
-    if n >= 100:
-        out += [_ONES[n // 100], "hundred"]
-        n %= 100
-    if n >= 20:
-        out.append(_TENS[n // 10])
-        n %= 10
-        if n:
-            out.append(_ONES[n])
-    elif n or not out:
-        out.append(_ONES[n])
-    return out
-
-
-def number_to_words(n):
-    """English words for a non-negative integer, e.g. 1200 -> ["one", "thousand", "two", "hundred"]."""
-    if n >= 10**15:
-        return [_ONES[int(d)] for d in str(n)]
-    if n == 0:
-        return ["zero"]
-    out = []
-    for value, name in _SCALES:
-        if n >= value:
-            out += _under_thousand(n // value) + [name]
-            n %= value
-    if n:
-        out += _under_thousand(n)
-    return out
-
-
-def _ordinal(words):
-    last = words[-1]
-    if last in _ORDINAL:
-        last = _ORDINAL[last]
-    elif last.endswith("y"):
-        last = last[:-1] + "ieth"
-    else:
-        last += "th"
-    return words[:-1] + [last]
-
-
-_NUMBER = re.compile(r"^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(st|nd|rd|th)?$")
-_STRIP = ".,;:!?\"'()[]{}“”‘’…"
-
-
-def _token_words(piece):
-    w = piece.strip(_STRIP)
-    if not w:
-        return []
-    if w == "&":
-        return ["and"]
-    pre, post = [], []
-    if w.startswith("$"):
-        w, post = w[1:], ["dollars"]
-    if w.endswith("%"):
-        w, post = w[:-1], ["percent"] + post
-    m = _NUMBER.match(w)
-    if m:
-        whole, frac, suffix = m.groups()
-        words = number_to_words(int(whole.replace(",", "")))
-        if suffix and not frac:
-            words = _ordinal(words)
-        if frac:
-            words += ["point"] + [_ONES[int(d)] for d in frac]
-        return pre + words + post
-    w = re.sub(r"[^a-z0-9]", "", w.replace("’", "").replace("'", ""))
-    return pre + ([w] if w else []) + post
-
-
-def normalise_words(text):
-    """Lowercase comparable tokens: punctuation dropped, hyphens split, numbers spelled out."""
-    out = []
-    for piece in re.split(r"[\s\-–—/]+", text.lower()):
-        out += _token_words(piece)
-    return out
-
-
-def _heard_tokens(words):
-    """Tokens of the recognised words, and for each token the index of the word it came from."""
-    tokens, owner = [], []
-    for i, w in enumerate(words):
-        for t in normalise_words(w["w"]):
-            tokens.append(t)
-            owner.append(i)
-    return tokens, owner
-
-
-def _find(tokens, needle, occ):
-    """Index of the `occ`-th non-overlapping occurrence of `needle` in `tokens`, or None."""
-    if not needle:
-        return None
-    seen, i = 0, 0
-    while i + len(needle) <= len(tokens):
-        if tokens[i:i + len(needle)] == needle:
-            seen += 1
-            if seen == occ:
-                return i
-            i += len(needle)
-        else:
-            i += 1
-    return None
-
-
-def _allowed_positions(script, allow_list):
-    allowed = set()
-    for name in allow_list:
-        needle = normalise_words(name)
-        if not needle:
-            continue
-        for i in range(len(script) - len(needle) + 1):
-            if script[i:i + len(needle)] == needle:
-                allowed.update(range(i, i + len(needle)))
-    return allowed
-
-
-class SceneSpeech:
-    """The scene's script aligned to what was heard in its time window."""
-
-    def __init__(self, scene, words, allow_list):
-        self.script = normalise_words(scene["narration"])
-        self.words = [w for w in words if scene["start"] - 0.05 <= w["start"] < scene["end"]]
-        self.heard, self.owner = _heard_tokens(self.words)
-        self.matcher = difflib.SequenceMatcher(None, self.script, self.heard, autojunk=False)
-        self.pairs = {}
-        for a, b, size in self.matcher.get_matching_blocks():
-            for k in range(size):
-                self.pairs[a + k] = b + k
-        self.allowed = _allowed_positions(self.script, allow_list)
-
-    def cue_time(self, cue, occ):
-        """Start time of the recognised first word of the cue's occ-th occurrence, or None."""
-        i = _find(self.script, normalise_words(cue), occ)
-        if i is None or i not in self.pairs:
-            return None
-        return float(self.words[self.owner[self.pairs[i]]]["start"])
-
-    def diff(self):
-        """Differences outside the allow-list, as '-"script" +"heard"' strings."""
-        out = []
-        for tag, i1, i2, j1, j2 in self.matcher.get_opcodes():
-            if tag == "equal":
-                continue
-            span = range(i1, i2)
-            if tag in ("replace", "delete") and all(i in self.allowed for i in span):
-                continue
-            if tag == "insert" and (i1 - 1 in self.allowed or i1 in self.allowed):
-                continue
-            said = " ".join(self.script[i1:i2])
-            heard = " ".join(self.heard[j1:j2])
-            out.append(f'-"{said}" +"{heard}"' if said and heard else (f'-"{said}"' if said else f'+"{heard}"'))
-        return out
-
 
 # ---------------------------------------------------------------- geometry
 
@@ -271,6 +108,7 @@ def _fmt_box(b):
 def _sync(m, word_time, rules):
     if m["actionTime"] is None:
         return _check("sync", FAIL, "the action is not in the video (cut by retime)"), None
+    # Rounded to ms on purpose: inputs are on the ms grid, and float noise must not turn 0.300 into a FAIL.
     gap = round(m["actionTime"] - (word_time + (m.get("offset") or 0)), 3)
     limit = rules["syncMaxSec"]
     if abs(gap) > limit + EPS:
@@ -353,9 +191,10 @@ def _worst(checks):
 
 
 def _event_windows(scene):
-    """Every timed event's boxes, active from its time until the next event (or the scene end)."""
+    """Every timed event's boxes, active from its time until the next event (or the scene end), after a
+    box-less window from the scene start to the first event (so a cue there is still seen)."""
     timed = sorted((e for e in scene["events"] if e["time"] is not None), key=lambda e: e["time"])
-    out = []
+    out = [(-1, scene["start"], timed[0]["time"] if timed else scene["end"], [])]
     for i, e in enumerate(timed):
         end = timed[i + 1]["time"] if i + 1 < len(timed) else scene["end"]
         out.append((e["index"], e["time"], end, e["boxes"]))
@@ -367,7 +206,7 @@ def audit_scene(scene, speech, rules):
     windows = _event_windows(scene)
     rows = []
     for k, m in enumerate(moments):
-        heard = speech.cue_time(m["cue"], m.get("occ") or 1)
+        heard = speech.cue_time(m["cue"], m.get("occ") or 1, m.get("cueWord"))
         word_time, source = (heard, "transcript") if heard is not None else (m["planWordTime"], "plan")
         checks = []
         if source == "plan":
@@ -400,6 +239,13 @@ def audit_scene(scene, speech, rules):
             "verdict": _worst(checks),
         })
     return rows
+
+
+def audit_scene_captions(scene, rules):
+    """Captions of a scene with no cued step: no row owns its events, so they are checked here."""
+    windows = [(lo, hi, boxes) for _idx, lo, hi, boxes in _event_windows(scene)]
+    checks = [_captions(windows, scene["cues"], scene["zooms"], rules)]
+    return {"scene": scene["id"], "checks": checks, "verdict": _worst(checks)}
 
 
 def audit_loudness(loud, rules):
@@ -484,6 +330,8 @@ def contact_sheet(out_dir, frames, rules):
     sheet = Image.new("RGB", (cols * THUMB_W, max(1, rows) * (thumb_h + LABEL_H)), (24, 24, 28))
     draw = ImageDraw.Draw(sheet)
     font = ImageFont.load_default(size=14)
+    if not frames:
+        draw.text((12, 12), "No ring or zoom moments in this video.", fill=(235, 235, 240), font=font)
     colour = {PASS: (90, 200, 120), WARN: (240, 190, 60), FAIL: (235, 80, 80)}
     for i, f in enumerate(frames):
         x, y = (i % cols) * THUMB_W, (i // cols) * (thumb_h + LABEL_H)
@@ -538,10 +386,13 @@ def write_table(path, verdict):
             f'| {_cell(r["scene"])} | {_cell(r["cue"])} | {word} | {_t(r["actionTime"])} | {gap} | {_cell(r["label"])} '
             f'| {r["captionSide"]} | {_cell(_checks_cell(r["checks"]))} | {r["verdict"]} |'
         )
+    if verdict["scenes"]:
+        lines += ["", "## Scenes without cued steps", "", "| scene | checks | verdict |", "|---|---|---|"]
+        lines += [f'| {_cell(r["scene"])} | {_cell(_checks_cell(r["checks"]))} | {r["verdict"]} |' for r in verdict["scenes"]]
     lines += ["", "## Narration", "", "| scene | verdict | diff |", "|---|---|---|"]
     for n in verdict["narration"]:
         lines.append(f'| {_cell(n["scene"])} | {n["verdict"]} | {_cell(n["diff"] or "matches the script")} |')
-    if verdict["frames"]:
+    if verdict["contactSheet"]:
         lines += ["", "## Frames", "", "Contact sheet: `contact-sheet.png`", ""]
         lines += [f'- `{f["file"]}` — {f["kind"]} at {f["time"]:.2f} s ({f["verdict"]})' for f in verdict["frames"]]
     path.write_text("\n".join(lines) + "\n")
@@ -557,10 +408,12 @@ def run(data, transcriber=transcribe):
             raise SystemExit("audit: no transcript given and no video/whisperModel/ffmpeg to make one")
         words = transcriber(data["video"], data["whisperModel"], data["ffmpeg"])
 
-    rows, narration = [], []
+    rows, narration, scene_rows = [], [], []
     for scene in data["scenes"]:
         speech = SceneSpeech(scene, words, data.get("allowList") or [])
         rows += audit_scene(scene, speech, rules)
+        if not scene["moments"]:
+            scene_rows.append(audit_scene_captions(scene, rules))
         diff = speech.diff()
         narration.append({"scene": scene["id"], "verdict": WARN if diff else PASS, "diff": "; ".join(diff)})
     loudness = audit_loudness(data["loudness"], rules)
@@ -568,10 +421,9 @@ def run(data, transcriber=transcribe):
     frames, sheet = [], None
     if data.get("video"):
         frames = extract_frames(data["video"], data["ffmpeg"], data["scenes"], rows, out_dir, rules)
-        if frames:
-            sheet = contact_sheet(out_dir, frames, rules)
+        sheet = contact_sheet(out_dir, frames, rules)
 
-    verdicts = [r["verdict"] for r in rows] + [n["verdict"] for n in narration] + [loudness["verdict"]]
+    verdicts = [r["verdict"] for r in rows + scene_rows + narration] + [loudness["verdict"]]
     counts = {"pass": verdicts.count(PASS), "warn": verdicts.count(WARN), "fail": verdicts.count(FAIL)}
     verdict = {
         "pass": counts["fail"] == 0,
@@ -579,6 +431,7 @@ def run(data, transcriber=transcribe):
         "loudness": loudness,
         "music": data.get("music"),
         "moments": rows,
+        "scenes": scene_rows,
         "narration": narration,
         "frames": frames,
         "contactSheet": sheet,

@@ -37,10 +37,17 @@ const TYPE_DELAY_MS = 35;
 export const RING_HOLD_MS = 1200;
 /** The recorder's ring fades in (and out) over this long; it is at full strength after it. */
 export const RING_FADE_MS = 150;
+/** The ring is at full strength this long after its fade-in ends (two animation frames, plus the screencast lag). */
+const RING_PEAK_LAG_MS = 100;
 /** Keep recording this long after the last step so its result is on screen. */
 const TAIL_SEC = 1;
 
 const OVERLAY_JS = fs.readFileSync(new URL('./overlay.js', import.meta.url), 'utf8');
+
+/** Seconds from a ring step's action to its peak: faded in and settled, never past half its hold. */
+export function ringPeakSec(holdMs: number = RING_HOLD_MS): number {
+  return (RING_FADE_MS + Math.min(RING_PEAK_LAG_MS, holdMs / 2)) / 1000;
+}
 
 /** Seconds the cursor travels before a step's action fires. */
 export function travelSecFor(step: Step): number {
@@ -60,14 +67,21 @@ export interface TakeEvent {
   kind: Step['do'];
   /** Seconds after the flash marker when the action fired (pointer steps: when the cursor arrived). */
   at: number;
-  /** Box of the step's `sel` (union of all selectors; `pad` added for ring and zoom). */
+  /**
+   * Box of the step's `sel` (union of all selectors). Zoom: `pad` added. Ring: the element's own box
+   * (no pad), re-measured at the ring's peak, so it can be checked against `ringBox`.
+   */
   target?: Box;
+  /** Ring steps: the box the ring was drawn around at the cue (the element plus `pad`). */
+  ringBox?: Box;
   /** Box covered by the cursor graphic at its destination. */
   cursorTo?: Box;
   /** Open panels right after the action. */
   panels: Box[];
   /** A loading indicator was visible right after the action. */
   loading: boolean;
+  /** A loading indicator was visible just before the action fired (after the settle and pre-position). */
+  loadingBefore?: boolean;
   /** The settle before this step gave up (its cap ran out); the step ran anyway. */
   settleTimedOut?: boolean;
 }
@@ -397,6 +411,7 @@ async function runTake(
   const quiet = (p: Promise<unknown>) => void p.catch(() => {});
 
   let holdUntil = 0;
+  const peakMeasures: Promise<void>[] = [];
   for (const { index, step, startAt } of steps) {
     const sels = selectors(step);
     const due = flashEpoch + startAt * 1000;
@@ -412,6 +427,7 @@ async function runTake(
       quiet(page.evaluate(([x, y, end]) => window.__scenecast.moveTo(x, y, end), glide));
       await sleepUntil(arrive - AIM_CHECK_MS);
       m = await aim(m, sels, scene.id, index);
+      ev.loadingBefore = (await snapshot(page)).loading;
       const aimed = centre(m.first);
       await page.mouse.move(aimed.x, aimed.y); // the real pointer moves ahead so the action itself is one press
       await sleepUntil(arrive);
@@ -429,18 +445,28 @@ async function runTake(
         if (step.do === 'type') await page.keyboard.type(step.text ?? '', { delay: TYPE_DELAY_MS });
       }
     } else if (step.do === 'ring' || step.do === 'zoom') {
-      const { union } = await measure(page, scene.id, index, sels);
-      const box = padBox(union, step.pad);
-      ev.target = box;
+      const m = await measure(page, scene.id, index, sels);
+      const box = padBox(m.union, step.pad);
+      ev.loadingBefore = (await snapshot(page)).loading;
       await sleepUntil(due);
       ev.at = sinceFlash();
       if (step.do === 'ring') {
         const hold = step.ms ?? RING_HOLD_MS;
         quiet(page.evaluate(([b, ms]) => window.__scenecast.ring(b, ms), [box, hold] as const));
         holdUntil = Math.max(holdUntil, epoch() + hold + 2 * RING_FADE_MS);
-      }
+        ev.ringBox = box;
+        // The element as it is when the ring peaks, measured without holding up the next step.
+        const peakAt = epoch() + ringPeakSec(hold) * 1000;
+        peakMeasures.push(
+          sleepUntil(peakAt)
+            .then(() => boxesOf(m.els, sels, scene.id, index))
+            .then((now) => void (ev.target = now.union))
+            .catch(() => void delete ev.target), // gone by the peak: the audit fails the ring for it
+        );
+      } else ev.target = box;
     } else {
       const el = sels.length ? await findVisible(page, scene.id, index, sels[0]!) : undefined;
+      ev.loadingBefore = (await snapshot(page)).loading;
       await sleepUntil(due);
       ev.at = sinceFlash();
       switch (step.do) {
@@ -466,5 +492,6 @@ async function runTake(
     holdUntil = Math.max(holdUntil, due + (step.ms ?? 0));
   }
   await sleepUntil(Math.max(holdUntil, epoch()) + TAIL_SEC * 1000);
+  await Promise.all(peakMeasures);
   return { flashAt: Math.round(flashEpoch - videoStart) / 1000, events };
 }

@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { findUv, uvEnv } from '../src/toolchain.js';
-import { DEFAULT_TRAVEL_SEC, recordScene, travelSecFor } from '../src/record/record.js';
+import { DEFAULT_TRAVEL_SEC, recordScene, travelSecFor, type TakeEvent } from '../src/record/record.js';
 import { DEFAULTS, type AppConn, type Scene, type Step } from '../src/scene/schema.js';
 import type { ScheduledStep } from '../src/schedule.js';
 
@@ -130,17 +130,21 @@ describe('recordScene', () => {
       expect(e.cursorTo).toBeDefined();
       expect(Math.abs(e.at - (plan[i]!.startAt + DEFAULT_TRAVEL_SEC))).toBeLessThanOrEqual(0.15);
     }
-    // ring fires on its own time (no travel) and logs the padded box
-    expect(Math.abs(take.events[3]!.at - 4.0)).toBeLessThanOrEqual(0.15);
-    expect(inFrame(take.events[3]!.target!)).toBe(true);
-    expect(take.events.every((e) => e.panels.length === 0 && e.loading === false)).toBe(true);
+    // ring fires on its own time (no travel); it logs the box it drew (padded) and the element at its peak
+    const ringEv = take.events[3]!;
+    expect(Math.abs(ringEv.at - 4.0)).toBeLessThanOrEqual(0.15);
+    expect(inFrame(ringEv.target!)).toBe(true);
+    const el = ringEv.target!;
+    for (const [k, v] of Object.entries({ x: el.x - 8, y: el.y - 8, w: el.w + 16, h: el.h + 16 }))
+      expect(Math.abs(ringEv.ringBox![k as keyof typeof el] - v)).toBeLessThanOrEqual(1); // #signed did not move
+    expect(take.events.every((e) => e.panels.length === 0 && e.loading === false && e.loadingBefore === false)).toBe(true);
 
     // Real sync check against the video: the gap from the first magenta frame to the first frame
     // showing the green "Signed by" line must equal the logged gap from the flash to the Sign click.
     const magenta = pixelTrack(take.file, DEFAULTS.video.width / 2, DEFAULTS.video.height / 2).findIndex(
       ([r, g, b]) => r > 200 && g < 80 && b > 200,
     );
-    const ring = take.events[3]!.target!; // #signed padded by 8 px
+    const ring = take.events[3]!.ringBox!; // #signed padded by 8 px
     const signedAt = pixelTrack(take.file, ring.x + 8 + 4, ring.y + ring.h / 2).findIndex(
       ([r, g, b], i) => i > magenta && g - r > 8 && r < 245 && b < 250,
     );
@@ -156,7 +160,12 @@ describe('recordScene', () => {
       { do: 'click', sel: '#slow-action' },
     ];
     const take = await recordScene(scene('slow', '/dashboard', steps), sched(steps, [0.5, 1.0]), app, path.join(work, 'takes'));
-    const click = take.events[1]!;
+    const [nav, click] = take.events as [TakeEvent, TakeEvent];
+    // The goto itself brings up the "Loading reports" placeholder: after it, not before it.
+    expect(nav.loadingBefore).toBe(false);
+    expect(nav.loading).toBe(true);
+    // The click waits for the settle, so nothing is loading at its cue.
+    expect(click.loadingBefore).toBe(false);
     expect(click.loading).toBe(false);
     expect(inFrame(click.target!)).toBe(true);
     // the content only appears 2.5 s after the goto, so the click is late, not skipped

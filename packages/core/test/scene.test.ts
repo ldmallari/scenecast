@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadScene, DEFAULTS } from '../src/index.js';
+import { loadScene, DEFAULTS, VideoSpecSchema } from '../src/index.js';
 
 const fx = (n: string) =>
   path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', n);
@@ -48,5 +48,18 @@ describe('scene loader', () => {
     expect(spec.scenes[0]!.page).toBe(path.join(dir, 'title.html'));
     expect(spec.brand.logo).toBe(path.join(dir, 'logo.svg'));
     expect(spec.app.storageState).toBe(path.join(dir, 'state.json'));
+  });
+
+  it('audit.allowList is optional and holds names', () => {
+    const base = {
+      id: 'v', title: 'v', output: 'o.mp4',
+      brand: { primary: '#000', accent: '#fff', font: 'F', introTitle: 'v' },
+      app: { baseUrl: 'http://x' },
+      scenes: [{ id: 's1', kind: 'app', narration: 'Hi Ana Reyes.' }],
+    };
+    expect(VideoSpecSchema.parse(base).audit).toBeUndefined();
+    expect(VideoSpecSchema.parse({ ...base, audit: { allowList: ['Ana Reyes'] } }).audit).toEqual({ allowList: ['Ana Reyes'] });
+    expect(VideoSpecSchema.parse({ ...base, audit: {} }).audit).toEqual({ allowList: [] });
+    expect(() => VideoSpecSchema.parse({ ...base, audit: { allowList: 'Ana' } })).toThrow();
   });
 });

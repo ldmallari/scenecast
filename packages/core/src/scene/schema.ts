@@ -104,6 +104,8 @@ export const VideoSpecSchema = z
     app: AppConnSchema,
     voice: VoiceSchema.default({}),
     scenes: z.array(SceneSchema).min(1),
+    /** Names and words speech recognition may spell differently without a narration WARN. */
+    audit: z.object({ allowList: z.array(z.string().trim().min(1)).default([]) }).optional(),
   })
   .superRefine((spec, ctx) => {
     spec.scenes.forEach((scene, si) => {

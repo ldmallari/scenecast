@@ -23,18 +23,24 @@ function norm(w: string): string {
   return w.toLowerCase().replace(/^[^\p{L}\p{N}_]+|[^\p{L}\p{N}_]+$/gu, '');
 }
 
-/** Start time of the first word of the nth occurrence of `cue` in the word list, or null. */
-function cueStart(voice: SceneVoice, cue: string, occ: number): number | null {
+/** Index of the first word of the nth occurrence of `cue` in `words` (punctuation trimmed, case-insensitive), or null. */
+export function cueWordIndex(words: string[], cue: string, occ: number): number | null {
   const target = cue.trim().split(/\s+/).map(norm);
   if (target.some((t) => t === '')) return null;
-  const words = voice.words.map((x) => norm(x.w));
+  const ws = words.map(norm);
   let seen = 0;
-  for (let i = 0; i + target.length <= words.length; i++) {
-    if (!target.every((t, j) => words[i + j] === t)) continue;
-    if (++seen === occ) return voice.words[i]!.start;
+  for (let i = 0; i + target.length <= ws.length; i++) {
+    if (!target.every((t, j) => ws[i + j] === t)) continue;
+    if (++seen === occ) return i;
     i += target.length - 1; // non-overlapping, like countCue
   }
   return null;
+}
+
+/** Start time of the first word of the nth occurrence of `cue` in the word list, or null. */
+function cueStart(voice: SceneVoice, cue: string, occ: number): number | null {
+  const i = cueWordIndex(voice.words.map((x) => x.w), cue, occ);
+  return i === null ? null : voice.words[i]!.start;
 }
 
 /** Pure scheduler: decides when each step starts so it lands on the word that names it. `leadSec` is not applied here (edit stage). */

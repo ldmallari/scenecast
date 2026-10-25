@@ -40,7 +40,7 @@ export function eventsForCaptions(take: Take, scheduled: ScheduledStep[], opts: 
   return timed.map(({ e, t }, i) => ({
     start: t,
     end: i + 1 < timed.length ? timed[i + 1]!.t : opts.sceneEnd,
-    boxes: [e.target, e.cursorTo, ...e.panels].filter((b): b is Box => b !== undefined).map(map),
+    boxes: [e.target, e.ringBox, e.cursorTo, ...e.panels].filter((b): b is Box => b !== undefined).map(map),
   }));
 }
 

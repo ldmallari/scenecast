@@ -348,3 +348,76 @@ def test_real_whisper_hears_the_cue(tmp_path):
     v = run(data)
     assert v["narration"][0]["verdict"] == "PASS", v["narration"][0]
     assert only_row(v)["wordSource"] == "transcript"
+
+
+# ---------------------------------------------------------------- fix round 1
+
+
+def test_cue_on_allow_listed_misheard_name_uses_the_transcript(tmp_path):
+    # Script "Ana Reyes", heard "Anna Rayes": the cue "Ana" maps to "Anna" by position, not to the plan time.
+    row = only_row(run(fixture(tmp_path, moments=[moment(cue="Ana", planWordTime=0.5, actionTime=2.5)])))
+    assert row["wordSource"] == "transcript"
+    assert row["wordTime"] == pytest.approx(2.5)
+    assert row["verdict"] == "PASS"
+
+
+def test_plain_mishearing_of_the_cue_uses_the_transcript(tmp_path):
+    words = [dict(w) for w in WORDS]
+    words[0]["w"] = " Hope"  # "Open" misheard
+    v = run(fixture(tmp_path, words=words, moments=[moment(planWordTime=0.4, actionTime=1.0)]))
+    row = only_row(v)
+    assert row["wordSource"] == "transcript" and row["wordTime"] == pytest.approx(1.0)
+    assert row["verdict"] == "PASS"
+    assert v["narration"][0]["verdict"] == "WARN" and '"hope"' in v["narration"][0]["diff"]
+
+
+def test_cue_word_index_picks_the_scheduled_occurrence(tmp_path):
+    # "1" and "one" normalise alike; the scheduler means the literal word "one" (word 5), not "1".
+    narration = "Add 1 item, then add one more."
+    words = [{"w": f" {w}", "start": t, "end": t + 0.2} for w, t in
+             [("Add", 0.5), ("one", 0.8), ("item,", 1.0), ("then", 1.4), ("add", 1.6), ("one", 1.9), ("more.", 2.1)]]
+    data = fixture(tmp_path, words=words, moments=[moment(cue="one", cueWord=5, planWordTime=1.9, actionTime=1.9)])
+    data["scenes"][0]["narration"] = narration
+    row = only_row(run(data))
+    assert row["wordTime"] == pytest.approx(1.9) and row["verdict"] == "PASS"
+
+
+def test_allow_list_does_not_hide_extra_words(tmp_path):
+    words = WORDS[:4] + [{"w": f" {w}", "start": 2.5 + 0.3 * i, "end": 2.7 + 0.3 * i} for i, w in
+                         enumerate(["Anna", "Rayes", "and", "delete", "everything."])]
+    nar = run(fixture(tmp_path, words=words))["narration"][0]
+    assert nar["verdict"] == "WARN"
+    assert "delete everything" in nar["diff"]
+
+
+def test_contact_sheet_written_without_ring_or_zoom(tmp_path, tiny_video):
+    ffmpeg, video = tiny_video
+    v = run(fixture(tmp_path, video=str(video), ffmpeg=ffmpeg))
+    assert v["frames"] == []
+    assert (tmp_path / "audit" / "contact-sheet.png").exists()
+    assert v["contactSheet"]["rows"] == 0
+
+
+def test_captions_checked_in_scenes_without_cued_steps(tmp_path):
+    panel = {"x": 700, "y": 820, "w": 500, "h": 200}
+    bottom = {"x": 600, "y": 900, "w": 720, "h": 100}
+    data = fixture(tmp_path, events=[event(boxes=[{"kind": "panel", "box": panel}])],
+                   cues=[{"start": 0.5, "end": 2.5, "side": "bottom", "box": bottom, "text": "Open it"}])
+    data["scenes"][0]["moments"] = []
+    v = run(data)
+    assert v["moments"] == []
+    assert v["scenes"][0]["verdict"] == "FAIL"
+    assert v["pass"] is False
+
+
+def test_caption_reason_before_the_first_event_fails(tmp_path):
+    bottom = {"x": 600, "y": 900, "w": 720, "h": 100}
+    cue = [{"start": 0.1, "end": 0.6, "side": "bottom", "box": bottom, "text": "x", "reason": "both sides overlap the target; bottom overlaps less"}]
+    row = only_row(run(fixture(tmp_path, cues=cue)))  # the only event is at 1.0 s
+    assert row["verdict"] == "FAIL"
+
+
+def test_more_number_forms():
+    assert normalise_words("at 10:30") == normalise_words("at ten thirty")
+    assert normalise_words("9:05") == ["nine", "oh", "five"]
+    assert normalise_words("$1,500.00") == normalise_words("$1,500")

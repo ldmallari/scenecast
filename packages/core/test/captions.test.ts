@@ -170,6 +170,16 @@ describe('captions', () => {
     expect(f.y + f.h / 2).toBeCloseTo(540, 6);
   });
 
+  it('keeps clear of the ring the recorder drew as well as the element', () => {
+    const take: Take = {
+      file: 't.webm',
+      flashAt: 0,
+      events: [{ index: 0, kind: 'ring', at: 1, target: box(100, 100), ringBox: box(90, 90, 220, 80), panels: [], loading: false }],
+    };
+    const sched: ScheduledStep[] = [{ index: 0, step: { do: 'ring' } as never, cueTime: null, startAt: 1 }];
+    expect(eventsForCaptions(take, sched, { sceneEnd: 5 })[0]!.boxes).toEqual([box(100, 100), box(90, 90, 220, 80)]);
+  });
+
   it('sorts take events by output time before computing windows', () => {
     const take: Take = {
       file: 't.webm',

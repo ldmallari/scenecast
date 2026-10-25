@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { schedule } from '../src/schedule.js';
+import { cueWordIndex, schedule } from '../src/schedule.js';
 import type { Scene, Step } from '../src/scene/schema.js';
 import type { SceneVoice } from '../src/voice.js';
 
@@ -85,5 +85,15 @@ describe('schedule', () => {
       const [s] = schedule(scene([{ do: 'click', cue: 'then' }]), voice, { leadSec: 0.3, travelSec: () => t });
       expect(s!.startAt).toBe(2.0);
     }
+  });
+});
+
+describe('cueWordIndex', () => {
+  it('counts whole words with punctuation trimmed, non-overlapping', () => {
+    const words = 'Add 1 item, then add one more, and one again.'.split(' ');
+    expect(cueWordIndex(words, 'one', 1)).toBe(5);
+    expect(cueWordIndex(words, 'one', 2)).toBe(8);
+    expect(cueWordIndex(words, 'item then', 1)).toBe(2);
+    expect(cueWordIndex(words, 'one', 3)).toBeNull();
   });
 });
