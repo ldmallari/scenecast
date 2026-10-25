@@ -48,20 +48,68 @@ function clampInto(b: Box, frame: Box): Box {
 /** The region's left edge falls inside the nav (the part of it that is on screen). */
 const cutsNav = (b: Box, nav: Box, frame: Box) => b.x > Math.max(nav.x, frame.x) + EPS && b.x < nav.x + nav.w - EPS;
 
+/** A declared nav bar (`app.nav`) and its box, in the same pixel space as the zoom. */
+export interface NavBox {
+  edge: 'left' | 'top';
+  box: Box;
+}
+
+const overlaps = (a: Box, b: Box) =>
+  Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > EPS && Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > EPS;
+const contains = (outer: Box, inner: Box, tol = EPS) =>
+  inner.x >= outer.x - tol && inner.y >= outer.y - tol && inner.x + inner.w <= outer.x + outer.w + tol && inner.y + inner.h <= outer.y + outer.h + tol;
+const strictlyInside = (v: number, lo: number, hi: number) => v > lo + EPS && v < hi - EPS;
+
+/**
+ * The region shows the nav partly. A left nav is checked across: neither side of the region may fall
+ * inside its x-span. A top nav is checked both ways: the region either misses it or holds all of it.
+ */
+export function cutsDeclaredNav(z: Box, nav: NavBox): boolean {
+  const b = nav.box;
+  if (nav.edge === 'left') return strictlyInside(z.x, b.x, b.x + b.w) || strictlyInside(z.x + z.w, b.x, b.x + b.w);
+  return overlaps(z, b) && !contains(z, b);
+}
+
+/** Moves or grows `z` so it shows `nav` whole or not at all, keeping the padded target inside. */
+function settleNav(z: Box, padded: Box, nav: NavBox, frame: Box): Box {
+  if (!cutsDeclaredNav(z, nav)) return z;
+  const b = nav.box;
+  // Exclude it: shift past the nav when the target is clear of it.
+  const shifted = nav.edge === 'left' ? clampInto({ ...z, x: b.x + b.w }, frame) : clampInto({ ...z, y: b.y + b.h }, frame);
+  if (!cutsDeclaredNav(shifted, nav) && contains(shifted, padded)) return shifted;
+  // Include it: grow to hold the nav (a left nav across only; a top bar whole), refit and clamp.
+  const want = nav.edge === 'left' ? { x: b.x, y: z.y, w: z.x + z.w - b.x, h: z.h } : union(z, b);
+  const grown = clampInto(fitAspect(union(want, padded), frame), frame);
+  return grown;
+}
+
+const union = (a: Box, b: Box): Box => {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+};
+
 /**
  * The zoom region for a target `box`: padded by `pad`, grown to the frame's aspect ratio
  * (never more than 2.5× magnification), clamped inside the frame. A left nav (`navBox`
  * with x ≤ `navEdge` and w < 320; `navEdge` is the screen's left edge: 0, or the phone
  * screen's x on phone scenes) is never cut partly: the region widens to include it or shifts
  * right to exclude it, whichever moves its left edge less (shifting only when the target
- * itself is clear of the nav). Returns the full frame when the target needs no zoom.
+ * itself is clear of the nav). Declared `navs` (the scene file's `app.nav`) are never cut
+ * partly either: the region shifts past one (when the target is clear of it) or grows to hold
+ * it. Returns the full frame when the target needs no zoom.
  */
-export function clampZoom(box: Box, frame: Box, pad: number, navBox?: Box, navEdge = 0): Box {
+export function clampZoom(box: Box, frame: Box, pad: number, navBox?: Box, navEdge = 0, navs: NavBox[] = []): Box {
   const padded = { x: box.x - pad, y: box.y - pad, w: box.w + 2 * pad, h: box.h + 2 * pad };
   let z = clampInto(fitAspect(padded, frame), frame);
   const nav = isLeftNav(navBox, navEdge) ? navBox : undefined;
-  if (!nav || !cutsNav(z, nav, frame)) return z;
+  if (nav && cutsNav(z, nav, frame)) z = fixLeftNav(z, box, nav, frame);
+  // Two passes: settling one nav can move the region onto another.
+  for (let pass = 0; pass < 2; pass++) for (const n of navs) z = settleNav(z, padded, n, frame);
+  return z;
+}
 
+function fixLeftNav(z: Box, box: Box, nav: Box, frame: Box): Box {
   const navRight = nav.x + nav.w;
   const widen = (): Box => {
     // Grow to the left edge of the nav, keeping the right edge, then refit.
@@ -78,4 +126,3 @@ export function clampZoom(box: Box, frame: Box, pad: number, navBox?: Box, navEd
   }
   return widen();
 }
-

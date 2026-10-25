@@ -165,6 +165,58 @@ def test_zoom_not_containing_target_fails_and_crop_rules(tmp_path):
     assert run_zoom({"x": 0, "y": 52.5, "w": 1120, "h": 630}, nav)["verdict"] == "PASS"
 
 
+def test_declared_top_nav_cut_fails_whole_or_out_passes(tmp_path):
+    topbar = {"edge": "top", "box": {"x": 0, "y": 0, "w": 1920, "h": 64}}
+
+    def run_zoom(box):
+        zoom = {"box": box, "start": 1.0, "end": 3.0, "hold": 1.7}
+        data = fixture(
+            tmp_path,
+            moments=[moment(kind="zoom", actionTime=1.0, zoom=zoom)],
+            events=[event(boxes=[{"kind": "target", "box": TARGET}])],
+            zooms=[{"start": 1.0, "end": 3.0, "box": box}],
+        )
+        data["scenes"][0]["navs"] = [topbar]
+        return only_row(run(data))
+
+    # Overlaps the bar but is narrower than it: the bar shows cut off at the sides.
+    cut = run_zoom({"x": 420, "y": 0, "w": 960, "h": 540})
+    assert cut["verdict"] == "FAIL"
+    assert any(c["name"] == "crop" and "top nav" in c["detail"] for c in cut["checks"])
+    # Starts below the bar: the bar is fully out.
+    assert run_zoom({"x": 420, "y": 64, "w": 960, "h": 540})["verdict"] == "PASS"
+    # The whole frame holds the bar: fully in.
+    assert run_zoom({"x": 0, "y": 0, "w": 1920, "h": 1080})["verdict"] == "PASS"
+
+
+def test_heard_word_before_its_phrase_is_clamped_to_the_phrase_start(tmp_path):
+    # Demo run 1 (account-menu): the voice put "Open" at 28.00 s, the first word of the second phrase
+    # (27.94-31.48 s; 27.74-27.94 s is the phrase gap). Whisper on the final mix put it at 27.52 s, inside
+    # "right." of the first phrase, which made a +0.547 s sync FAIL for an action at 28.067 s.
+    narration = "Your account menu sits at the top right. Open it to find your profile, your settings, and sign out."
+    heard = [{"w": f" {w}", "start": 25.5 + 0.2 * i, "end": 25.6 + 0.2 * i} for i, w in enumerate("Your account menu sits at the top".split())]
+    heard += [{"w": " right.", "start": 26.9, "end": 27.5}, {"w": " Open", "start": 27.52, "end": 28.3}]
+    heard += [{"w": f" {w}", "start": 28.4 + 0.3 * i, "end": 28.6 + 0.3 * i} for i, w in enumerate("it to find your profile, your settings, and sign out.".split())]
+    m = moment(cue="Open", actionTime=28.067, planWordTime=28.06, cueWord=8, target=None)
+    data = fixture(tmp_path, words=heard, moments=[m], events=[event(time=28.067, boxes=[])])
+    data["allowList"] = []
+    sc = data["scenes"][0]
+    sc.update({"start": 25.5, "end": 31.933, "narration": narration})
+    without = only_row(run(json.loads(json.dumps(data))))
+    assert without["verdict"] == "FAIL"  # no phrase windows: the transcript time stands
+    sc["phrases"] = [{"start": 25.5, "end": 27.74, "words": 8}, {"start": 27.94, "end": 31.481, "words": 11}]
+    row = only_row(run(data))
+    assert row["wordTime"] == pytest.approx(27.94)
+    assert row["gap"] == pytest.approx(0.127)
+    assert row["verdict"] == "PASS"
+
+
+def test_heard_word_inside_its_phrase_is_untouched(tmp_path):
+    data = fixture(tmp_path, moments=[moment(planWordTime=1.0, actionTime=1.0)])
+    data["scenes"][0]["phrases"] = [{"start": 0.5, "end": 3.4, "words": 6}]
+    assert only_row(run(data))["wordTime"] == pytest.approx(1.0)
+
+
 def test_caption_overlapping_open_panel_fails(tmp_path):
     panel = {"x": 700, "y": 820, "w": 500, "h": 200}
     bottom = {"x": 600, "y": 900, "w": 720, "h": 100}

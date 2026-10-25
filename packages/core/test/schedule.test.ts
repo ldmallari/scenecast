@@ -12,7 +12,7 @@ const voice: SceneVoice = {
 };
 const scene = (steps: Step[]): Scene =>
   ({ id: 's', kind: 'app', viewport: 'desktop', narration: NARRATION, steps }) as Scene;
-const opts = { leadSec: 0.3, travelSec: () => 0.4 };
+const opts = { travelSec: () => 0.4 };
 
 describe('schedule', () => {
   it('click arrives on cue', () => {
@@ -82,7 +82,7 @@ describe('schedule', () => {
 
   it('treats NaN or negative travel as 0', () => {
     for (const t of [NaN, -1]) {
-      const [s] = schedule(scene([{ do: 'click', cue: 'then' }]), voice, { leadSec: 0.3, travelSec: () => t });
+      const [s] = schedule(scene([{ do: 'click', cue: 'then' }]), voice, { travelSec: () => t });
       expect(s!.startAt).toBe(2.0);
     }
   });

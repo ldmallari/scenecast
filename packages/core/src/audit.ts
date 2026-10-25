@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Cue } from './captions.js';
-import { clampZoom, phoneFrame, phoneToFrame } from './frame.js';
+import { clampZoom, phoneFrame, phoneToFrame, type NavBox } from './frame.js';
 import { RING_FADE_MS, RING_HOLD_MS, ringPeakSec, travelSecFor, type Box, type Take } from './record/record.js';
 import { outputTimeOf, type Segment } from './retime.js';
 import { DEFAULTS, type Brand, type Scene } from './scene/schema.js';
 import { cueWordIndex, type ScheduledStep } from './schedule.js';
 import { ensureToolchain, runPy } from './toolchain.js';
+import type { SceneVoice } from './voice.js';
 
 /** A zoom or ring of the plan: scene seconds, and a box in frame px (take px on phone scenes). */
 export interface AuditTimed {
@@ -25,6 +26,7 @@ export interface AuditPlanScene {
   rings?: AuditTimed[];
   phone?: boolean;
   navBox?: Box;
+  navs?: NavBox[];
 }
 
 /** The parts of a `ComposePlan` the audit reads. */
@@ -33,15 +35,20 @@ export interface AuditPlan {
   scenes: AuditPlanScene[];
 }
 
-/** One recorded scene and where the plan shows it. */
+/**
+ * One scene and where the plan shows it. An app scene (recorded) needs `scheduled`, `take` and
+ * `flashTime`; a title scene (a narrated card) has none of them and gets the narration check only.
+ */
 export interface AuditScene {
   scene: Scene;
   /** Index of the scene in `plan.scenes`. */
   planIndex: number;
-  scheduled: ScheduledStep[];
-  take: Take;
+  scheduled?: ScheduledStep[];
+  take?: Take;
   /** The flash time retime used (from `scanFlash`), so event times map exactly as the segments do. */
-  flashTime: number;
+  flashTime?: number;
+  /** The scene's voice timeline: its phrase windows bound where the transcript may place a word. */
+  voice?: SceneVoice;
 }
 
 export interface HeardWord {
@@ -105,20 +112,41 @@ export function buildAuditInput(
   opts.plan.scenes.reduce((t, s) => (starts.push(t), t + s.duration), 0); // compose timeline(): scene k starts at the sum before it
   const round = (t: number) => Math.round(t * 1000) / 1000;
 
-  const scenes = opts.scenes.map(({ scene, planIndex, scheduled, take, flashTime }) => {
+  const scenes = opts.scenes.map(({ scene, planIndex, scheduled, take, flashTime, voice }) => {
     const ps = opts.plan.scenes[planIndex];
+    const start = starts[planIndex]!;
+    // Phrase windows on the video clock, with how many narration words each holds (whitespace split).
+    const phrases = (voice?.phrases ?? []).map((p) => ({
+      start: round(start + p.start),
+      end: round(start + p.end),
+      words: p.text.trim().split(/\s+/).length,
+    }));
+    const cues = (ps?.cues ?? []).map((c) => ({
+      start: round(start + c.start),
+      end: round(start + c.end),
+      side: c.side,
+      box: c.box,
+      text: c.lines.join(' '),
+      ...(c.reason ? { reason: c.reason } : {}),
+    }));
+    if (scene.kind === 'title') {
+      if (!ps || ps.kind !== 'card') throw new Error(`audit: title scene "${scene.id}" has no card at plan index ${planIndex}`);
+      const base = { id: scene.id, start: round(start), end: round(start + ps.duration), narration: scene.narration, cues, phrases };
+      return { ...base, zooms: [], navBox: null, navs: [], events: [], moments: [] };
+    }
     if (!ps || ps.kind !== 'app') throw new Error(`audit: scene "${scene.id}" has no app scene at plan index ${planIndex}`);
+    if (!scheduled || !take || flashTime === undefined) throw new Error(`audit: app scene "${scene.id}" needs scheduled, take and flashTime`);
     const phone = take.viewport === 'phone';
     if (phone !== !!ps.phone) throw new Error(`audit: scene "${scene.id}": the take and the plan disagree on the phone viewport`);
     // Take and plan boxes are in take px on phone scenes; map them once, as captions.ts and the composer do.
     const toFrame = (b: Box): Box => (phone ? phoneToFrame(b) : b);
-    const start = starts[planIndex]!;
     const segments = ps.segments ?? [];
     const navBox = ps.navBox && toFrame(ps.navBox);
+    const navs = (ps.navs ?? []).map((n) => ({ ...n, box: toFrame(n.box) }));
     const zooms = (ps.zooms ?? []).map((z) => ({
       start: z.start,
       end: z.end,
-      box: clampZoom(toFrame(z.box), frame, DEFAULTS.audit.zoomPadPx, navBox, phone ? phoneFrame().x : 0),
+      box: clampZoom(toFrame(z.box), frame, DEFAULTS.audit.zoomPadPx, navBox, phone ? phoneFrame().x : 0, navs),
     }));
     const rings = (ps.rings ?? []).map((r) => ({ ...r, box: toFrame(r.box) }));
     const sceneTimeOf = (at: number) => outputTimeOf(segments, flashTime + at);
@@ -192,16 +220,11 @@ export function buildAuditInput(
       start: round(start),
       end: round(start + ps.duration),
       narration: scene.narration,
-      cues: (ps.cues ?? []).map((c) => ({
-        start: round(start + c.start),
-        end: round(start + c.end),
-        side: c.side,
-        box: c.box,
-        text: c.lines.join(' '),
-        ...(c.reason ? { reason: c.reason } : {}),
-      })),
+      cues,
+      phrases,
       zooms: zooms.map((z) => ({ ...z, start: round(start + z.start), end: round(start + z.end) })),
       navBox: navBox ?? null,
+      navs,
       events,
       moments,
     };

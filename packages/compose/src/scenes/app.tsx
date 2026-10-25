@@ -22,7 +22,8 @@ export const centre = (b: Box, plan: Pick<ResolvedPlan, 'width' | 'height'>) => 
   y: b.y + b.h / 2 - plan.height / 2,
 });
 
-function caption(cue: Cue, plan: ResolvedPlan, local: () => number) {
+/** One caption cue (a rounded box with up to two lines), shown from `cue.start` to `cue.end` scene time. */
+export function caption(cue: Cue, plan: ResolvedPlan, local: () => number) {
   const c = centre(cue.box, plan);
   const alpha = () => {
     const t = local();

@@ -206,6 +206,19 @@ describe('recordScene', () => {
     expect(inFrame(e.panels[0]!)).toBe(true);
   }, 60_000);
 
+  it('declared navs are logged with their boxes; missing ones are skipped', async () => {
+    const steps: Step[] = [{ do: 'click', sel: '#menu-button' }];
+    const withNav = { ...app, nav: [{ selector: 'header.topbar', edge: 'top' as const }, { selector: '#no-such-nav', edge: 'left' as const }] };
+    const take = await recordScene(scene('navs', '/dashboard', steps), sched(steps, [0.6]), withNav, path.join(work, 'takes'));
+    expect(take.navs).toHaveLength(1);
+    const n = take.navs![0]!;
+    expect(n.edge).toBe('top');
+    expect(n.box.x).toBe(0);
+    expect(n.box.y).toBe(0);
+    expect(n.box.w).toBe(DEFAULTS.video.width);
+    expect(n.box.h).toBeGreaterThan(30);
+  }, 60_000);
+
   it('phone scene marks the take and keeps boxes in its own pixel space', async () => {
     const steps: Step[] = [{ do: 'zoom', sel: '.worklist', pad: 4 }];
     const s = { ...scene('phone', '/dashboard', steps), viewport: 'phone' } as Scene;

@@ -68,6 +68,15 @@ export interface Prepared {
 
 const secs = (since: number) => (performance.now() - since) / 1000;
 
+/** Per-stage and total wall time, each also as a multiple of the video's length. */
+export function timingSummary(stageSec: Record<string, number>, wallSec: number, videoSec: number): string {
+  const x = (s: number) => `${s.toFixed(1)} s (${(s / videoSec).toFixed(2)}x)`;
+  const width = Math.max(5, ...Object.keys(stageSec).map((k) => k.length));
+  const rows = Object.entries(stageSec).map(([k, s]) => `  ${k.padEnd(width)}  ${x(s)}`);
+  if (!rows.length) rows.push('  (every stage was cached)');
+  return [`timings for a ${videoSec.toFixed(1)} s video:`, ...rows, `  ${'total'.padEnd(width)}  ${x(wallSec)}`].join('\n');
+}
+
 /** Seconds of video in a media file, from a stream copy (the recorder's webm has no duration header). */
 async function mediaDuration(file: string): Promise<number> {
   const { ffmpeg } = await ensureToolchain({ offline: true }).catch(() => ensureToolchain());
@@ -157,7 +166,7 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
       inputs.push({ scene, voice });
       continue;
     }
-    const scheduled: ScheduledStep[] = schedule(scene, voice, { leadSec: DEFAULTS.video.leadSec, travelSec: travelSecFor });
+    const scheduled: ScheduledStep[] = schedule(scene, voice, { travelSec: travelSecFor });
     const app = spec.app;
     const seedFile = app.seed && path.isAbsolute(app.seed) && fs.existsSync(app.seed) ? app.seed : undefined;
     const { result: recorded } = await cache.run<Recorded>({
@@ -170,9 +179,13 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
           await runSeed(app.seed, sceneDir, app.baseUrl);
           seeded = true;
         }
-        const take = await recordScene(scene, scheduled, app, dir);
-        // The signed-in session the recorder saved holds credentials: never leave it behind.
-        if (!opts.keepWork) fs.rmSync(path.join(dir, '.session.json'), { force: true });
+        let take;
+        try {
+          take = await recordScene(scene, scheduled, app, dir);
+        } finally {
+          // The signed-in session the recorder saved holds credentials: never leave it behind, even on failure.
+          if (!opts.keepWork) fs.rmSync(path.join(dir, '.session.json'), { force: true });
+        }
         const flash = await scanFlash(take.file);
         return { take, flashTime: flash.start, flashEnd: flash.end, srcDuration: await mediaDuration(take.file) };
       },
@@ -252,10 +265,19 @@ export async function render(file: string, opts: RenderOptions = {}): Promise<Re
   log(`wrote ${mp4} (${total.toFixed(2)} s, ${mixed.lufs.toFixed(1)} LUFS)`);
 
   let verdict: RenderResult['audit'];
-  if (opts.audit !== false) {
-    const scenes = video.scenes
-      .filter((s) => s.scene.kind === 'app')
-      .map((s) => ({ scene: s.scene, planIndex: s.planIndex, scheduled: s.scheduled!, take: s.recorded!.take, flashTime: s.recorded!.flashTime }));
+  const auditOut = path.join(outDir, 'audit');
+  if (opts.audit === false) {
+    // An older audit next to a new video would vouch for a video it never saw.
+    fs.rmSync(auditOut, { recursive: true, force: true });
+    log('audit: skipped (--no-audit)');
+  } else {
+    // App scenes get every check; title cards (no take) get the narration and caption checks.
+    const scenes = video.scenes.map((s) => ({
+      scene: s.scene,
+      planIndex: s.planIndex,
+      voice: s.voice,
+      ...(s.recorded ? { scheduled: s.scheduled!, take: s.recorded.take, flashTime: s.recorded.flashTime } : {}),
+    }));
     const loudness = { lufs: mixed.lufs, truePeak: mixed.truePeak };
     const { result } = await cache.run({
       name: 'audit',
@@ -267,7 +289,6 @@ export async function render(file: string, opts: RenderOptions = {}): Promise<Re
       },
       outputs: (r) => ['audit.json', 'audit-table.md', 'contact-sheet.png'].map((f) => path.join(r.dir, f)),
     });
-    const auditOut = path.join(outDir, 'audit');
     fs.rmSync(auditOut, { recursive: true, force: true });
     fs.cpSync(result.dir, auditOut, { recursive: true, filter: (src) => path.basename(src) !== '.stage.json' });
     verdict = { ...result, dir: auditOut };
@@ -276,7 +297,7 @@ export async function render(file: string, opts: RenderOptions = {}): Promise<Re
   }
 
   const wallSec = secs(started);
-  log(`video ${total.toFixed(1)} s, wall time ${wallSec.toFixed(1)} s (${(wallSec / total).toFixed(2)}x)`);
+  log(timingSummary(cache.timings, wallSec, total));
   return {
     exitCode: verdict && !verdict.pass ? 1 : 0,
     video: mp4,

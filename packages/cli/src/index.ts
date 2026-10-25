@@ -49,8 +49,6 @@ export async function doctor(): Promise<number> {
     setupError = (e as Error).message;
   }
   const checks: Check[] = [];
-  const uv = findUv();
-  checks.push(uv ? { name: 'uv', ok: true, detail: `${uv} (${firstLine(uv, ['--version'])})` } : { name: 'uv', ok: false, detail: 'not found' });
   const tool = (name: string, bin: string | undefined, args: string[]): Check => {
     if (!bin) return { name, ok: false, detail: 'not set up' };
     try {
@@ -59,6 +57,7 @@ export async function doctor(): Promise<number> {
       return { name, ok: false, detail: `${bin} does not run` };
     }
   };
+  checks.push(tool('uv', findUv(), ['--version']));
   checks.push(tool('python env', tc?.python, ['--version']));
   checks.push(tool('ffmpeg', tc?.ffmpeg, ['-hide_banner', '-version']));
   checks.push(fileCheck('chromium', chromium.executablePath()));

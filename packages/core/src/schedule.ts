@@ -13,7 +13,6 @@ export interface ScheduledStep {
 }
 
 export interface ScheduleOpts {
-  leadSec: number;
   travelSec: (step: Step) => number;
 }
 
@@ -43,7 +42,7 @@ function cueStart(voice: SceneVoice, cue: string, occ: number): number | null {
   return i === null ? null : voice.words[i]!.start;
 }
 
-/** Pure scheduler: decides when each step starts so it lands on the word that names it. `leadSec` is not applied here (edit stage). */
+/** Pure scheduler: decides when each step starts so it lands on the word that names it. */
 export function schedule(scene: Scene, voice: SceneVoice, opts: ScheduleOpts): ScheduledStep[] {
   const out: ScheduledStep[] = [];
   scene.steps.forEach((step, index) => {

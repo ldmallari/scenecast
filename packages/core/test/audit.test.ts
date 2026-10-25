@@ -6,7 +6,7 @@ import { audit, buildAuditInput, type AuditOpts, type AuditPlan, type HeardWord 
 import { clampZoom, phoneFrame, phoneToFrame } from '../src/frame.js';
 import { runFfmpeg } from '../src/ffmpeg.js';
 import type { Box, Take } from '../src/record/record.js';
-import { VideoSpecSchema } from '../src/scene/schema.js';
+import { VideoSpecSchema, type Scene } from '../src/scene/schema.js';
 import type { ScheduledStep } from '../src/schedule.js';
 import { ensureToolchain, findUv } from '../src/toolchain.js';
 
@@ -93,6 +93,28 @@ type Input = { scenes: { id: string; start: number; end: number; zooms: { box: B
 const build = (o = opts()) => buildAuditInput(o, { outDir: '/tmp/x/audit', ffmpeg: null, whisperModel: null }) as unknown as Input;
 
 describe('buildAuditInput', () => {
+  it('a title scene on a card gets the narration and phrase windows, with no moments', () => {
+    const title = { id: 'ch', kind: 'title', narration: 'Next up. The phone view.', steps: [], seconds: 2, page: '/p', viewport: 'desktop' } as unknown as Scene;
+    const voice = { duration: 2.4, phrases: [{ text: 'Next up.', start: 0, end: 0.8 }, { text: 'The phone view.', start: 1.0, end: 2.4 }], words: [] };
+    const cue = { start: 0, end: 0.8, lines: ['Next up.'], side: 'bottom' as const, box: box(800, 900, 300, 100) };
+    const p: AuditPlan = { ...plan, scenes: [{ kind: 'card', duration: 3, cues: [cue] }, ...plan.scenes.slice(1)] };
+    const s = build(opts({ plan: p, scenes: [{ scene: title, planIndex: 0, voice }] })).scenes[0] as unknown as Record<string, unknown>;
+    expect(s.moments).toEqual([]);
+    expect(s.events).toEqual([]);
+    expect(s.narration).toBe('Next up. The phone view.');
+    expect(s.phrases).toEqual([{ start: 0, end: 0.8, words: 2 }, { start: 1, end: 2.4, words: 3 }]);
+    expect((s.cues as unknown[]).length).toBe(1);
+  });
+
+  it('declared navs reach the audit in frame px and the zoom region clears them', () => {
+    const top = { edge: 'top' as const, box: box(0, 0, 1920, 64) };
+    const p: AuditPlan = { ...plan, scenes: plan.scenes.map((s, i) => (i === 1 ? { ...s, navs: [top] } : s)) };
+    const d = build(opts({ plan: p })).scenes[0] as unknown as { navs: unknown; zooms: { box: Box }[] };
+    expect(d.navs).toEqual([top]);
+    expect(d.zooms[0]!.box).toEqual(clampZoom(TOTALS, FRAME, 24, undefined, 0, [top]));
+  });
+
+
   it('maps take events through the retimed segments onto the video clock', () => {
     const [d] = build().scenes;
     expect(d!.start).toBe(3);

@@ -3,6 +3,7 @@
 Numbers are spelled out by a small built-in converter (no third-party number library), so "2" and
 "two" compare equal on both sides.
 """
+import bisect
 import difflib
 import re
 
@@ -153,6 +154,23 @@ class SceneSpeech:
                 for k in range(i2 - i1):
                     self.pairs[i1 + k] = j1 + k
         self.allowed = _allowed_positions(self.script, allow_list)
+        # Phrase windows (video clock) by narration word: a heard word can't start outside its phrase.
+        self.word_phrase = []
+        phrases = scene.get("phrases") or []
+        if sum(p["words"] for p in phrases) == len(self.word_token):
+            for p in phrases:
+                self.word_phrase += [(p["start"], p["end"])] * p["words"]
+
+    def _clamp(self, t, word):
+        """Clamp a heard start time into the phrase window of narration word `word`.
+
+        The voice track places each phrase at a known time, so a word heard before its phrase starts (or
+        after it ends) is a recognition timing error, not something the viewer hears.
+        """
+        if not self.word_phrase or word is None or not 0 <= word < len(self.word_phrase):
+            return t
+        lo, hi = self.word_phrase[word]
+        return min(max(t, lo), hi)
 
     def _heard_index(self, i):
         """Heard token for script token i: equal blocks map exactly; a replaced (misheard) span maps by position."""
@@ -173,10 +191,11 @@ class SceneSpeech:
             i = self.word_token[word_index]
         else:
             i = _find(self.script, normalise_words(cue), occ)
+            word_index = None if i is None else bisect.bisect_right(self.word_token, i) - 1
         if i is None or i >= len(self.script):
             return None
         j = self._heard_index(i)
-        return None if j is None else float(self.words[self.owner[j]]["start"])
+        return None if j is None else self._clamp(float(self.words[self.owner[j]]["start"]), word_index)
 
     def diff(self):
         """Differences outside the allow-list, as '-"script" +"heard"' strings.

@@ -22,6 +22,9 @@ app:
     - { do: type, sel: "#email", text: sam@example.com }
     - { do: type, sel: "#password", text: demo-password }
     - { do: click, sel: "#signin" }
+  # The top bar is a nav: a zoom shows it whole or leaves it out, never cut at the sides.
+  nav:
+    - { selector: header.topbar, edge: top }
 audit:
   allowList: [Demo Co]
 
@@ -67,10 +70,20 @@ scenes:
     title: The account menu
     route: /dashboard
     narration: >-
-      Your account menu sits at the top right, so open it to find your profile, your settings, and sign out.
+      Your account menu sits at the top right. Open it to find your profile, your settings, and sign out.
     steps:
-      - { cue: open, do: click, sel: "#menu-button" }
+      - { cue: Open, do: click, sel: "#menu-button" }
       - { cue: profile, do: ring, sel: "#account-menu", pad: 6 }
+
+  # A narrated chapter card. (The schema asks every title scene for a `page`; v1 draws chapter cards
+  # from the brand instead of recording a page, so it is not used.)
+  - id: on-the-go
+    kind: title
+    title: On the go
+    seconds: 3
+    page: ./index.html
+    narration: >-
+      Next, the same app on a phone.
 
   - id: phone
     kind: app

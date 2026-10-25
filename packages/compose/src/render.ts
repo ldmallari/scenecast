@@ -102,7 +102,7 @@ async function resolvePlan(plan: ComposePlan, publicDir: string, ffmpeg: string,
         ...s,
         ...tl.scenes[i]!,
         segments: s.segments?.map((g) => ({ ...g, src: media.get(g.src)! })),
-        zooms: s.zooms?.map((z) => ({ ...z, box: clampZoom(z.box, frame, DEFAULTS.audit.zoomPadPx, s.navBox, s.phone ? pf.x : 0) })),
+        zooms: s.zooms?.map((z) => ({ ...z, box: clampZoom(z.box, frame, DEFAULTS.audit.zoomPadPx, s.navBox, s.phone ? pf.x : 0, s.navs) })),
       };
     }),
   };

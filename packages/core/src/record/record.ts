@@ -92,6 +92,8 @@ export interface Take {
   flashAt: number;
   /** Set for phone takes: boxes are in the 390×844 take's own pixels, which composition maps into the frame. */
   viewport?: 'phone';
+  /** The declared navs (`app.nav`) that were visible when the take started, with their boxes. */
+  navs?: { edge: 'left' | 'top'; box: Box }[];
   events: TakeEvent[];
 }
 
@@ -359,7 +361,13 @@ export async function recordScene(scene: Scene, scheduled: ScheduledStep[], app:
     }
     const file = path.join(out, `${scene.id}.webm`);
     fs.renameSync(await page!.video()!.path(), file);
-    const result: Take = { file, flashAt: take.flashAt, ...(phone ? { viewport: 'phone' as const } : {}), events: take.events };
+    const result: Take = {
+      file,
+      flashAt: take.flashAt,
+      ...(phone ? { viewport: 'phone' as const } : {}),
+      ...(take.navs ? { navs: take.navs } : {}),
+      events: take.events,
+    };
     fs.writeFileSync(path.join(out, `${scene.id}.boxes.json`), JSON.stringify(result, null, 2) + '\n');
     return result;
   } finally {
@@ -391,6 +399,7 @@ async function runTake(
   }
   await page.goto(url(scene.route ?? '/'));
   await settleTake();
+  const navs = await navBoxes(page, app);
 
   const steps = [...scheduled].sort((a, b) => a.index - b.index);
   let cursor = { x: viewport.width / 2, y: viewport.height / 2 };
@@ -493,5 +502,22 @@ async function runTake(
   }
   await sleepUntil(Math.max(holdUntil, epoch()) + TAIL_SEC * 1000);
   await Promise.all(peakMeasures);
-  return { flashAt: Math.round(flashEpoch - videoStart) / 1000, events };
+  return { flashAt: Math.round(flashEpoch - videoStart) / 1000, ...(navs.length ? { navs } : {}), events };
+}
+
+/** Boxes of the declared navs that are visible now (first visible match of each selector). */
+async function navBoxes(page: Page, app: AppConn): Promise<NonNullable<Take['navs']>> {
+  const out: NonNullable<Take['navs']> = [];
+  for (const nav of app.nav ?? []) {
+    const loc = page.locator(nav.selector);
+    const n = await loc.count().catch(() => 0);
+    for (let i = 0; i < n; i++) {
+      const el = loc.nth(i);
+      if (!(await el.isVisible().catch(() => false))) continue;
+      const b = await el.boundingBox().catch(() => null);
+      if (b) out.push({ edge: nav.edge, box: toBox(b) });
+      break;
+    }
+  }
+  return out;
 }

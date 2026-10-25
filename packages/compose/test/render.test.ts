@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { DEFAULTS, ensureToolchain, phoneFrame, phoneToFrame, type AuditPlan, type Brand } from '@scenecast/core';
+import { cutsDeclaredNav, DEFAULTS, ensureToolchain, phoneFrame, phoneToFrame, type AuditPlan, type Brand } from '@scenecast/core';
 import { chromium } from 'playwright';
 import { clampZoom, inFramePixels, ringAlpha, sceneOpacity, srcTimeAt, timeline, zoomBoxAt, type ComposePlan } from '../src/plan.js';
 import { ffprobePath, finish, preview, renderVideo, runRevideo } from '../src/render.js';
@@ -145,6 +145,44 @@ describe('clampZoom', () => {
   it('ignores a navBox that is not a left nav', () => {
     const target = { x: 200, y: 300, w: 300, h: 80 };
     expect(clampZoom(target, FRAME, PAD, { x: 40, y: 0, w: 240, h: 1080 })).toEqual(clampZoom(target, FRAME, PAD));
+  });
+});
+
+describe('declared navs', () => {
+  const top = { edge: 'top' as const, box: { x: 0, y: 0, w: 1920, h: 64 } };
+
+  it('shifts below a top nav the target is clear of', () => {
+    const target = { x: 300, y: 150, w: 900, h: 50 }; // a first list row just under the bar
+    const plain = clampZoom(target, FRAME, PAD);
+    expect(cutsDeclaredNav(plain, top)).toBe(true); // without the nav the zoom cuts the bar at the sides
+    const z = clampZoom(target, FRAME, PAD, undefined, 0, [top]);
+    expect(z.y).toBeCloseTo(64, 6);
+    expect(cutsDeclaredNav(z, top)).toBe(false);
+    expect(contains(z, { x: target.x - PAD, y: target.y - PAD, w: target.w + 2 * PAD, h: target.h + 2 * PAD })).toBe(true);
+    expect(z.w / z.h).toBeCloseTo(ASPECT, 6);
+  });
+
+  it('shows a top nav whole when the target is in it', () => {
+    const target = { x: 1700, y: 10, w: 160, h: 40 }; // the account button in the bar
+    const z = clampZoom(target, FRAME, PAD, undefined, 0, [top]);
+    expect(z).toEqual(FRAME); // a full-width bar is whole only in the full frame
+    expect(cutsDeclaredNav(z, top)).toBe(false);
+  });
+
+  it('never leaves a top or left nav partly in', () => {
+    const left = { edge: 'left' as const, box: { x: 0, y: 64, w: 260, h: 1016 } };
+    for (let x = 0; x < 1700; x += 85)
+      for (let y = 0; y < 1000; y += 50) {
+        const z = clampZoom({ x, y, w: 120, h: 40 }, FRAME, PAD, undefined, 0, [top, left]);
+        expect(cutsDeclaredNav(z, top) || cutsDeclaredNav(z, left), `target ${x},${y} → ${JSON.stringify(z)}`).toBe(false);
+        expect(contains(FRAME, z)).toBe(true);
+      }
+  });
+
+  it('maps phone navs into the frame', () => {
+    const nav = { x: 0, y: 0, w: 390, h: 90 };
+    const scene = inFramePixels({ kind: 'app', duration: 2, phone: true, segments: [], navs: [{ edge: 'top', box: nav }] });
+    expect(scene.navs![0]!.box).toEqual(phoneToFrame(nav));
   });
 });
 

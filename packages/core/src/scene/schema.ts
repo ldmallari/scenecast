@@ -8,7 +8,6 @@ export const DEFAULTS = {
     fps: 30,
     dissolveSec: 0.35,
     breathSec: 0.45,
-    leadSec: 0.3,
     zoomEaseSec: 0.7,
   },
   captions: { maxLines: 2, charsPerLine: 42, bottomZone: 0.25 },
@@ -61,6 +60,11 @@ const AppConnSchema = z.object({
   login: z.array(StepSchema).optional(),
   loginHook: z.string().optional(),
   seed: z.string().optional(),
+  /**
+   * The app's navigation bars. A zoom never cuts one partly: it shows a nav whole or leaves it out.
+   * `left` is a sidebar (checked across), `top` a bar along the top (checked down and across).
+   */
+  nav: z.array(z.object({ selector: z.string().min(1), edge: z.enum(['left', 'top']) })).optional(),
 });
 
 const VoiceSchema = z.object({
@@ -138,4 +142,5 @@ export type Scene = VideoSpec['scenes'][number];
 export type Step = z.infer<typeof StepSchema>;
 export type Brand = z.infer<typeof BrandSchema>;
 export type AppConn = z.infer<typeof AppConnSchema>;
+export type NavDecl = NonNullable<AppConn['nav']>[number];
 export type VoiceCfg = z.infer<typeof VoiceSchema>;

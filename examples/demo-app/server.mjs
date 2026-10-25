@@ -19,7 +19,13 @@ const TYPES = {
 export function serveDemoApp({ port = 4310, host = '127.0.0.1' } = {}) {
   let worklist = [];
   const server = http.createServer((req, res) => {
-    const urlPath = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
+    let urlPath;
+    try {
+      urlPath = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
+    } catch {
+      res.writeHead(400, { 'content-type': 'text/plain' }).end('bad request');
+      return;
+    }
     if (urlPath === '/api/worklist' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(worklist));
@@ -46,7 +52,7 @@ export function serveDemoApp({ port = 4310, host = '127.0.0.1' } = {}) {
       return;
     }
     let file = path.join(APP_DIR, path.normalize(urlPath));
-    if (!file.startsWith(APP_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(APP_DIR, 'index.html');
+    if (!file.startsWith(APP_DIR + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(APP_DIR, 'index.html');
     res.writeHead(200, { 'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream' });
     fs.createReadStream(file).pipe(res);
   });

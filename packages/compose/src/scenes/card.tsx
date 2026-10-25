@@ -4,7 +4,7 @@
 import { Img, Node, Rect, Txt } from '@revideo/2d';
 import type { ResolvedPlan } from '../plan.js';
 import { easeInOutCubic, sceneOpacity } from '../timing.js';
-import { fontStack } from './app.js';
+import { caption, fontStack } from './app.js';
 
 type Scene = ResolvedPlan['scenes'][number];
 
@@ -70,6 +70,7 @@ export function cardScene(scene: Scene, plan: ResolvedPlan, time: () => number):
           textWrap={true}
         />
       ) : null}
+      {(scene.cues ?? []).map((cue) => caption(cue, plan, local))}
     </Node>
   ) as Node;
 }

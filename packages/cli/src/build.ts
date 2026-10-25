@@ -119,10 +119,11 @@ export function eventTimes(rec: Recorded, scheduled: ScheduledStep[], segments: 
 export function captionEvents(take: Take, times: Map<number, number>, zooms: Timed[], sceneEnd: number): CaptionEvent[] {
   const phone = take.viewport === 'phone';
   const toFrame = (b: Box) => (phone ? phoneToFrame(b) : b);
+  const navs = (take.navs ?? []).map((n) => ({ ...n, box: toFrame(n.box) }));
   const ease = DEFAULTS.video.zoomEaseSec;
   const regions: Timed[] = zooms.map((z) => ({
     ...z,
-    box: clampZoom(toFrame(z.box), FRAME, DEFAULTS.audit.zoomPadPx, undefined, phone ? phoneFrame().x : 0),
+    box: clampZoom(toFrame(z.box), FRAME, DEFAULTS.audit.zoomPadPx, undefined, phone ? phoneFrame().x : 0, navs),
   }));
   const timed = take.events
     .map((e) => ({ e, t: times.get(e.index)! }))
@@ -178,6 +179,7 @@ export function appPlanScene(scene: Scene, voice: SceneVoice, scheduled: Schedul
     ...(zooms.length ? { zooms } : {}),
     ...(rings.length ? { rings } : {}),
     ...(rec.take.viewport === 'phone' ? { phone: true } : {}),
+    ...(rec.take.navs?.length ? { navs: rec.take.navs } : {}),
   };
   return { plan, segments };
 }
@@ -202,7 +204,9 @@ export function buildVideo(spec: VideoSpec, inputs: SceneInput[], opts: { cards:
     const { scene, voice } = input;
     if (scene.kind === 'title') {
       const duration = toFrames(Math.max(scene.seconds ?? 0, voice.duration + DEFAULTS.video.breathSec));
-      const start = push({ kind: 'card', duration, card: { variant: 'chapter', title: scene.title ?? scene.id } });
+      // Narrated card: its captions sit at the bottom (nothing on a card to keep clear of).
+      const cues = layoutCaptions(scene, voice, []);
+      const start = push({ kind: 'card', duration, card: { variant: 'chapter', title: scene.title ?? scene.id }, cues });
       placed.push({ ...input, planIndex: planScenes.length - 1, start });
       continue;
     }

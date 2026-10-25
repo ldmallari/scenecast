@@ -12,6 +12,8 @@ clock, all boxes are {x, y, w, h} in 1920x1080 frame pixels):
                "cues": [{"start", "end", "side", "box", "text", "reason"?}],
                "zooms": [{"start", "end", "box"}],          # the region the composer shows
                "navBox": box | null,
+               "navs": [{"edge": "left" | "top", "box"}],     # declared navs: shown whole or not at all
+               "phrases": [{"start", "end", "words"}],        # phrase windows; a heard word is clamped into its own
                "events": [{"index", "time" | null, "boxes": [{"kind", "box"}]}],
                "moments": [{"index", "cue", "occ", "offset", "kind", "label", "actionTime" | null,
                             "planWordTime", "target" | null, "loading", "settleTimedOut",
@@ -128,7 +130,17 @@ def _target(m):
     return _check("target", PASS)
 
 
-def _crop(m, nav, rules):
+def _cuts_declared(b, nav):
+    """A left nav is cut when either side of the zoom falls inside its x-span; a top nav when the zoom
+    overlaps it without holding all of it."""
+    n = nav["box"]
+    if nav["edge"] == "left":
+        return any(n["x"] + PX_TOL < e < n["x"] + n["w"] - PX_TOL for e in (b["x"], b["x"] + b["w"]))
+    overlap = _overlap(b, n) > PX_TOL
+    return overlap and not _contains(b, n)
+
+
+def _crop(m, nav, rules, navs=()):
     z = m["zoom"]
     if z is None:
         return None
@@ -148,6 +160,9 @@ def _crop(m, nav, rules):
         cut = any(nl + PX_TOL < edge < nr - PX_TOL for edge in (b["x"], b["x"] + b["w"]))
         if cut:
             problems.append("zoom cuts the nav partly in")
+    for n in navs:
+        if _cuts_declared(b, n):
+            problems.append(f'zoom cuts the {n["edge"]} nav {_fmt_box(n["box"])} partly in')
     return _check("crop", FAIL, "; ".join(problems)) if problems else _check("crop", PASS)
 
 
@@ -214,7 +229,7 @@ def audit_scene(scene, speech, rules):
         checks += [_check("plan", FAIL, p) for p in m.get("problems") or []]
         sync, gap = _sync(m, word_time, rules)
         checks.append(sync)
-        for c in (_target(m), _crop(m, scene.get("navBox"), rules)):
+        for c in (_target(m), _crop(m, scene.get("navBox"), rules, scene.get("navs") or [])):
             if c is not None:
                 checks.append(c)
         # This row owns the events from its step up to the next cued step (the first row also owns earlier ones).

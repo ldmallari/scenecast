@@ -8,6 +8,9 @@
     "scenecast": "bin/scenecast.js"
   },
   "main": "src/index.ts",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"

@@ -1,6 +1,6 @@
 // Plan types, the scene timeline and zoom clamping (Node side). Per-frame helpers the Revideo
 // page uses live in timing.ts, which stays free of Node imports.
-import { DEFAULTS, phoneToFrame, type Box, type Brand, type Cue, type Segment } from '@scenecast/core';
+import { DEFAULTS, phoneToFrame, type Box, type Brand, type Cue, type NavBox, type Segment } from '@scenecast/core';
 export { clampZoom } from '@scenecast/core';
 export { easeInOutCubic, ringAlpha, sceneOpacity, srcTimeAt, zoomBoxAt } from './timing.js';
 
@@ -39,6 +39,8 @@ export interface PlanScene {
   phone?: boolean;
   /** The app's left nav (same pixel space as zooms), so a zoom never cuts it partly. */
   navBox?: Box;
+  /** The scene file's declared navs (`app.nav`), same pixel space as zooms: a zoom shows each whole or not at all. */
+  navs?: NavBox[];
 }
 
 export interface ComposePlan {
@@ -100,5 +102,6 @@ export function inFramePixels(scene: PlanScene): PlanScene {
     zooms: scene.zooms?.map(map),
     rings: scene.rings?.map(map),
     navBox: scene.navBox && phoneToFrame(scene.navBox),
+    navs: scene.navs?.map((n) => ({ ...n, box: phoneToFrame(n.box) })),
   };
 }

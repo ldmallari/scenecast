@@ -16,9 +16,14 @@ const BIN = path.join(REPO, 'packages/cli/bin/scenecast.js');
 const SCENE_FILE = path.join(REPO, 'examples/demo-app/video.yaml');
 const PORT = 4310; // video.yaml's app.baseUrl
 
+/** CLI runs still going (killed in afterAll, so a timed-out test leaves no render behind). */
+const running = new Set<ReturnType<typeof spawn>>();
+
 function cli(args: string[]): Promise<{ code: number; out: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [BIN, ...args], { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] });
+    running.add(child);
+    child.on('close', () => running.delete(child));
     let out = '';
     const take = (d: Buffer) => {
       out += d.toString();
@@ -51,6 +56,7 @@ describe.skipIf(!process.env.SCENECAST_E2E)('e2e', () => {
     fs.rmSync(path.join(dir, 'work'), { recursive: true, force: true });
   });
   afterAll(async () => {
+    for (const child of running) child.kill('SIGTERM');
     server?.closeAllConnections();
     await new Promise((r) => server?.close(r));
     if (!process.env.SCENECAST_E2E_DIR) fs.rmSync(dir, { recursive: true, force: true });
@@ -69,7 +75,9 @@ describe.skipIf(!process.env.SCENECAST_E2E)('e2e', () => {
     expect(duration).toBeGreaterThan(30);
     expect(duration).toBeLessThan(120);
     for (const f of ['demo.srt', 'chapters.txt', 'audit/audit-table.md', 'audit/contact-sheet.png']) expect(fs.existsSync(path.join(out, f))).toBe(true);
-    expect(fs.readFileSync(path.join(out, 'chapters.txt'), 'utf8').trim().split('\n')).toHaveLength(5);
+    expect(fs.readFileSync(path.join(out, 'chapters.txt'), 'utf8').trim().split('\n')).toHaveLength(6);
+    // The narrated chapter card is captioned too.
+    expect(fs.readFileSync(path.join(out, 'demo.srt'), 'utf8')).toContain('Next, the same app on a phone.');
 
     // Nothing changed, so the second run reuses every stage.
     const second = await cli(args);

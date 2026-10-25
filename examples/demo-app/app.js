@@ -1,4 +1,5 @@
-// Demo Co: a tiny client-side app for scenecast tests and examples. No framework, no build step.
+// Demo Co: a small client-side app for scenecast tests and examples. No framework, no build step,
+// no external fonts or assets. Every name and record in it is invented.
 (function () {
   const root = document.getElementById('app');
   const signedIn = () => localStorage.getItem('token') !== null;
@@ -9,6 +10,7 @@
     { title: 'Review two new requests', due: 'This week' },
   ];
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const tone = (due) => (/today/i.test(due) ? 'urgent' : /friday|tomorrow/i.test(due) ? 'soon' : 'later');
 
   const NAV = [
     ['/dashboard', 'Dashboard'],
@@ -18,15 +20,20 @@
     ['/live', 'Live'],
   ];
 
+  const MARK = '<span class="mark" aria-hidden="true"></span>';
+
   function shell(path, body) {
     const links = NAV.map(([href, label]) => `<a href="${href}"${href === path ? ' aria-current="page"' : ''}>${label}</a>`).join('');
     root.innerHTML = `
       <header class="topbar">
-        <span class="brand">Demo Co</span>
-        <nav class="nav">${links}</nav>
+        <a class="brand" href="/dashboard">${MARK}<span>Demo Co</span></a>
+        <nav class="nav" aria-label="Main">${links}</nav>
         <div class="menu-wrap">
-          <button id="menu-button" class="ghost" aria-haspopup="menu" aria-expanded="false">Sam R. ▾</button>
+          <button id="menu-button" class="account" aria-haspopup="menu" aria-expanded="false">
+            <span class="avatar" aria-hidden="true">SR</span><span class="who">Sam R.</span><span class="caret" aria-hidden="true"></span>
+          </button>
           <div id="account-menu" class="menu" role="menu" hidden>
+            <div class="menu-head"><strong>Sam Rivera</strong><span>sam@example.com</span></div>
             <button role="menuitem">Profile</button>
             <button role="menuitem">Settings</button>
             <button role="menuitem" id="signout">Sign out</button>
@@ -54,16 +61,27 @@
   const pages = {
     '/login'() {
       root.innerHTML = `
-        <main class="login card">
-          <h1>Sign in to Demo Co</h1>
-          <form id="login-form">
-            <label for="email">Email</label>
-            <input id="email" type="email" autocomplete="username" required />
-            <label for="password">Password</label>
-            <input id="password" type="password" autocomplete="current-password" required />
-            <div class="actions"><button id="signin" type="submit">Sign in</button></div>
-          </form>
-        </main>`;
+        <div class="login-page">
+          <aside class="login-side">
+            <a class="brand brand-light" href="/login">${MARK}<span>Demo Co</span></a>
+            <div class="login-pitch">
+              <h2>Everything your team needs to get work done, in one place.</h2>
+              <p>Requests, approvals and agreements, with a worklist that tells you what to do next.</p>
+            </div>
+            <p class="login-foot">Demo Co is a sample app for scenecast. All data is invented.</p>
+          </aside>
+          <main class="login card">
+            <h1>Sign in to Demo Co</h1>
+            <p class="muted">Welcome back. Use your work account.</p>
+            <form id="login-form">
+              <label for="email">Work email</label>
+              <input id="email" type="email" autocomplete="username" placeholder="name@example.com" required />
+              <label for="password">Password</label>
+              <input id="password" type="password" autocomplete="current-password" required />
+              <div class="actions"><button id="signin" type="submit" class="wide">Sign in</button></div>
+            </form>
+          </main>
+        </div>`;
       document.getElementById('login-form').addEventListener('submit', (e) => {
         e.preventDefault();
         localStorage.setItem('token', 'demo-' + Date.now());
@@ -72,15 +90,53 @@
     },
     '/dashboard'(path) {
       shell(path, `
-        <h1>Good morning, Sam</h1>
-        <section class="card">
-          <h2>What needs you</h2>
-          <ul class="worklist"></ul>
-        </section>`);
+        <div class="page-head">
+          <div>
+            <h1>Good morning, Sam</h1>
+            <p class="muted">Here is what needs you this week.</p>
+          </div>
+          <a class="button secondary" href="/requests">View all requests</a>
+        </div>
+        <div class="grid">
+          <div class="stack">
+            <section class="card">
+              <div class="card-head"><h2>What needs you</h2><span class="count" id="work-count"></span></div>
+              <ul class="worklist"></ul>
+            </section>
+            <section class="card">
+              <h2>Coming up</h2>
+              <ul class="agenda">
+                <li><span class="day"><strong>12</strong>Mar</span><div><strong>Team planning</strong><span>Tuesday, 10:00 to 11:00</span></div></li>
+                <li><span class="day"><strong>14</strong>Mar</span><div><strong>Agreement sign-off deadline</strong><span>Friday, end of day</span></div></li>
+              </ul>
+            </section>
+          </div>
+          <div class="stack">
+            <section class="card">
+              <h2>This week</h2>
+              <div class="stats">
+                <div class="stat"><strong>4</strong><span>Open requests</span></div>
+                <div class="stat"><strong>1</strong><span>To sign</span></div>
+                <div class="stat"><strong>6</strong><span>Approved</span></div>
+              </div>
+            </section>
+            <section class="card">
+              <h2>Recent activity</h2>
+              <ul class="activity">
+                <li><span class="dot ok"></span><div><strong>Travel to the north office</strong><span>Approved on Mar 1</span></div></li>
+                <li><span class="dot"></span><div><strong>Laptop replacement</strong><span>Opened on Mar 3</span></div></li>
+                <li><span class="dot"></span><div><strong>Desk move</strong><span>Closed on Feb 26</span></div></li>
+              </ul>
+            </section>
+          </div>
+        </div>`);
       const list = root.querySelector('.worklist');
       const show = (items) => {
+        document.getElementById('work-count').textContent = items.length ? `${items.length} items` : '';
         list.innerHTML = items.length
-          ? items.map((i) => `<li><span>${esc(i.title)}</span><span class="tag">${esc(i.due)}</span></li>`).join('')
+          ? items
+              .map((i) => `<li><span class="item">${esc(i.title)}</span><span class="tag ${tone(i.due)}">${esc(i.due)}</span></li>`)
+              .join('')
           : '<li class="empty">Nothing needs you right now.</li>';
       };
       // server.mjs serves the seeded worklist; a plain static server has no API, so use the sample list.
@@ -95,26 +151,48 @@
         ['R-1040', 'Travel to the north office', 'Approved', 'Mar 1'],
         ['R-1039', 'Desk move', 'Closed', 'Feb 26'],
         ['R-1038', 'Software licence', 'Open', 'Feb 24'],
+        ['R-1037', 'Training course', 'Approved', 'Feb 20'],
       ]
-        .map(([id, title, status, date]) => `<tr><td>${id}</td><td>${title}</td><td>${status}</td><td class="hide-phone">${date}</td></tr>`)
+        .map(
+          ([id, title, status, date]) =>
+            `<tr><td class="id">${id}</td><td>${title}</td><td><span class="pill ${status.toLowerCase()}">${status}</span></td><td class="hide-phone">${date}</td></tr>`,
+        )
         .join('');
       shell(path, `
-        <h1>Requests</h1>
-        <section class="card">
+        <div class="page-head">
+          <div><h1>Requests</h1><p class="muted">Everything you have asked for, newest first.</p></div>
+          <button type="button" class="hide-phone">New request</button>
+        </div>
+        <section class="card flush">
           <table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th class="hide-phone">Opened</th></tr></thead><tbody>${rows}</tbody></table>
         </section>`);
     },
     '/form'(path) {
       shell(path, `
-        <h1>Work agreement</h1>
-        <section class="card">
-          <p>Please read the agreement, tick the box and type your full name to sign.</p>
-          <label class="check"><input id="agree" type="checkbox" /> I have read and agree to the terms</label>
-          <label for="name">Full name</label>
-          <input id="name" type="text" autocomplete="name" />
-          <div class="actions"><button id="sign" type="button">Sign</button></div>
-          <p id="signed" class="signed" hidden></p>
-        </section>`);
+        <div class="page-head">
+          <div><h1>Work agreement</h1><p class="muted">Version 3, updated this month. Please sign by Friday.</p></div>
+        </div>
+        <div class="grid">
+          <section class="card agreement">
+            <h2>Summary of changes</h2>
+            <p>This agreement sets out how we work together day to day. The main changes in this version are:</p>
+            <ul>
+              <li>Core hours are now 10:00 to 15:00, with the rest of the day flexible.</li>
+              <li>Remote days can be booked up to two weeks ahead.</li>
+              <li>Equipment requests go through the Requests page.</li>
+            </ul>
+            <p>Everything else is unchanged from the previous version.</p>
+          </section>
+          <section class="card sign-panel">
+            <h2>Sign</h2>
+            <p>Please read the agreement, tick the box and type your full name to sign.</p>
+            <label class="check"><input id="agree" type="checkbox" /> I have read and agree to the terms</label>
+            <label for="name">Full name</label>
+            <input id="name" type="text" autocomplete="name" />
+            <div class="actions"><button id="sign" type="button">Sign</button></div>
+            <p id="signed" class="signed" hidden></p>
+          </section>
+        </div>`);
       document.getElementById('sign').addEventListener('click', () => {
         const name = document.getElementById('name').value.trim();
         const ok = document.getElementById('agree').checked && name !== '';

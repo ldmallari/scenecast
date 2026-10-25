@@ -127,6 +127,36 @@ describe('outputs', () => {
   });
 });
 
+describe('title cards', () => {
+  it('a narrated title card gets bottom captions, in the .srt at the card start', () => {
+    const title = { scene: { id: 'ch', kind: 'title', title: 'Next up', narration: 'Next, the phone view.', steps: [], seconds: 2, page: '/p' } as unknown as Scene, voice: voice(2.5, 'Next, the phone view.') };
+    const v = buildVideo(spec, [appInput('a'), title], { cards: true });
+    const card = v.plan.scenes[v.scenes[1]!.planIndex]!;
+    expect(card.kind).toBe('card');
+    expect(card.cues!.map((c) => c.lines.join(' '))).toEqual(['Next, the phone view.']);
+    expect(card.cues!.every((c) => c.side === 'bottom' && !c.reason)).toBe(true);
+    const srt = parseSrt(finalSrt(v));
+    const line = srt.find((c) => c.lines.join(' ') === 'Next, the phone view.')!;
+    expect(line.start).toBeCloseTo(v.scenes[1]!.start + 0.2, 3); // the phrase starts 0.2 s into the card
+  });
+});
+
+describe('declared navs', () => {
+  it('the plan carries the take navs, and caption zoom views clear them like the composer', () => {
+    const app = appInput('a', { zoom: true });
+    const top = { edge: 'top' as const, box: { x: 0, y: 0, w: 1920, h: 64 } };
+    app.recorded.take.navs = [top];
+    app.recorded.take.events[1]!.target = { x: 300, y: 150, w: 900, h: 50 };
+    const v = buildVideo(spec, [app], { cards: false });
+    expect(v.plan.scenes[0]!.navs).toEqual([top]);
+    const times = eventTimes(app.recorded, app.scheduled, v.scenes[0]!.segments!);
+    const events = captionEvents(app.recorded.take, times, v.plan.scenes[0]!.zooms!, v.plan.scenes[0]!.duration);
+    const region = clampZoom(app.recorded.take.events[1]!.target!, FRAME, DEFAULTS.audit.zoomPadPx, undefined, 0, [top]);
+    expect(region.y).toBeCloseTo(64, 6);
+    expect(events.some((e) => e.boxes.some((b) => JSON.stringify(b) === JSON.stringify(onScreen(app.recorded.take.events[1]!.target!, region))))).toBe(true);
+  });
+});
+
 describe('voice track', () => {
   let dir: string;
   beforeEach(() => (dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-vt-'))));
