@@ -12,7 +12,14 @@ export const DEFAULTS = {
     zoomEaseSec: 0.7,
   },
   captions: { maxLines: 2, charsPerLine: 42, bottomZone: 0.25 },
-  loudness: { voiceLufs: -16, toleranceLu: 1, musicLufs: -29 },
+  loudness: {
+    voiceLufs: -16,
+    toleranceLu: 1,
+    musicLufs: -29,
+    duckDb: 6,
+    truePeakDb: -1.5,
+    musicFadeSec: 4,
+  },
   phone: { width: 390, height: 844 },
   audit: { syncMaxSec: 0.3, zoomPadPx: 24 },
 } as const;
@@ -37,6 +44,13 @@ const BrandSchema = z.object({
   logo: z.string().optional(),
   introTitle: z.string(),
   introSubtitle: z.string().optional(),
+  /** A user-supplied music track replaces the synthesised bed; its licence is copied to the audit. */
+  music: z
+    .object({
+      file: z.string().min(1),
+      licence: z.string().trim().min(1, 'brand.music.licence is required for a user-supplied track'),
+    })
+    .optional(),
 });
 
 const AppConnSchema = z.object({

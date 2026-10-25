@@ -9,3 +9,4 @@ export * from './ffmpeg.js';
 export * from './retime.js';
 export * from './frame.js';
 export * from './captions.js';
+export * from './mix.js';

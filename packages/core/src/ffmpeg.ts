@@ -12,7 +12,7 @@ const NEAR = 40;
 const isMagenta = (px: Uint8Array, o: number) =>
   Math.abs(px[o]! - 255) <= NEAR && px[o + 1]! <= NEAR && Math.abs(px[o + 2]! - 255) <= NEAR;
 
-function runFfmpeg(ffmpeg: string, args: string[]): Promise<{ out: Buffer; err: string }> {
+export function runFfmpeg(ffmpeg: string, args: string[]): Promise<{ out: Buffer; err: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const out: Buffer[] = [];
