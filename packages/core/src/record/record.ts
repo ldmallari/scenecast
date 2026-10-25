@@ -1,0 +1,385 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
+import { DEFAULTS, type AppConn, type Scene, type Step } from '../scene/schema.js';
+import type { ScheduledStep } from '../schedule.js';
+import { LOADING_SELECTOR, settle, trackNetwork } from './settle.js';
+
+/** Every cursor move takes exactly this long, whatever the distance, so the scheduler's arithmetic holds. */
+export const DEFAULT_TRAVEL_SEC = 0.52;
+/** A selector must match a visible element within this long. */
+export const SELECTOR_TIMEOUT_MS = 2500;
+/** Visible elements matching this are open panels (captions keep clear of them). */
+export const PANEL_SELECTOR = '[role=dialog],[role=menu],[role=listbox],[aria-modal=true],[data-scenecast-panel]';
+
+const POINTER = new Set<Step['do']>(['click', 'hover', 'type']);
+const CURSOR_PX = 28;
+/** Where the arrow's tip sits inside its 28 px box (see overlay.js). */
+const CURSOR_TIP = { x: 3, y: 2 };
+const FLASH_FRAMES = 2;
+const TYPE_DELAY_MS = 35;
+const RING_HOLD_MS = 1200;
+const RING_FADE_MS = 150;
+/** Keep recording this long after the last step so its result is on screen. */
+const TAIL_SEC = 1;
+
+const OVERLAY_JS = fs.readFileSync(new URL('./overlay.js', import.meta.url), 'utf8');
+
+/** Seconds the cursor travels before a step's action fires. */
+export function travelSecFor(step: Step): number {
+  return POINTER.has(step.do) ? DEFAULT_TRAVEL_SEC : 0;
+}
+
+/** A box in the take's frame pixels. */
+export interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface TakeEvent {
+  index: number;
+  kind: Step['do'];
+  /** Seconds after the flash marker when the action fired (pointer steps: when the cursor arrived). */
+  at: number;
+  /** Box of the step's `sel` (union of all selectors; `pad` added for ring and zoom). */
+  target?: Box;
+  /** Box covered by the cursor graphic at its destination. */
+  cursorTo?: Box;
+  /** Open panels right after the action. */
+  panels: Box[];
+  /** A loading indicator was visible right after the action. */
+  loading: boolean;
+}
+
+export interface Take {
+  file: string;
+  /** Estimated seconds into the video file where the flash marker shows (composition finds it exactly). */
+  flashAt: number;
+  /** Set for phone takes: boxes are in the 390×844 take's own pixels, which composition maps into the frame. */
+  viewport?: 'phone';
+  events: TakeEvent[];
+}
+
+interface OverlayApi {
+  cursor(x: number, y: number): void;
+  moveTo(x: number, y: number, endAt: number): void;
+  ripple(x: number, y: number): void;
+  ring(box: Box, holdMs: number): void;
+  flash(frames: number, fps: number): Promise<number>;
+}
+declare global {
+  interface Window {
+    __scenecast: OverlayApi;
+  }
+}
+
+/** High-resolution epoch milliseconds. The page's `performance.timeOrigin + performance.now()` is on the same clock. */
+const epoch = () => performance.timeOrigin + performance.now();
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
+const sleepUntil = (epochMs: number) => sleep(epochMs - epoch());
+const round = (n: number) => Math.round(n * 10) / 10;
+const toBox = (b: { x: number; y: number; width: number; height: number }): Box => ({
+  x: round(b.x),
+  y: round(b.y),
+  w: round(b.width),
+  h: round(b.height),
+});
+const selectors = (step: Step): string[] => (step.sel === undefined ? [] : Array.isArray(step.sel) ? step.sel : [step.sel]);
+
+/** First visible match of `sel` (never the overlay), waiting up to SELECTOR_TIMEOUT_MS. */
+async function findVisible(page: Page, sceneId: string, index: number, sel: string): Promise<Locator> {
+  const deadline = epoch() + SELECTOR_TIMEOUT_MS;
+  const loc = page.locator(sel);
+  let cause: unknown;
+  do {
+    try {
+      const n = await loc.count();
+      for (let i = 0; i < n; i++) {
+        const el = loc.nth(i);
+        if ((await el.isVisible()) && !(await el.evaluate((e) => !!e.closest('[data-scenecast-overlay]')))) return el;
+      }
+    } catch (err) {
+      cause = err; // a navigation in flight, or a bad selector: keep trying until the deadline
+    }
+    await sleep(50);
+  } while (epoch() < deadline);
+  throw new Error(`scene "${sceneId}" step ${index} selector "${sel}" not found`, { cause });
+}
+
+/** Resolve every selector, scroll the first into view, and return the first element's box and the union box. */
+async function measure(page: Page, sceneId: string, index: number, sels: string[]): Promise<{ first: Box; union: Box }> {
+  const els: Locator[] = [];
+  for (const sel of sels) els.push(await findVisible(page, sceneId, index, sel));
+  await els[0]!.scrollIntoViewIfNeeded().catch(() => {});
+  const boxes: Box[] = [];
+  for (const [i, el] of els.entries()) {
+    const b = await el.boundingBox();
+    if (!b) throw new Error(`scene "${sceneId}" step ${index} selector "${sels[i]}" not found`);
+    boxes.push(toBox(b));
+  }
+  const x = Math.min(...boxes.map((b) => b.x));
+  const y = Math.min(...boxes.map((b) => b.y));
+  const r = Math.max(...boxes.map((b) => b.x + b.w));
+  const btm = Math.max(...boxes.map((b) => b.y + b.h));
+  return { first: boxes[0]!, union: { x, y, w: round(r - x), h: round(btm - y) } };
+}
+
+const padBox = (b: Box, pad = 0): Box => ({ x: b.x - pad, y: b.y - pad, w: b.w + 2 * pad, h: b.h + 2 * pad });
+
+/** Open panels and loading state, ignoring the overlay. Retries once if a navigation destroys the page context. */
+async function snapshot(page: Page): Promise<{ panels: Box[]; loading: boolean }> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await page.evaluate(
+        ([panelSel, loadingSel]) => {
+          const visible = (el: Element) => {
+            if (el.closest('[data-scenecast-overlay]')) return null;
+            const r = el.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) return null;
+            return el.checkVisibility({ opacityProperty: true, visibilityProperty: true }) ? r : null;
+          };
+          const panels: { x: number; y: number; width: number; height: number }[] = [];
+          for (const el of document.querySelectorAll(panelSel)) {
+            const r = visible(el);
+            if (r) panels.push({ x: r.x, y: r.y, width: r.width, height: r.height });
+          }
+          const loading = [...document.querySelectorAll(loadingSel)].some((el) => visible(el) !== null);
+          return { panels, loading };
+        },
+        [PANEL_SELECTOR, LOADING_SELECTOR] as const,
+      ).then((s) => ({ panels: s.panels.map(toBox), loading: s.loading }));
+    } catch {
+      await page.waitForLoadState('domcontentloaded').catch(() => {});
+    }
+  }
+  return { panels: [], loading: true };
+}
+
+/** Wait for a smooth scroll to come to rest (two equal scroll positions 100 ms apart, at most 1.5 s). */
+async function scrollRest(page: Page): Promise<void> {
+  let last = '';
+  for (let i = 0; i < 15; i++) {
+    await sleep(100);
+    const pos = await page.evaluate(() => `${scrollX},${scrollY}`).catch(() => last);
+    if (pos === last) return;
+    last = pos;
+  }
+}
+
+/** Sign-in state for the run: `storageState`, else the `login` steps once, else the `loginHook` once. */
+const sessions = new Map<string, Promise<string | undefined>>();
+function sessionState(browser: Browser, app: AppConn, out: string): Promise<string | undefined> {
+  if (app.storageState) return Promise.resolve(app.storageState);
+  if (!app.login?.length && !app.loginHook) return Promise.resolve(undefined);
+  const file = path.join(path.resolve(out), '.session.json');
+  const key = `${app.baseUrl}\n${file}`;
+  let p = sessions.get(key);
+  if (!p) {
+    p = signIn(browser, app, file);
+    sessions.set(key, p);
+    p.catch(() => sessions.delete(key)); // a failed sign-in is retried by the next scene
+  }
+  return p;
+}
+
+async function signIn(browser: Browser, app: AppConn, file: string): Promise<string> {
+  const ctx = await browser.newContext();
+  try {
+    const page = await ctx.newPage();
+    trackNetwork(page);
+    if (app.login?.length) {
+      if (app.login[0]!.do !== 'goto') await page.goto(app.baseUrl);
+      for (const [i, step] of app.login.entries()) await loginStep(page, app, step, i);
+      await page.waitForLoadState('load').catch(() => {});
+      await settle(page);
+    } else {
+      const mod = (await import(pathToFileURL(path.resolve(app.loginHook!)).href)) as {
+        default: (page: Page, context: BrowserContext) => Promise<void>;
+      };
+      await mod.default(page, ctx);
+    }
+    await ctx.storageState({ path: file });
+    return file;
+  } finally {
+    await ctx.close();
+  }
+}
+
+/** Login steps run as fast as possible, untimed and unrecorded. */
+async function loginStep(page: Page, app: AppConn, step: Step, i: number): Promise<void> {
+  const sel = selectors(step)[0];
+  const el = sel === undefined ? undefined : await findVisible(page, 'login', i, sel);
+  switch (step.do) {
+    case 'goto':
+      await page.goto(new URL(step.text ?? sel ?? '/', app.baseUrl).href);
+      break;
+    case 'click':
+      await el?.click();
+      break;
+    case 'hover':
+      await el?.hover();
+      break;
+    case 'type':
+      if (el) await el.fill(step.text ?? '');
+      else await page.keyboard.type(step.text ?? '');
+      break;
+    case 'press':
+      await page.keyboard.press(step.text ?? 'Enter');
+      break;
+    case 'wait':
+      await sleep(step.ms ?? 0);
+      break;
+    default:
+      break; // zoom, ring and scroll only matter on camera
+  }
+}
+
+/**
+ * Record one scene as one take: open the route, settle, park the cursor, flash, then run each
+ * scheduled step at its time (relative to the flash), logging where everything was. Writes
+ * `<out>/<scene>.webm` and `<out>/<scene>.boxes.json`.
+ */
+export async function recordScene(scene: Scene, scheduled: ScheduledStep[], app: AppConn, out: string): Promise<Take> {
+  fs.mkdirSync(out, { recursive: true });
+  const phone = scene.viewport === 'phone';
+  const viewport = phone
+    ? { width: DEFAULTS.phone.width, height: DEFAULTS.phone.height }
+    : { width: DEFAULTS.video.width, height: DEFAULTS.video.height };
+  const videoDir = fs.mkdtempSync(path.join(out, `.rec-${scene.id}-`));
+  const browser = await chromium.launch();
+  try {
+    const storageState = scene.signedOut ? undefined : await sessionState(browser, app, out);
+    // The video is recorded at the viewport size, so CSS px == take px and boxes need no scaling.
+    const context = await browser.newContext({
+      viewport,
+      deviceScaleFactor: phone ? 2 : 1,
+      isMobile: phone,
+      storageState,
+      recordVideo: { dir: videoDir, size: viewport },
+    });
+    await context.addInitScript({ content: OVERLAY_JS });
+    let take: Omit<Take, 'file'>;
+    let page: Page | undefined;
+    try {
+      page = await context.newPage();
+      const videoStart = epoch();
+      take = await runTake(page, scene, scheduled, app, viewport, videoStart);
+    } finally {
+      await context.close(); // finishes the video file
+    }
+    const file = path.join(out, `${scene.id}.webm`);
+    fs.renameSync(await page!.video()!.path(), file);
+    const result: Take = { file, flashAt: take.flashAt, ...(phone ? { viewport: 'phone' as const } : {}), events: take.events };
+    fs.writeFileSync(path.join(out, `${scene.id}.boxes.json`), JSON.stringify(result, null, 2) + '\n');
+    return result;
+  } finally {
+    await browser.close();
+    fs.rmSync(videoDir, { recursive: true, force: true });
+  }
+}
+
+async function runTake(
+  page: Page,
+  scene: Scene,
+  scheduled: ScheduledStep[],
+  app: AppConn,
+  viewport: { width: number; height: number },
+  videoStart: number,
+): Promise<Omit<Take, 'file'>> {
+  const url = (p: string) => new URL(p, app.baseUrl).href;
+  trackNetwork(page);
+  for (const route of scene.prewarm ?? []) {
+    await page.goto(url(route));
+    await settle(page);
+  }
+  await page.goto(url(scene.route ?? '/'));
+  await settle(page);
+
+  const steps = [...scheduled].sort((a, b) => a.index - b.index);
+  let cursor = { x: viewport.width / 2, y: viewport.height / 2 };
+  const parked = steps.find((s) => s.prePosition && selectors(s.step).length > 0);
+  if (parked) {
+    const { first } = await measure(page, scene.id, parked.index, selectors(parked.step));
+    cursor = { x: first.x + first.w / 2, y: first.y + first.h / 2 };
+  }
+  await page.evaluate(([x, y]) => window.__scenecast.cursor(x, y), [cursor.x, cursor.y] as const);
+
+  // t = 0: the flash's first frame on screen, in epoch ms. The page and Node share the epoch clock,
+  // so Node's monotonic high-resolution clock measures every later event against it, across navigations.
+  const flashEpoch = await page.evaluate(([f, fps]) => window.__scenecast.flash(f, fps), [FLASH_FRAMES, DEFAULTS.video.fps] as const);
+  const sinceFlash = () => Math.round((epoch() - flashEpoch) * 10) / 10000; // seconds, 0.1 ms resolution
+  const events: TakeEvent[] = [];
+  const quiet = (p: Promise<unknown>) => void p.catch(() => {});
+
+  let holdUntil = 0;
+  for (const { index, step, startAt } of steps) {
+    if (step.settle !== false) await settle(page);
+    const sels = selectors(step);
+    const due = flashEpoch + startAt * 1000;
+    const ev: Partial<TakeEvent> & { index: number; kind: Step['do'] } = { index, kind: step.do };
+
+    if (POINTER.has(step.do)) {
+      const box = sels.length ? await measure(page, scene.id, index, sels) : undefined;
+      await sleepUntil(due);
+      const arrive = Math.max(epoch(), due) + DEFAULT_TRAVEL_SEC * 1000;
+      if (box) {
+        ev.target = box.union;
+        cursor = { x: box.first.x + box.first.w / 2, y: box.first.y + box.first.h / 2 };
+        ev.cursorTo = { x: round(cursor.x - CURSOR_TIP.x), y: round(cursor.y - CURSOR_TIP.y), w: CURSOR_PX, h: CURSOR_PX };
+        const { x, y } = cursor;
+        quiet(page.evaluate(([x, y, end]) => window.__scenecast.moveTo(x, y, end), [x, y, arrive] as const));
+      }
+      await sleepUntil(arrive);
+      ev.at = sinceFlash();
+      if (box) await page.mouse.move(cursor.x, cursor.y);
+      if (step.do === 'click' || step.do === 'type') {
+        if (box) {
+          quiet(page.evaluate(([x, y]) => window.__scenecast.ripple(x, y), [cursor.x, cursor.y] as const));
+          await page.mouse.click(cursor.x, cursor.y);
+        }
+        if (step.do === 'type') await page.keyboard.type(step.text ?? '', { delay: TYPE_DELAY_MS });
+      }
+    } else if (step.do === 'ring' || step.do === 'zoom') {
+      if (!sels.length) throw new Error(`scene "${scene.id}" step ${index}: ${step.do} needs sel`);
+      const { union } = await measure(page, scene.id, index, sels);
+      const box = padBox(union, step.pad);
+      ev.target = box;
+      await sleepUntil(due);
+      ev.at = sinceFlash();
+      if (step.do === 'ring') {
+        const hold = step.ms ?? RING_HOLD_MS;
+        quiet(page.evaluate(([b, ms]) => window.__scenecast.ring(b, ms), [box, hold] as const));
+        holdUntil = Math.max(holdUntil, epoch() + hold + 2 * RING_FADE_MS);
+      }
+    } else {
+      const el = sels.length ? await findVisible(page, scene.id, index, sels[0]!) : undefined;
+      await sleepUntil(due);
+      ev.at = sinceFlash();
+      switch (step.do) {
+        case 'scroll':
+          if (el) await el.evaluate((e) => e.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+          else await page.evaluate(() => window.scrollBy({ top: innerHeight * 0.8, behavior: 'smooth' }));
+          await scrollRest(page);
+          break;
+        case 'press':
+          await page.keyboard.press(step.text ?? 'Enter');
+          break;
+        case 'goto':
+          await page.goto(url(step.text ?? sels[0] ?? '/'), { waitUntil: 'domcontentloaded' });
+          break;
+        default:
+          break; // wait: the schedule already spaced it
+      }
+      if (sels.length && step.do !== 'goto') ev.target = (await measure(page, scene.id, index, sels)).union;
+    }
+
+    Object.assign(ev, await snapshot(page));
+    events.push(ev as TakeEvent);
+    holdUntil = Math.max(holdUntil, due + (step.ms ?? 0));
+  }
+  await sleepUntil(Math.max(holdUntil, epoch()) + TAIL_SEC * 1000);
+  return { flashAt: Math.round(flashEpoch - videoStart) / 1000, events };
+}
