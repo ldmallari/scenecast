@@ -39,9 +39,16 @@ therefore renders, or previews, only once. The CLI runs one command per process,
 
 ## Sync FAILs
 
-**The gap is large and positive (the action is late).** The page was slow before the action: a request was still in
-flight, or a loading indicator was up. Seed the data with `app.seed`, open slow routes in `prewarm`, or put a cue-less
-`wait` step earlier in the scene so the page is ready.
+Retime places every recorded action on its cue word, so a slow page shows up as trimmed waiting, not as a late
+action. A sync FAIL has one of two causes:
+
+**The action time is `—` ("cut by retime").** The action fell inside a stretch retime removed. This happens when the
+take is far behind the voice and there is no quiet time to trim. Give the page less to do before the step (seed the
+data with `app.seed`, open slow routes in `prewarm`), or give the narration more time before the cue.
+
+**The gap is large but the action time is set.** Speech recognition placed the cue word away from where the voice
+says it. Check the word time column against the narration diff; if the word was misheard or dropped, see the next
+item.
 
 <a id="the-cue-word-was-not-heard"></a>**The cue word was not heard (`(plan)` in the word time column).** A word recognition merely
 misheard is already matched by its position, so this means nothing was heard where the cue should be. The narration diff
@@ -116,7 +123,8 @@ data, prewarm the route, or wait. A spinner that the action itself brings up is 
 
 ## Sign-in
 
-`login` steps run once per render. For SSO or two-factor sign-in, use `scenecast login video.yaml` to sign in by hand
+`login` steps run before each signed-in scene that is recorded, so a cold render signs in once per scene. If the app
+limits sign-ins, or for SSO or two-factor sign-in, use `scenecast login video.yaml` to sign in by hand
 and save `app.storageState`, or write an `app.loginHook`. The saved session holds credentials: keep it out of version
 control.
 

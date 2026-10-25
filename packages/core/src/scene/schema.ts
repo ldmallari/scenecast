@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { cueWordIndex } from '../schedule.js';
 
 export const DEFAULTS = {
   voice: { name: 'af_heart', lang: 'en-us', speed: 0.9, phraseGapSec: 0.2 },
@@ -43,7 +44,7 @@ const StepSchema = z.object({
   pad: z.number().nonnegative().optional(),
   settle: z.boolean().optional(),
   ring: z.boolean().optional(),
-});
+}).strict();
 
 const BrandSchema = z.object({
   primary: z.string(),
@@ -58,8 +59,9 @@ const BrandSchema = z.object({
       file: z.string().min(1),
       licence: z.string().trim().min(1, 'brand.music.licence is required for a user-supplied track'),
     })
+    .strict()
     .optional(),
-});
+}).strict();
 
 const AppConnSchema = z.object({
   baseUrl: z.string(),
@@ -71,15 +73,15 @@ const AppConnSchema = z.object({
    * The app's navigation bars. A zoom never cuts one partly: it shows a nav whole or leaves it out.
    * `left` is a sidebar (checked across), `top` a bar along the top (checked down and across).
    */
-  nav: z.array(z.object({ selector: z.string().min(1), edge: z.enum(['left', 'top']) })).optional(),
-});
+  nav: z.array(z.object({ selector: z.string().min(1), edge: z.enum(['left', 'top']) }).strict()).optional(),
+}).strict();
 
 const VoiceSchema = z.object({
   name: z.string().default(DEFAULTS.voice.name),
   lang: z.string().default(DEFAULTS.voice.lang),
   speed: z.number().positive().default(DEFAULTS.voice.speed),
   phraseGapSec: z.number().nonnegative().default(DEFAULTS.voice.phraseGapSec),
-});
+}).strict();
 
 const SceneSchema = z.object({
   id: z.string().min(1),
@@ -93,17 +95,18 @@ const SceneSchema = z.object({
   steps: z.array(StepSchema).default([]),
   page: z.string().optional(),
   seconds: z.number().positive().optional(),
-});
+}).strict();
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Number of case-insensitive, whole-word occurrences of `cue` in `narration`. */
+/**
+ * Number of non-overlapping occurrences of `cue` in `narration`, counted exactly as the scheduler finds them:
+ * over the narration's whitespace-separated words, case-insensitive, with punctuation trimmed from each word's
+ * ends (so "in" does not match inside "sign-in", and "user" does not match "user's").
+ */
 export function countCue(narration: string, cue: string): number {
-  const words = cue.trim().split(/\s+/).map(escapeRegExp).join('\\s+');
-  const re = new RegExp(`(?<![\\p{L}\\p{N}_])${words}(?![\\p{L}\\p{N}_])`, 'giu');
-  return [...narration.matchAll(re)].length;
+  const words = narration.trim().split(/\s+/);
+  let n = 0;
+  while (cueWordIndex(words, cue, n + 1) !== null) n++;
+  return n;
 }
 
 export const VideoSpecSchema = z
@@ -116,8 +119,9 @@ export const VideoSpecSchema = z
     voice: VoiceSchema.default({}),
     scenes: z.array(SceneSchema).min(1),
     /** Names and words speech recognition may spell differently without a narration WARN. */
-    audit: z.object({ allowList: z.array(z.string().trim().min(1)).default([]) }).optional(),
+    audit: z.object({ allowList: z.array(z.string().trim().min(1)).default([]) }).strict().optional(),
   })
+  .strict()
   .superRefine((spec, ctx) => {
     spec.scenes.forEach((scene, si) => {
       if (scene.kind === 'title') {

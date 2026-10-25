@@ -138,6 +138,11 @@ describe('recordScene', () => {
     for (const [k, v] of Object.entries({ x: el.x - 8, y: el.y - 8, w: el.w + 16, h: el.h + 16 }))
       expect(Math.abs(ringEv.ringBox![k as keyof typeof el] - v)).toBeLessThanOrEqual(1); // #signed did not move
     expect(take.events.every((e) => e.panels.length === 0 && e.loading === false && e.loadingBefore === false)).toBe(true);
+    // How long each action lasts: typing ends after its 10 characters, the ring after its hold and fades, clicks are instant.
+    const typed = take.events[1]!;
+    expect(typed.busyUntil! - typed.at).toBeGreaterThanOrEqual(10 * 0.035 - 0.02);
+    expect(ringEv.busyUntil! - ringEv.at).toBeCloseTo((600 + 2 * 150) / 1000, 6);
+    expect(take.events[0]!.busyUntil).toBeUndefined();
 
     // Real sync check against the video: the gap from the first magenta frame to the first frame
     // showing the green "Signed by" line must equal the logged gap from the flash to the Sign click.

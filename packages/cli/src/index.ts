@@ -67,7 +67,7 @@ export async function doctor(): Promise<number> {
   const width = Math.max(...checks.map((c) => c.name.length));
   for (const c of checks) console.log(`${c.name.padEnd(width)}  ${c.ok ? 'OK     ' : 'MISSING'}  ${c.detail}`);
   if (setupError) console.log(`\ntoolchain setup failed: ${setupError}`);
-  if (!checks.find((c) => c.name === 'chromium')!.ok) console.log('\nInstall Chromium with: npx playwright install chromium');
+  if (!checks.find((c) => c.name === 'chromium')!.ok) console.log('\nInstall Chromium (in the scenecast checkout) with: pnpm -C packages/cli exec playwright install chromium');
   return checks.every((c) => c.ok) ? 0 : 1;
 }
 

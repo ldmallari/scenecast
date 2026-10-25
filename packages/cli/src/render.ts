@@ -109,6 +109,16 @@ export function runSeed(seed: string, cwd: string, baseUrl: string): Promise<voi
   });
 }
 
+/** Whether anything answers at `url` (any HTTP status counts) within a few seconds. */
+async function reachable(url: string): Promise<boolean> {
+  try {
+    await fetch(url, { signal: AbortSignal.timeout(3000), redirect: 'manual' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Voices every scene, one cache entry per scene; the scenes that changed are synthesised in one batch. */
 async function voiceStage(spec: VideoSpec, scenes: Scene[], cache: StageCache, log: (m: string) => void): Promise<Map<string, { wav: string; voice: SceneVoice }>> {
   const out = new Map<string, { wav: string; voice: SceneVoice }>();
@@ -157,6 +167,13 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
   const workDir = path.resolve(opts.workRoot ?? 'work', spec.id);
   const cache = new StageCache(workDir, { fresh: opts.fresh, log });
 
+  // Problems with the app are reported before the (slow) voice stage.
+  const signedIn = scenes.some((s) => s.kind === 'app' && !s.signedOut);
+  if (signedIn && spec.app.storageState && !fs.existsSync(spec.app.storageState))
+    throw new Error(`app.storageState ${spec.app.storageState} does not exist yet: run \`scenecast login ${file}\` first`);
+  if (scenes.some((s) => s.kind === 'app') && !(await reachable(spec.app.baseUrl)))
+    log(`the app at ${spec.app.baseUrl} is not responding; start it first (recording will fail unless every scene is cached)`);
+
   const voices = await voiceStage(spec, scenes, cache, log);
 
   let seeded = false;
@@ -181,11 +198,18 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
           seeded = true;
         }
         let take;
+        // The signed-in session the recorder saves holds credentials: never leave it behind, even on failure or
+        // when the process is stopped mid-recording (Ctrl-C exits through Playwright's signal handler).
+        const session = path.join(dir, '.session.json');
+        const removeSession = () => {
+          if (!opts.keepWork) fs.rmSync(session, { force: true });
+        };
+        process.once('exit', removeSession);
         try {
           take = await recordScene(scene, scheduled, app, dir);
         } finally {
-          // The signed-in session the recorder saved holds credentials: never leave it behind, even on failure.
-          if (!opts.keepWork) fs.rmSync(path.join(dir, '.session.json'), { force: true });
+          removeSession();
+          process.removeListener('exit', removeSession);
         }
         const flash = await scanFlash(take.file);
         const blanks = await scanBlank(take.file, flash.end);

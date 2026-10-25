@@ -27,21 +27,18 @@ const PAD_Y = 18;
 const CHAR_EM = 0.55;
 const EDGE = 72;
 
-/** Caption events from a take: each event's boxes are active from its output time to the next event's (or `sceneEnd`). */
+/**
+ * Caption events from a take timed by the schedule alone (no zooms): a thin wrapper over `zoomedCaptionEvents`,
+ * which is what the pipeline uses, so there is one caption-event builder.
+ */
 export function eventsForCaptions(take: Take, scheduled: ScheduledStep[], opts: { sceneEnd: number }): CaptionEvent[] {
-  const map = (b: Box): Box => (take.viewport === 'phone' ? phoneToFrame(b) : b);
-  const timed = take.events
-    .map((e) => {
-      const sch = scheduled.find((s) => s.index === e.index);
-      if (!sch) throw new Error(`captions: no scheduled step for take event ${e.index}`);
-      return { e, t: sch.startAt + travelSecFor(sch.step) };
-    })
-    .sort((a, b) => a.t - b.t);
-  return timed.map(({ e, t }, i) => ({
-    start: t,
-    end: i + 1 < timed.length ? timed[i + 1]!.t : opts.sceneEnd,
-    boxes: [e.target, e.ringBox, e.cursorTo, ...e.panels].filter((b): b is Box => b !== undefined).map(map),
-  }));
+  const times = new Map<number, number>();
+  for (const e of take.events) {
+    const sch = scheduled.find((s) => s.index === e.index);
+    if (!sch) throw new Error(`captions: no scheduled step for take event ${e.index}`);
+    times.set(e.index, sch.startAt + travelSecFor(sch.step));
+  }
+  return zoomedCaptionEvents(take, times, [], opts.sceneEnd);
 }
 
 const EPS = 1e-6;

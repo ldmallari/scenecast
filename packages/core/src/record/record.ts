@@ -94,6 +94,11 @@ export interface TakeEvent {
   loadingBefore?: boolean;
   /** The settle before this step gave up (its cap ran out); the step ran anyway. */
   settleTimedOut?: boolean;
+  /**
+   * Seconds after the flash until the action itself is over: typing finished, the recorder's ring faded out,
+   * or the step's `ms` hold ended. Absent when the action is instant. Retime never cuts inside it.
+   */
+  busyUntil?: number;
 }
 
 export interface Take {
@@ -470,7 +475,10 @@ async function runTake(
         quiet(page.evaluate(([x, y]) => window.__scenecast.ripple(x, y), [cursor.x, cursor.y] as const));
         await page.mouse.down();
         await page.mouse.up();
-        if (step.do === 'type') await page.keyboard.type(step.text ?? '', { delay: TYPE_DELAY_MS });
+        if (step.do === 'type' && step.text) {
+          await page.keyboard.type(step.text, { delay: TYPE_DELAY_MS });
+          ev.busyUntil = sinceFlash();
+        }
       }
     } else if (step.do === 'ring' || step.do === 'zoom') {
       const m = await measure(page, scene.id, index, sels);
@@ -481,6 +489,7 @@ async function runTake(
       if (step.do === 'ring') {
         const hold = step.ms ?? RING_HOLD_MS;
         quiet(page.evaluate(([b, ms]) => window.__scenecast.ring(b, ms), [box, hold] as const));
+        ev.busyUntil = ev.at + (hold + 2 * RING_FADE_MS) / 1000;
         holdUntil = Math.max(holdUntil, epoch() + hold + 2 * RING_FADE_MS);
         ringGoneAt = Math.max(ringGoneAt, epoch() + hold + 2 * RING_FADE_MS + 50);
         ev.ringBox = box;
@@ -517,6 +526,8 @@ async function runTake(
     }
 
     Object.assign(ev, await snapshot(page));
+    // A step held with `ms` is busy until the hold ends.
+    if (step.ms && ev.at !== undefined) ev.busyUntil = Math.max(ev.busyUntil ?? ev.at, ev.at + step.ms / 1000);
     events.push(ev as TakeEvent);
     holdUntil = Math.max(holdUntil, due + (step.ms ?? 0));
   }

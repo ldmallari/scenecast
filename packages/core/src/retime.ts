@@ -43,15 +43,22 @@ const EPS = 1e-6;
 const PROTECT_BEFORE = DEFAULT_TRAVEL_SEC + 0.15;
 /** Never cut this soon after the previous event, so its visible result plays out. */
 const KEEP_AFTER = 0.8;
+/** After an action that lasts (typing, a ring, a held step), keep this long past its end before cutting. */
+const KEEP_AFTER_BUSY = 0.3;
 /** Last-resort cuts start just after this. */
 const FALLBACK_AFTER = 0.3;
 
 type Range = [number, number];
 
-/** Source ranges to remove from [p, n] so that `excess` seconds go, quietest places first. */
-function cutRanges(p: number, n: number, excess: number, label: string): Range[] {
+/**
+ * Source ranges to remove from [p, n] so that `excess` seconds go, quietest places first. `busy` is when the
+ * previous action is over (typing done, ring gone, `ms` hold ended); nothing inside [p, busy] is cut unless every
+ * other place is used up.
+ */
+function cutRanges(p: number, n: number, excess: number, label: string, busy: number = p): Range[] {
   const g = Math.max(p, n - PROTECT_BEFORE);
-  const winLo = p + KEEP_AFTER;
+  const done = Math.min(Math.max(p, busy), n);
+  const winLo = Math.max(p + KEEP_AFTER, done > p ? done + KEEP_AFTER_BUSY : -Infinity);
   const w = g - winLo;
   if (w >= excess) {
     const mid = (winLo + g) / 2;
@@ -67,9 +74,15 @@ function cutRanges(p: number, n: number, excess: number, label: string): Range[]
     left -= len;
   };
   if (w > 0) take(winLo, g);
-  take(p + FALLBACK_AFTER, Math.min(winLo, g));
-  take(p, Math.min(p + FALLBACK_AFTER, g));
-  take(g, n); // only if everything quieter is used up
+  // Then the result window once the action itself is over (for an instant action: from 0.3 s after it).
+  const after = Math.max(p + FALLBACK_AFTER, done);
+  take(after, Math.min(winLo, g));
+  take(Math.max(p, done), Math.min(after, g));
+  take(Math.max(g, done), n); // the cursor glide: only if everything quieter is used up
+  if (left > EPS) {
+    console.warn(`scenecast: retime: ${label}: cutting ${left.toFixed(2)} s inside the previous action (it is still playing out)`);
+    take(p, done);
+  }
   return cuts.sort((x, y) => x[0] - y[0]);
 }
 
@@ -112,6 +125,10 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
     if (prev && a.out < prev.out - EPS)
       throw new Error(`scene "${sceneId}": action ${idx} is scheduled before the previous action`);
   });
+
+  /** When the actions before source time `t` are all over (the latest busyUntil among them), in source seconds. */
+  const busyBefore = (t: number) =>
+    Math.max(-Infinity, ...take.events.filter((e) => flash + e.at < t - EPS && e.busyUntil !== undefined).map((e) => flash + e.busyUntil!));
 
   const segs: Segment[] = [];
   let outT = 0;
@@ -169,7 +186,7 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
     const span = Math.max(0, a.src - srcT);
     if (span > d) {
       let from = srcT;
-      for (const [lo, hi] of cutRanges(srcT, a.src, span - d, `event ${take.events[k]!.index}`)) {
+      for (const [lo, hi] of cutRanges(srcT, a.src, span - d, `event ${take.events[k]!.index}`, busyBefore(a.src))) {
         play(from, lo - from);
         from = hi;
       }

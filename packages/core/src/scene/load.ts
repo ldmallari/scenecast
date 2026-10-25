@@ -37,11 +37,24 @@ export async function loadScene(file: string): Promise<VideoSpec> {
   }
   if (spec.app.storageState) spec.app.storageState = rel(spec.app.storageState);
   if (spec.app.loginHook) spec.app.loginHook = rel(spec.app.loginHook);
-  if (spec.app.seed && isPathLike(spec.app.seed)) spec.app.seed = rel(spec.app.seed);
+  if (spec.app.seed) spec.app.seed = resolveSeed(spec.app.seed, dir);
   for (const scene of spec.scenes) if (scene.page) scene.page = rel(scene.page);
   return spec;
 }
 
-function isPathLike(s: string): boolean {
-  return /[\\/]/.test(s) || /\.(m?js|cjs|ts|json|sql|ya?ml)$/i.test(s);
+/**
+ * `app.seed` is a script path only when it is a single token (no whitespace) naming a file that exists,
+ * relative to the scene file's folder; that path is made absolute. Anything else is kept verbatim and runs as a
+ * shell command in the scene folder (`node scripts/seed.mjs`, `python db/seed.py`, `make seed`). A single token
+ * that looks like a path (it has a slash or a script extension) but names no file is an error now, before any
+ * voice is synthesised.
+ */
+export function resolveSeed(seed: string, sceneDir: string): string {
+  const s = seed.trim();
+  if (/\s/.test(s)) return seed;
+  const abs = path.isAbsolute(s) ? s : path.resolve(sceneDir, s);
+  if (existsSync(abs)) return abs;
+  if (/[\\/]/.test(s) || /\.(m?js|cjs|ts|sh|py|rb)$/i.test(s))
+    throw new Error(`app.seed: no such file: ${abs} (a seed is a script path relative to the scene file, or a shell command)`);
+  return seed;
 }

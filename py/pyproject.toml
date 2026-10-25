@@ -18,10 +18,6 @@ dependencies = [
   "pillow",
 ]
 
-[tool.pytest.ini_options]
-# misaki uses importlib.resources.open_text, deprecated on Python 3.12+ (third-party, harmless).
-filterwarnings = ["ignore:open_text is deprecated:DeprecationWarning:misaki"]
-
 [dependency-groups]
 dev = ["pytest"]
 

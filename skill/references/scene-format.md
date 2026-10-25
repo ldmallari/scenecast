@@ -4,8 +4,8 @@ A scene file (`video.yaml`; `.yml` and `.json` work too) describes one video: th
 voice, and an ordered list of scenes. Each scene has its narration and the steps to perform while it is spoken. Every
 step names a **cue**, a word or phrase in the narration, and scenecast times the step so that it lands on that word.
 
-Relative paths (`brand.logo`, `brand.music.file`, `app.storageState`, `app.loginHook`, a path-like `app.seed`) are
-resolved against the scene file's folder.
+Relative paths (`brand.logo`, `brand.music.file`, `app.storageState`, `app.loginHook`, and `app.seed` when it is a
+script path) are resolved against the scene file's folder.
 
 The scene file is checked when it loads. Every problem is listed at once, for example
 `scene "worklist" step 1: cue "due" not in narration`.
@@ -99,10 +99,10 @@ Without `brand.music`, scenecast synthesises a quiet music bed, so there is noth
 | Field | Required | Meaning |
 |---|---|---|
 | `baseUrl` | yes | Where the app runs, for example `http://127.0.0.1:4310`. Routes and `goto` paths are relative to it. The app must already be running when you render. |
-| `login` | no | Steps that sign in, run once per render before the first signed-in scene, untimed and not recorded. They use the same step format as scenes (`goto`, `type`, `click`, `press`, `hover`, `wait`). |
+| `login` | no | Steps that sign in, run before each signed-in scene is recorded (scenes reused from the cache don't sign in), untimed and not recorded. They use the same step format as scenes (`goto`, `type`, `click`, `press`, `hover`, `wait`). |
 | `storageState` | no | A saved Playwright session file. When set, it is used instead of `login`. `scenecast login <video.yaml>` opens a browser, lets you sign in by hand, and saves the session to this path (useful for SSO or two-factor sign-in). |
 | `loginHook` | no | A JavaScript module whose default export is `async (page, context) => {}` and signs in. It is used when there are no `login` steps and no `storageState`. |
-| `seed` | no | Runs once before the first recording. A script path runs with `node` (`.js`, `.mjs`, `.cjs`, `.ts`) or `sh` (`.sh`); anything else runs as a shell command. It runs in the scene file's folder with `SCENECAST_BASE_URL` set. Seeding is skipped when every recording is reused from the cache. |
+| `seed` | no | Runs once before the first recording, in the scene file's folder, with `SCENECAST_BASE_URL` set. A single word naming a file that exists (relative to the scene file), such as `./seed.mjs`, is a script: `.js`, `.mjs`, `.cjs` and `.ts` run with `node`, `.sh` with `sh`, anything else directly. Anything else, such as `node scripts/seed.mjs` or `python db/seed.py`, runs as a shell command. A single word that looks like a path but names no file (`./nope.mjs`) is an error when the scene file loads. Seeding is skipped when every recording is reused from the cache. |
 | `nav` | no | The app's navigation bars: a list of `{ selector, edge }` with `edge` `left` (a sidebar) or `top` (a bar along the top). A zoom shows a declared nav whole or leaves it out, never cut partway. |
 
 A scene with `signedOut: true` is recorded without the session.

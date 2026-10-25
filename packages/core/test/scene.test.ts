@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadScene, DEFAULTS, VideoSpecSchema } from '../src/index.js';
+import { loadScene, parseScene, DEFAULTS, VideoSpecSchema } from '../src/index.js';
 
 const fx = (n: string) =>
   path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', n);
@@ -67,5 +67,39 @@ describe('scene loader', () => {
     expect(VideoSpecSchema.parse({ ...base, audit: { allowList: ['Ana Reyes'] } }).audit).toEqual({ allowList: ['Ana Reyes'] });
     expect(VideoSpecSchema.parse({ ...base, audit: {} }).audit).toEqual({ allowList: [] });
     expect(() => VideoSpecSchema.parse({ ...base, audit: { allowList: 'Ana' } })).toThrow();
+  });
+});
+
+describe('scene file strictness', () => {
+  const base = () => ({
+    id: 't', title: 'T', output: 't',
+    brand: { primary: '#000', accent: '#fff', font: 'Inter', introTitle: 'T' },
+    app: { baseUrl: 'http://127.0.0.1:9' },
+    scenes: [{ id: 's', kind: 'app', narration: 'Open the sign-in page, then the user\'s menu.', steps: [] as object[] }],
+  });
+
+  it('rejects unknown keys (typos) instead of ignoring them', () => {
+    const typo = base();
+    (typo.scenes[0]!.steps as object[]).push({ cue: 'Open', do: 'click', sel: '#a', ofset: 0.2 });
+    expect(() => parseScene(typo)).toThrow(/Unrecognized key\(s\) in object: 'ofset'/);
+    expect(() => parseScene({ ...base(), audit: { allowlist: ['x'] } })).toThrow(/'allowlist'/);
+    expect(() => parseScene({ ...base(), app: { baseUrl: 'http://x', navs: [] } })).toThrow(/'navs'/);
+  });
+
+  it('validates cues the way the scheduler finds them (punctuated words do not match inside)', () => {
+    const inside = base();
+    (inside.scenes[0]!.steps as object[]).push({ cue: 'in', do: 'click', sel: '#a' });
+    expect(() => parseScene(inside)).toThrow('cue "in" not in narration');
+    const possessive = base();
+    (possessive.scenes[0]!.steps as object[]).push({ cue: 'user', do: 'click', sel: '#a' });
+    expect(() => parseScene(possessive)).toThrow('cue "user" not in narration');
+    const ok = base();
+    (ok.scenes[0]!.steps as object[]).push({ cue: 'sign-in', do: 'click', sel: '#a' });
+    expect(() => parseScene(ok)).not.toThrow();
+  });
+
+  it('the demo scene file loads under the strict schema', async () => {
+    const demo = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../examples/demo-app/video.yaml');
+    await expect(loadScene(demo)).resolves.toBeDefined();
   });
 });

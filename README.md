@@ -37,10 +37,17 @@ no sound; the video is narrated.*
 - Node.js 24 and pnpm 10.
 - About 2 GB of disk space for the models, the Python environment and Chromium.
 
-`scenecast doctor` sets up everything else without admin rights: [uv](https://github.com/astral-sh/uv), a Python
-environment, ffmpeg, and the Kokoro and Whisper models (into `~/.cache/scenecast/`). On Linux, Chromium may need
-system libraries: `pnpm -C packages/cli exec playwright install --with-deps chromium` installs them (this one step
-asks for admin rights).
+`scenecast doctor` sets up everything else without admin rights (and `scenecast render` does the same on first use
+if you skip doctor). It writes:
+
+- [uv](https://github.com/astral-sh/uv), via its official installer, to `~/.local/bin/uv` (or
+  `~/.cache/scenecast/bin/uv` when that folder is not writable), with its Python in `~/.local/share/uv/python` and its
+  package cache in `~/.cache/uv`;
+- the Python environment in `py/.venv` inside the checkout (it includes ffmpeg);
+- the Kokoro and Whisper models and NLTK data, about 1 GB, in `~/.cache/scenecast/`.
+
+On Linux, Chromium may need system libraries: `pnpm -C packages/cli exec playwright install --with-deps chromium`
+installs them (this one step asks for admin rights).
 
 ## Quickstart
 
@@ -107,7 +114,7 @@ project's `.claude/skills/`) to use it.
 
 ```sh
 pnpm test                                      # unit tests (TypeScript)
-uv run --project py pytest                     # Python tests (uv is set up by doctor)
+<uv> run --project py pytest                   # Python tests; <uv> is the path doctor prints on its uv line
 node scripts/check-licences.mjs                # every dependency's licence is allowed and listed
 SCENECAST_E2E=1 pnpm -C packages/cli exec vitest run -t e2e   # the whole demo render (slow)
 ```

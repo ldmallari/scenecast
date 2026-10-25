@@ -140,7 +140,18 @@ export function whisperDownloadArgs(project: string, model: string, root: string
   return ['run', '--project', project, 'python', '-m', 'scenecast_py.whisper', '--download', model, root];
 }
 
+/** The toolchain each cache folder resolved to in this process: set up once, then reused by every stage. */
+const resolved = new Map<string, Toolchain>();
+
 export async function ensureToolchain(opts: { offline?: boolean } = {}): Promise<Toolchain> {
+  const known = resolved.get(cacheDir());
+  if (known && [known.python, known.ffmpeg, known.models.kokoro, known.models.voices].every(nonEmpty)) return known;
+  const tc = await setUpToolchain(opts);
+  resolved.set(cacheDir(), tc);
+  return tc;
+}
+
+async function setUpToolchain(opts: { offline?: boolean }): Promise<Toolchain> {
   const models = path.join(cacheDir(), 'models');
   const kokoro = path.join(models, KOKORO_FILE);
   const voices = path.join(models, VOICES_FILE);

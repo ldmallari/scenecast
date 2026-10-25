@@ -14,12 +14,12 @@ const FRAME = 1 / 30;
 const FLASH = 1.0;
 const FLASH_END = 1.1;
 const voice = (duration: number): SceneVoice => ({ duration, phrases: [], words: [] });
-const take = (events: Pick<TakeEvent, 'index' | 'kind' | 'at'>[]): Take => ({
+const take = (events: (Pick<TakeEvent, 'index' | 'kind' | 'at'> & { busyUntil?: number })[]): Take => ({
   file: 'take.webm',
   flashAt: FLASH,
   events: events.map((e) => ({ ...e, panels: [], loading: false })),
 });
-const sched = (items: { index: number; do: 'click' | 'zoom'; startAt: number }[]): ScheduledStep[] =>
+const sched = (items: { index: number; do: 'click' | 'zoom' | 'type' | 'ring' | 'wait'; startAt: number }[]): ScheduledStep[] =>
   items.map((i) => ({ index: i.index, step: { do: i.do } as never, cueTime: null, startAt: i.startAt }));
 const opts = { sceneId: 's', flashTime: FLASH, flashEnd: FLASH_END };
 afterEach(() => vi.restoreAllMocks());
@@ -278,4 +278,39 @@ describe('blank frames', () => {
     // Before `from`, it is ignored.
     expect(await scanBlank(file, 1.5)).toEqual([]);
   }, 30_000);
+});
+
+describe('retime never cuts inside an action that is still playing out', () => {
+  /** Source ranges retime removed: the gaps between consecutive clips. */
+  const cuts = (segs: Segment[]) => {
+    const clips = segs.filter((g) => g.hold === undefined).sort((a, b) => a.outStart - b.outStart);
+    const out: [number, number][] = [];
+    for (let i = 1; i < clips.length; i++) if (clips[i]!.srcIn > clips[i - 1]!.srcOut + 1e-6) out.push([clips[i - 1]!.srcOut, clips[i]!.srcIn]);
+    return out;
+  };
+  const insideOf = (c: [number, number][], lo: number, hi: number) => c.filter(([a, b]) => a < hi - 1e-6 && b > lo + 1e-6);
+
+  // Each case: the action at 1.0 s lasts until `busy`; the next click happened at 4.0 s but must show at 2.6 s.
+  const cases: { name: string; kind: 'type' | 'ring' | 'wait'; busy: number }[] = [
+    { name: 'typing longer than 1 s', kind: 'type', busy: 2.2 },
+    { name: 'a recorder ring (hold plus fades)', kind: 'ring', busy: 2.5 },
+    { name: 'a step held with ms', kind: 'wait', busy: 2.3 },
+  ];
+  for (const c of cases) {
+    it(c.name, () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const s = sched([
+        { index: 0, do: c.kind, startAt: c.kind === 'type' ? 1.0 - DEFAULT_TRAVEL_SEC : 1.0 },
+        { index: 1, do: 'click', startAt: 2.6 - DEFAULT_TRAVEL_SEC },
+      ]);
+      const plain = retime(take([{ index: 0, kind: c.kind, at: 1.0 }, { index: 1, kind: 'click', at: 4.0 }]), s, voice(5), opts);
+      const segs = retime(take([{ index: 0, kind: c.kind, at: 1.0, busyUntil: c.busy }, { index: 1, kind: 'click', at: 4.0 }]), s, voice(5), opts);
+      // Without the logged end, the old window cut into the action; with it, nothing inside [action, end] goes.
+      expect(insideOf(cuts(plain), FLASH + 1.0, FLASH + c.busy).length).toBeGreaterThan(0);
+      expect(insideOf(cuts(segs), FLASH + 1.0, FLASH + c.busy)).toEqual([]);
+      // Sync is unchanged: both actions land where they did.
+      for (const at of [1.0, 4.0]) expect(outTimeOf(segs, FLASH + at)).toBeCloseTo(outTimeOf(plain, FLASH + at), 6);
+      expect(sceneLen(segs)).toBeCloseTo(sceneLen(plain), 9);
+    });
+  }
 });
