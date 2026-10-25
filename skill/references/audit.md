@@ -26,7 +26,7 @@ Each cued step is one row:
 | scene, cue | The step. |
 | word time | When the cue word is heard in the final video (seconds). `(plan)` means it was not heard, and the planned time was used instead. |
 | action time | When the action happens in the final video. |
-| gap | action time minus word time (plus the step's `offset`). |
+| gap | action time minus (word time + the step's `offset`). |
 | target label | The step's selector. |
 | caption side | Where the caption was at the action: `bottom`, `top` or `none`. |
 | checks | Every check and its result. |
@@ -42,15 +42,15 @@ Each cued step is one row:
 | **crop** | The zoom leaves the frame, the target is closer than 24 px to the zoom's edge, or the zoom cuts a nav partway. | Zoom a slightly larger element; declare the app's nav bars in `app.nav`. |
 | **loading** | A spinner or skeleton was visible just before the action. WARN when the page had not settled before the step (the settle wait timed out). | Seed the data first, add `prewarm` routes, or add a cue-less `wait` step before it. |
 | **plan** | The plan has no zoom where a zoom step expected one, or no ring box was logged for a ring step. | Re-render with `--fresh`; if it persists, report it. |
-| **word** | (WARN) The cue word was not heard in the transcript, so the planned time was used. | Check the narration diff below; add the word to `audit.allowList` if recognition spells it differently. |
+| **word** | (WARN) The cue word was not found in the transcript, so the planned time was used. (A misheard word is already matched by its position; this means nothing was heard there.) | See [troubleshooting](troubleshooting.md#the-cue-word-was-not-heard): for a name, add it to `audit.allowList`; otherwise choose a more distinct cue word, or listen to how the voice says it. |
 
-Two checks cover the whole video:
+Three checks cover the whole video:
 
 | Check | FAIL when |
 |---|---|
 | **loudness** | The mix is outside −16 ±1 LUFS, or its true peak is above −1.5 dBTP. |
 | **blank frames** | Any frame inside an app scene is near-uniform, such as a blank page between two navigations. Only the app's screen counts (the phone screen on phone scenes), captions are left out, and cards and the dissolves into and out of them are skipped. The times are listed. |
-| **narration** | Never FAILs. A WARN shows a diff (`-"expected" +"heard"`) when the transcript differs from the script after normalising numbers, case and punctuation. A word or name in `audit.allowList` may be heard differently, including as one more word (for example "worklist" heard as "work list"), without a WARN. |
+| **narration** | Never FAILs. A WARN shows a diff (`-"expected" +"heard"`) when the transcript differs from the script after normalising numbers, case and punctuation. A word or name in `audit.allowList` may be heard differently, including as one more word (for example "worklist" heard as "work list"), without a WARN. An allow-listed cue that recognition leaves out entirely is placed by position: at the gap the heard words around it leave. |
 
 Scenes without cued steps (chapter cards, for example) get a captions check of their own.
 
@@ -60,8 +60,8 @@ Read every row of `audit-table.md` and every tile of `contact-sheet.png`, not a 
 moments and still show a caption over a button, or a ring around the wrong element, on one. The audit is there so that
 nobody has to watch the whole video frame by frame, but only if all of it is read.
 
-The demo video in `examples/demo-app` passes with every cued moment at PASS: the median gap is 0.0165 s and the largest
-is 0.127 s.
+The demo video in `examples/demo-app` passes with every cued moment at PASS: the median gap between word and action is
+0.013 s and the largest is 0.127 s.
 
 ## What the audit does not check
 

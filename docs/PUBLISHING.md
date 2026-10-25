@@ -4,6 +4,9 @@ A checklist for the maintainer. Work through it before the repository is made pu
 ticked.
 
 - [ ] **Employer sign-off.** Get the employer's sign-off to publish this personal project.
+- [ ] **Fresh history.** Publish from a fresh root commit (squash the branch into one commit), because earlier history
+      contains internal design docs. Before pushing, search the
+      new history once more for employer, product or person names and for absolute local paths.
 - [ ] **kokoro-onnx copyright line.** `THIRD_PARTY.md` quotes the MIT licence for the code that follows kokoro-onnx
       as "Copyright (c) the kokoro-onnx authors". Replace that line with the exact copyright line from
       https://github.com/thewh1teagle/kokoro-onnx/blob/main/LICENSE.

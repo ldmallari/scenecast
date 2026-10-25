@@ -78,7 +78,7 @@ scenes:
 | `app` | yes | How to reach and sign in to the app. See [app](#app). |
 | `voice` | no | The narrator. See [voice](#voice). |
 | `scenes` | yes | At least one scene. See [scenes](#scenes). |
-| `audit` | no | `allowList`: names and words that speech recognition may spell differently without a narration WARN (for example `[Demo Co]`). |
+| `audit` | no | `allowList`: names and words that speech recognition may spell differently, or leave out, without a narration WARN (for example `[Demo Co]`). An allow-listed cue word that is left out is placed by position, in the gap the heard words around it leave. |
 
 ## brand
 
@@ -87,7 +87,7 @@ scenes:
 | `primary` | yes | Background colour of the intro, outro and chapter cards. The card text is light or dark to suit it. |
 | `accent` | yes | The accent bar on the cards. |
 | `font` | yes | Font family for captions and cards, for example `Inter`. If it is not installed, the system sans-serif is used. |
-| `logo` | no | An image file shown on the cards. |
+| `logo` | no | An image file shown on the intro and outro cards (not on chapter cards). |
 | `introTitle` | yes | Title of the intro card. |
 | `introSubtitle` | no | Subtitle of the intro card. |
 | `music` | no | `{ file, licence }`: your own music track instead of the synthesised bed. `licence` is required and is copied into the audit. |
@@ -136,7 +136,7 @@ is split again at commas.
 | `page` | no | Accepted and resolved as a path, but not used by v1. |
 
 The video is an intro card (3 s, music only), then every scene in order, then an outro card (3 s) with `title`.
-A render with `--only <id>` leaves out the intro and outro cards.
+A render with `--only <id>` leaves out the intro and outro cards and writes `<output>-<id>.mp4` and `<output>-<id>.srt`.
 
 ## steps
 

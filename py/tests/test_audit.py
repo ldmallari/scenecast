@@ -492,7 +492,7 @@ def test_more_number_forms():
 
 # ---------------------------------------------------------------- blank frames
 
-BLANK_RULES = {**RULES, "blank": {"gridW": 128, "gridH": 72, "lumaStdMax": 2}}
+BLANK_RULES = {**RULES, "blank": {"gridW": 128, "gridH": 72, "lumaStdMax": 2}, "dissolveSec": 0.35}
 
 
 def _scene(sid, kind, start, end, cues=(), screen=None):
@@ -571,3 +571,17 @@ def test_blank_frames_skip_the_dissolve_to_a_card_but_not_between_app_scenes():
     assert blank_frames([3.0], [navy], to_card, rules)["verdict"] == "FAIL"
     two_apps = [_scene("a", "app", 0, 4), _scene("b", "app", 4, 8), _scene("c", "title", 8, 9)]
     assert blank_frames([3.9], [navy], two_apps, rules)["verdict"] == "FAIL"
+
+
+def test_allow_listed_cue_the_recogniser_dropped_is_placed_by_position():
+    """Narration "Open Kwiksign now"; the recogniser hears only "Open ... now". An allow-listed cue maps into the
+    gap it leaves (after "Open" ends); without the allow-list it is "not heard"."""
+    from scenecast_py.narration import SceneSpeech
+
+    scene = {"narration": "Open Kwiksign now.", "start": 0.0, "end": 5.0,
+             "phrases": [{"start": 0.5, "end": 3.0, "words": 3}]}
+    heard = [{"w": " Open", "start": 0.6, "end": 0.9}, {"w": " now.", "start": 1.8, "end": 2.1}]
+    assert SceneSpeech(scene, heard, []).cue_time("Kwiksign", 1, 1) is None
+    assert SceneSpeech(scene, heard, ["Kwiksign"]).cue_time("Kwiksign", 1, 1) == pytest.approx(0.9)
+    # A word that was heard still maps to its own transcript time.
+    assert SceneSpeech(scene, heard, ["Kwiksign"]).cue_time("now", 1, 2) == pytest.approx(1.8)

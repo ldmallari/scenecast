@@ -359,12 +359,17 @@ describe('renderVideo', () => {
     expect(logs.filter((l) => /asynchronous property/.test(l))).toEqual([]);
     const ref = path.join(dir, 'ref.png');
     await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-ss', '0.6', '-i', fixture, '-frames:v', '1', ref]);
-    // testsrc2's static colour bars; the background would be black (diff ≥ 250)
+    // testsrc2's static colour bars. Tolerance 16: Chromium's and ffmpeg's colour conversion differ a little by
+    // platform (Linux is ~10 off in one channel). The scene's background is black, so each patch must also be
+    // far from black: that is what proves frame 0 shows the recording, not an empty frame.
+    const BACKGROUND = [0, 0, 0];
     for (const [x, y] of [[100, 300], [500, 300], [900, 300], [1300, 300], [1700, 300], [300, 900]] as const) {
       const got = await pixel(out, 0, x, y);
       const want = await pixel(ref, 0, x, y);
       const diff = Math.max(...got.map((c, i) => Math.abs(c - want[i]!)));
-      expect(diff, `patch at ${x},${y}: got ${got} want ${want}`).toBeLessThanOrEqual(8);
+      expect(diff, `patch at ${x},${y}: got ${got} want ${want}`).toBeLessThanOrEqual(16);
+      const fromBackground = Math.max(...got.map((c, i) => Math.abs(c - BACKGROUND[i]!)));
+      expect(fromBackground, `patch at ${x},${y}: got ${got}, too close to the background`).toBeGreaterThan(40);
     }
   }, 180_000);
 

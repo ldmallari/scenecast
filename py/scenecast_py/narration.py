@@ -195,7 +195,26 @@ class SceneSpeech:
         if i is None or i >= len(self.script):
             return None
         j = self._heard_index(i)
-        return None if j is None else self._clamp(float(self.words[self.owner[j]]["start"]), word_index)
+        if j is not None:
+            return self._clamp(float(self.words[self.owner[j]]["start"]), word_index)
+        if i in self.allowed:
+            return self._allowed_gap_time(i, word_index)
+        return None
+
+    def _allowed_gap_time(self, i, word_index):
+        """An allow-listed cue the recogniser left out (a `delete`): place it by position, where the heard words
+        around it leave a gap for it, the same way a misheard (replaced) word maps by position. The start is the
+        end of the heard word before the gap (or the start of the one after it), kept inside the phrase."""
+        for tag, i1, i2, j1, _j2 in self.ops:
+            if tag == "delete" and i1 <= i < i2:
+                if j1 > 0:
+                    t = float(self.words[self.owner[j1 - 1]]["end"])
+                elif j1 < len(self.heard):
+                    t = float(self.words[self.owner[j1]]["start"])
+                else:
+                    return None
+                return self._clamp(t, word_index)
+        return None
 
     def diff(self):
         """Differences outside the allow-list, as '-"script" +"heard"' strings.

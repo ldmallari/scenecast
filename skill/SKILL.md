@@ -40,7 +40,7 @@ mobile apps, or Windows without WSL.
 4. **Render.** Start the app, then `scenecast render video.yaml`. It writes `out/<output>.mp4`, `.srt`,
    `chapters.txt` and `out/audit/`, and exits 1 when the audit FAILs. A cold render takes about 3.5 to 7 times the
    video's length, so tell the user before starting a long one. Use `--only <sceneId>` while working on a single
-   scene.
+   scene (it writes `out/<output>-<sceneId>.mp4`).
 
 5. **Read `out/audit/audit-table.md`, all of it.** Check every row and every tile of `contact-sheet.png`, never a
    sample. A video with one caption over a button is a broken video, even if every other moment passes. See
@@ -51,7 +51,7 @@ mobile apps, or Windows without WSL.
    | Audit says | Fix |
    |---|---|
    | sync: gap over 0.30 s | Put the cue on the word that names the action. A late action means a slow page: seed the data, `prewarm` the route, or add a `wait` earlier. |
-   | word: cue not heard (WARN) | Speech recognition spelled it differently: add it to `audit.allowList`. |
+   | word: cue not heard (WARN) | Nothing was heard where the cue is (a misheard word is already matched). For a name, add it to `audit.allowList`; otherwise choose a more distinct cue word, or listen to `work/<id>/voice/<scene>/voice.wav` and respell what the voice gets wrong. |
    | target: box does not contain target | Fix `sel` so it matches the element named, add `pad`, make sure the element is still there when the ring peaks. |
    | captions: covers the target / cursor / panel | Zoom to a smaller element, or move the step to a phrase where less is on screen. |
    | crop: zoom cuts the nav | Declare the nav in `app.nav`. |

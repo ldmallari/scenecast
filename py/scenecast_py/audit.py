@@ -298,7 +298,7 @@ def blank_frames(times, frames, scenes, rules):
         return slice(y0, y1), slice(x0, x1)
 
     ordered = sorted(scenes, key=lambda sc: sc["start"])
-    d = rules.get("dissolveSec", 0.35)
+    d = rules["dissolveSec"]
     apps, exempt = [], []
     for i, sc in enumerate(ordered):
         if sc.get("kind") != "app":

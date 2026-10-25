@@ -43,8 +43,16 @@ therefore renders, or previews, only once. The CLI runs one command per process,
 flight, or a loading indicator was up. Seed the data with `app.seed`, open slow routes in `prewarm`, or put a cue-less
 `wait` step earlier in the scene so the page is ready.
 
-**The cue word was not heard (`(plan)` in the word time column).** Speech recognition spelled it differently. See the
-narration diff at the bottom of `audit-table.md`, and add the word to `audit.allowList`.
+<a id="the-cue-word-was-not-heard"></a>**The cue word was not heard (`(plan)` in the word time column).** A word recognition merely
+misheard is already matched by its position, so this means nothing was heard where the cue should be. The narration diff
+at the bottom of `audit-table.md` shows what was heard around it. Then:
+
+- **A name or product word** (recognition often drops or merges these): add it to `audit.allowList`. An allow-listed cue
+  that is left out is placed by position, in the gap the heard words around it leave.
+- **An ordinary word**: choose a more distinct cue word for the step, one that is clearly spoken and not swallowed by
+  its neighbours (for example "press **Sign** in the corner" rather than a short word at the end of a fast phrase).
+- **Check how the voice says it.** Listen to the scene's voice in `work/<id>/voice/<scene>/voice.wav`. If Kokoro
+  mispronounces or rushes the word, respell it in the narration (for example spell out an abbreviation).
 
 **The cue is ambiguous.** A cue matches whole words, case-insensitively. When the cue appears more than once, set
 `occ`. In "To sign in, type your email, and press Sign in", the button is `{ cue: Sign in, occ: 2 }`.
@@ -92,9 +100,13 @@ known.
 ## Blank frame FAILs
 
 A page that goes blank while it navigates is frozen over automatically: when recording, scenecast finds near-uniform
-frames in each take and holds the last good frame over them. A blank-frame FAIL means one got through, usually because
-the page stayed blank for a long time or the take came from an older cache. Render with `--fresh`; if the page is
-really slow to paint, add `prewarm` or a cue-less `wait`.
+frames in each take and holds the last good frame over them. A blank-frame FAIL means a near-uniform frame is left in an app scene. The times in the audit say where to look.
+
+- **The screen really is near-uniform.** A zoom on a plain area, or a page that is mostly one colour, measures as
+  blank (a false FAIL for what the viewer sees, but a dull shot). Zoom to a region with content (text, controls), or
+  make the step show something.
+- **Anything else** is unexpected: blank runs in a take are frozen over, including where the video holds a frame while
+  it waits for the next action. Re-render with `--fresh`, and report it if it persists.
 
 ## Loading FAILs
 

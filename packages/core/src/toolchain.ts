@@ -132,6 +132,14 @@ async function download(url: string, dest: string): Promise<void> {
   if (!nonEmpty(dest)) throw new Error(`Downloaded file is empty: ${dest}`);
 }
 
+/**
+ * uv arguments that download the faster-whisper model. They go through scenecast_py.whisper, which puts the
+ * PyAV stub in place before faster_whisper is imported (PyAV's bundled GPL encoders never load).
+ */
+export function whisperDownloadArgs(project: string, model: string, root: string): string[] {
+  return ['run', '--project', project, 'python', '-m', 'scenecast_py.whisper', '--download', model, root];
+}
+
 export async function ensureToolchain(opts: { offline?: boolean } = {}): Promise<Toolchain> {
   const models = path.join(cacheDir(), 'models');
   const kokoro = path.join(models, KOKORO_FILE);
@@ -157,15 +165,7 @@ export async function ensureToolchain(opts: { offline?: boolean } = {}): Promise
   if (!nonEmpty(voices)) await download(KOKORO_BASE + VOICES_FILE, voices);
   if (!findWhisperModel(whisperRoot)) {
     console.log(`scenecast: downloading faster-whisper ${WHISPER_MODEL} (Hugging Face)`);
-    await run(
-      uv,
-      [
-        'run', '--project', PY_PROJECT, 'python', '-c',
-        'import sys; from faster_whisper import WhisperModel; WhisperModel(sys.argv[1], download_root=sys.argv[2])',
-        WHISPER_MODEL, whisperRoot,
-      ],
-      false,
-    );
+    await run(uv, whisperDownloadArgs(PY_PROJECT, WHISPER_MODEL, whisperRoot), false);
   }
   const whisperModel = findWhisperModel(whisperRoot);
   if (!whisperModel) throw new Error(`Whisper model not found under ${whisperRoot} after download.`);

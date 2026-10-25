@@ -57,3 +57,24 @@ def decode_audio(path, ffmpeg):
         check=True, capture_output=True,
     ).stdout
     return np.frombuffer(raw, dtype=np.float32)
+
+
+def download_model(name, root):
+    """Downloads (and loads once) a faster-whisper model into `root`, with the PyAV stub in place."""
+    install_av_stub()
+    from faster_whisper import WhisperModel
+
+    WhisperModel(name, download_root=root, device="cpu", compute_type="int8")
+
+
+def main(argv=None):
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="scenecast_py.whisper")
+    ap.add_argument("--download", nargs=2, metavar=("MODEL", "ROOT"), required=True)
+    a = ap.parse_args(argv)
+    download_model(*a.download)
+
+
+if __name__ == "__main__":
+    main()

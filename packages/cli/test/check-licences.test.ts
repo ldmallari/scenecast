@@ -22,6 +22,7 @@ interface Row extends Pkg {
 }
 interface Override {
   licence: string;
+  declared?: string;
   source: string;
   reason: string;
   tool?: boolean;
@@ -88,26 +89,35 @@ describe('check-licences', () => {
     expect(bare!.ok).toBe(false);
     expect(bare!.problems.join()).toContain('no licence in its metadata');
 
-    const [reviewed] = check([pkg], { python: { 'no_licence.py': { licence: 'MIT', source: 'https://example.invalid/LICENSE', reason: 'LICENSE file is MIT' } } });
+    const [reviewed] = check([pkg], { python: { 'no_licence.py': { licence: 'MIT', declared: 'UNKNOWN', source: 'https://example.invalid/LICENSE', reason: 'LICENSE file is MIT' } } });
     expect(reviewed!.ok).toBe(true);
     expect(reviewed!.how).toBe('override');
 
-    const [incomplete] = check([pkg], { python: { 'no-licence-py': { licence: 'MIT', source: '', reason: '' } } });
+    const [incomplete] = check([pkg], { python: { 'no-licence-py': { licence: 'MIT', declared: 'UNKNOWN', source: '', reason: '' } } });
     expect(incomplete!.ok).toBe(false);
   });
 
   it('accepts a reviewed-only permissive licence through an override, never on metadata alone', () => {
     const pkg = npm('zlib-thing', 'Zlib');
     expect(check([pkg])[0]!.ok).toBe(false);
-    expect(check([pkg], { npm: { 'zlib-thing': { licence: 'Zlib', source: 'https://example.invalid', reason: 'reviewed' } } })[0]!.ok).toBe(true);
+    expect(check([pkg], { npm: { 'zlib-thing': { licence: 'Zlib', declared: 'Zlib', source: 'https://example.invalid', reason: 'reviewed' } } })[0]!.ok).toBe(true);
     // An override cannot launder a disallowed licence.
-    expect(check([npm('mit-and-gpl', 'GPL-3.0-only')], { npm: { 'mit-and-gpl': { licence: 'GPL-3.0-only', source: 'https://example.invalid', reason: 'x' } } })[0]!.ok).toBe(false);
+    expect(check([npm('mit-and-gpl', 'GPL-3.0-only')], { npm: { 'mit-and-gpl': { licence: 'GPL-3.0-only', declared: 'GPL-3.0-only', source: 'https://example.invalid', reason: 'x' } } })[0]!.ok).toBe(false);
+  });
+
+  it('fails a reviewed override once the package metadata changes (a relicense), or when it records none', () => {
+    const ov = (declared?: string) => ({ npm: { 'zlib-thing': { licence: 'Zlib', ...(declared === undefined ? {} : { declared }), source: 'https://example.invalid', reason: 'reviewed' } } });
+    expect(check([npm('zlib-thing', 'Zlib')], ov('Zlib'))[0]!.ok).toBe(true);
+    const [changed] = check([npm('zlib-thing', 'BUSL-1.1')], ov('Zlib'));
+    expect(changed!.ok).toBe(false);
+    expect(changed!.problems.join()).toContain('metadata changed since the override was reviewed (was "Zlib", now "BUSL-1.1")');
+    expect(check([npm('zlib-thing', 'Zlib')], ov())[0]!.ok).toBe(false);
   });
 
   it('lets a separately executed tool binary through only by an explicit tool override', () => {
     const pkg = npm('some-ffmpeg-binary', 'https://example.invalid/LICENSE.md');
     expect(check([pkg])[0]!.ok).toBe(false);
-    const tool = { licence: 'GPL-2.0-or-later', source: 'https://example.invalid', reason: 'executed as a separate program', tool: true };
+    const tool = { licence: 'GPL-2.0-or-later', declared: 'https://example.invalid/LICENSE.md', source: 'https://example.invalid', reason: 'executed as a separate program', tool: true };
     expect(check([pkg], { npm: { 'some-ffmpeg-binary': tool } })[0]!.ok).toBe(true);
   });
 

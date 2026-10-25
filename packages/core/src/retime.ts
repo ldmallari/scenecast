@@ -157,6 +157,9 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
   };
   const hold = (at: number, len: number) => {
     if (len <= EPS) return;
+    // Never hold a blank frame: inside a blank run, hold that run's last good frame instead.
+    const blank = blanks.find((b) => at >= b.start - EPS && at < b.end - EPS);
+    if (blank) at = blank.holdAt;
     segs.push({ src: take.file, srcIn: at, srcOut: at, outStart: outT, hold: len });
     outT += len;
   };

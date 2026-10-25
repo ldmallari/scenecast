@@ -1,4 +1,4 @@
-// scenecast stand-in for @ffmpeg-installer/ffmpeg (wired in by a pnpm override in the root package.json).
+// scenecast stand-in for @ffmpeg-installer/ffmpeg (wired in by the pnpm override in pnpm-workspace.yaml).
 //
 // Revideo's @revideo/ffmpeg requires @ffmpeg-installer/ffmpeg for a default ffmpeg path. The real package
 // downloads a prebuilt ffmpeg for each platform (GPL, and on macOS arm64 also non-free, builds). scenecast

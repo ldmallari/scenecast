@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ensureToolchain, findUv, runPy, uvEnv } from '../src/toolchain.js';
+import { ensureToolchain, findUv, runPy, uvEnv, whisperDownloadArgs } from '../src/toolchain.js';
 
 function tmpCache(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-cache-'));
@@ -60,4 +60,26 @@ describe.skipIf(!process.env.SCENECAST_E2E)('toolchain e2e (real download)', () 
       expect(fs.existsSync(p)).toBe(true);
     }
   }, 1_800_000);
+});
+
+describe.skipIf(!findUv())('whisper model download (doctor)', () => {
+  it('puts the PyAV stub in place before faster_whisper loads', () => {
+    // A stand-in faster_whisper, first on the path, records what `av` is when it is imported and constructed.
+    const fake = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-fakefw-'));
+    const out = path.join(fake, 'seen.txt');
+    fs.mkdirSync(path.join(fake, 'faster_whisper'));
+    fs.writeFileSync(
+      path.join(fake, 'faster_whisper', '__init__.py'),
+      [
+        'import sys, av',
+        'class WhisperModel:',
+        '    def __init__(self, name, download_root=None, **kw):',
+        `        open(${JSON.stringify(out)}, "w").write("%s %s %s" % (name, download_root, getattr(sys.modules["av"], "SCENECAST_STUB", False)))`,
+        '',
+      ].join('\n'),
+    );
+    const py = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../py');
+    execFileSync(findUv()!, whisperDownloadArgs(py, 'small.en', '/models/whisper'), { env: { ...uvEnv(), PYTHONPATH: fake }, stdio: 'pipe' });
+    expect(fs.readFileSync(out, 'utf8')).toBe('small.en /models/whisper True');
+  }, 120_000);
 });

@@ -87,3 +87,37 @@ def test_refuses_when_real_pyav_is_already_loaded():
     )
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "refused"
+
+
+def test_transcribe_installs_the_stub_itself(tmp_path):
+    """audit.transcribe, called with nothing set up first, imports faster_whisper with the stub in place. A stand-in
+    faster_whisper (first on the path) records what `av` is when it is imported."""
+    fake = tmp_path / "faster_whisper"
+    fake.mkdir()
+    (fake / "__init__.py").write_text(textwrap.dedent(
+        """
+        import sys, av
+        STUB = getattr(sys.modules["av"], "SCENECAST_STUB", False)
+        class WhisperModel:
+            def __init__(self, *a, **k): pass
+            def transcribe(self, pcm, **k): return iter([]), None
+        """
+    ))
+    r = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(
+            """
+            import os, subprocess, sys, tempfile
+            import imageio_ffmpeg
+            from scenecast_py import audit
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            wav = os.path.join(tempfile.mkdtemp(), "t.wav")
+            subprocess.run([ffmpeg, "-loglevel", "error", "-f", "lavfi", "-i", "sine=duration=0.5", wav], check=True)
+            audit.transcribe(wav, "unused", ffmpeg)
+            import faster_whisper
+            print("stub" if faster_whisper.STUB else "real av")
+            """
+        )],
+        capture_output=True, text=True, env={**__import__("os").environ, "PYTHONPATH": str(tmp_path)},
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "stub"

@@ -153,6 +153,11 @@ function listed(pkg, names) {
   return names.some((n) => (n.includes('*') ? globRe(n, norm).test(name) : norm(n) === name));
 }
 
+/** The raw licence text the package's metadata gives (the first non-empty field), as an override records it. */
+export function declaredText(pkg) {
+  return [pkg.licence, ...(pkg.candidates ?? [])].map((v) => (typeof v === 'string' ? v.trim() : '')).find((v) => v) ?? '';
+}
+
 function findOverride(pkg, overrides) {
   const table = overrides?.[pkg.ecosystem] ?? {};
   const norm = pkg.ecosystem === 'python' ? pyName : (s) => s;
@@ -175,10 +180,15 @@ export function checkPackages(packages, { thirdParty, overrides }) {
     let licence = declared;
     let how = 'metadata';
     if (override) {
-      if (!override.licence || !override.source || !override.reason)
-        problems.push('its override needs licence, source and reason');
+      if (!override.licence || !override.source || !override.reason || typeof override.declared !== 'string')
+        problems.push('its override needs licence, source, reason and declared');
+      // An override is a review of the metadata as it was; if the package's metadata changes (a relicense, say),
+      // the review no longer applies.
+      else if (override.declared !== declaredText(pkg))
+        problems.push(`its metadata changed since the override was reviewed (was ${JSON.stringify(override.declared)}, now ${JSON.stringify(declaredText(pkg))}); review it again`);
       licence = override.licence;
       how = override.tool ? 'override (tool binary, never linked)' : 'override';
+      // `tool` is only for a binary that runs as a separate program; never use it for code that is imported.
       if (!override.tool) {
         const r = evaluate(override.licence ?? '', REVIEWED_ONLY);
         if (!r.ok) problems.push(`licence ${override.licence} is not allowed (${r.offending.join(', ')})`);

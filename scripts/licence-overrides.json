@@ -2,30 +2,35 @@
   "npm": {
     "@ffprobe-installer/linux-x64": {
       "licence": "GPL-3.0",
+      "declared": "GPL-3.0",
       "tool": true,
       "source": "https://www.johnvansickle.com/ffmpeg/",
       "reason": "Registry metadata (npm view @ffprobe-installer/linux-x64@5.2.0, 2026-10-25): license GPL-3.0, a static ffprobe build. Installed only on that platform as Revideo's ffprobe; it is run as a separate program (FFPROBE_PATH), never linked."
     },
     "@ffprobe-installer/linux-arm64": {
       "licence": "GPL-3.0",
+      "declared": "GPL-3.0",
       "tool": true,
       "source": "https://www.johnvansickle.com/ffmpeg/",
       "reason": "Registry metadata (npm view @ffprobe-installer/linux-arm64@5.2.0, 2026-10-25): license GPL-3.0, a static ffprobe build. Installed only on that platform as Revideo's ffprobe; it is run as a separate program (FFPROBE_PATH), never linked."
     },
     "@ffprobe-installer/linux-arm": {
       "licence": "GPL-3.0",
+      "declared": "GPL-3.0",
       "tool": true,
       "source": "https://www.johnvansickle.com/ffmpeg/",
       "reason": "Registry metadata (npm view @ffprobe-installer/linux-arm@5.2.0, 2026-10-25): license GPL-3.0, a static ffprobe build. Installed only on that platform as Revideo's ffprobe; it is run as a separate program (FFPROBE_PATH), never linked."
     },
     "@ffprobe-installer/linux-ia32": {
       "licence": "GPL-3.0",
+      "declared": "GPL-3.0",
       "tool": true,
       "source": "https://www.johnvansickle.com/ffmpeg/",
       "reason": "Registry metadata (npm view @ffprobe-installer/linux-ia32@5.2.0, 2026-10-25): license GPL-3.0, a static ffprobe build. Installed only on that platform as Revideo's ffprobe; it is run as a separate program (FFPROBE_PATH), never linked."
     },
     "@ffprobe-installer/darwin-x64": {
       "licence": "GPL-3.0",
+      "declared": "GPL-3.0",
       "tool": true,
       "source": "https://evermeet.cx/ffmpeg/",
       "reason": "Registry metadata (npm view @ffprobe-installer/darwin-x64@5.1.0, 2026-10-25): license GPL-3.0, a static ffprobe build. Installed only on that platform as Revideo's ffprobe; it is run as a separate program (FFPROBE_PATH), never linked."
@@ -34,51 +39,61 @@
   "python": {
     "scenecast-py": {
       "licence": "MIT",
+      "declared": "",
       "source": "LICENSE (the MIT licence at the root of this repository)",
       "reason": "This repository's own Python package (py/); pyproject.toml declares no licence field. The repository is MIT (LICENSE)."
     },
     "addict": {
       "licence": "MIT",
+      "declared": "UNKNOWN",
       "source": "https://github.com/mewwts/addict",
       "reason": "Metadata License field is UNKNOWN; its classifier says MIT and the LICENSE file in the wheel is the MIT licence text."
     },
     "blis": {
       "licence": "BSD-3-Clause",
+      "declared": "BSD",
       "source": "https://github.com/explosion/cython-blis",
       "reason": "Metadata says only 'BSD'; the LICENSE file in the wheel states every portion is under the 3-clause BSD licence."
     },
     "jinja2": {
       "licence": "BSD-3-Clause",
+      "declared": "BSD",
       "source": "https://github.com/pallets/jinja",
       "reason": "Metadata has only the 'BSD License' classifier; LICENSE.txt in the wheel is the 3-clause BSD text."
     },
     "cffi": {
       "licence": "MIT-0",
+      "declared": "MIT-0",
       "source": "https://github.com/python-cffi/cffi",
       "reason": "License-Expression MIT-0 (MIT No Attribution, confirmed by the LICENSE file in the wheel): a permissive MIT variant without the notice requirement."
     },
     "pillow": {
       "licence": "MIT-CMU",
+      "declared": "MIT-CMU",
       "source": "https://github.com/python-pillow/Pillow",
       "reason": "License-Expression MIT-CMU (the historical PIL licence, confirmed by the LICENSE file in the wheel): permissive, MIT-style."
     },
     "numpy": {
       "licence": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+      "declared": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
       "source": "https://github.com/numpy/numpy",
       "reason": "License-Expression as declared; Zlib (bundled code) is a permissive licence; every other part is on the allow-list."
     },
     "regex": {
       "licence": "Apache-2.0 AND CNRI-Python",
+      "declared": "Apache-2.0 AND CNRI-Python",
       "source": "https://github.com/mrabarnett/mrab-regex",
       "reason": "License-Expression as declared: derived from CPython's re module (CNRI Python 1.6 licence, part of Python's own permissive licence stack); additions under Apache-2.0."
     },
     "typing-extensions": {
       "licence": "Python-2.0",
+      "declared": "PSF-2.0",
       "source": "https://github.com/python/typing_extensions",
       "reason": "License-Expression says PSF-2.0, but the LICENSE file in the wheel is the full Python licence stack (PSF, BeOpen, CNRI, CWI), which SPDX calls Python-2.0."
     },
     "defusedxml": {
       "licence": "PSF-2.0",
+      "declared": "PSFL",
       "source": "https://github.com/tiran/defusedxml",
       "reason": "Metadata says PSFL; the LICENSE file in the wheel is the Python Software Foundation License Version 2, a permissive licence."
     }

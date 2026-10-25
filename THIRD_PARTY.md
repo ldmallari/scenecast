@@ -13,7 +13,8 @@ production set in `py/uv.lock`), and fails when one of them:
   version), MPL-2.0, Python-2.0, 0BSD, CC0-1.0. In an SPDX expression an `OR` passes when any branch is allowed and
   an `AND` only when every part is;
 - states no licence its metadata can be read from (empty, `UNKNOWN`, a URL, an ambiguous "BSD"), unless
-  `scripts/licence-overrides.json` holds a reviewed entry naming the licence, a source and the reason;
+  `scripts/licence-overrides.json` holds a reviewed entry naming the licence, a source, the reason and the metadata
+  text it reviewed (when the package's metadata later changes, the entry stops applying and the check fails);
 - is missing from the tables below.
 
 A few permissive licences outside the allow-list (MIT-0, MIT-CMU, Zlib, PSF-2.0, CNRI-Python) pass only through a

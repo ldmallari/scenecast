@@ -246,6 +246,18 @@ describe('blank frames', () => {
     expect(Math.abs(out! - outputTimeOf(plain, FLASH + 1.008)!)).toBeLessThanOrEqual(FRAME);
   });
 
+  it('an early-arrival hold never freezes a blank frame', () => {
+    const at = FLASH + 0.8 - (DEFAULT_TRAVEL_SEC + 0.15); // where the plain early-arrival hold freezes
+    const blank = { start: at - 0.02, end: at + 0.06, holdAt: at - 0.06 };
+    const t = take([{ index: 0, kind: 'click', at: 0.8 }]);
+    const s = sched([{ index: 0, do: 'click', startAt: 2.0 }]);
+    const segs = retime(t, s, voice(4), { ...opts, blanks: [blank] });
+    const holds = segs.filter((g) => g.hold !== undefined);
+    expect(holds.length).toBeGreaterThan(0);
+    for (const h of holds) expect(h.srcIn < blank.start - 1e-9 || h.srcIn >= blank.end + FRAME - 1e-9).toBe(true);
+    expect(holds.some((h) => h.srcIn === blank.holdAt)).toBe(true);
+  });
+
   it('scanBlank finds a white frame run inside a take (fixture video)', async () => {
     const { ffmpeg } = await ensureToolchain();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-blank-'));

@@ -21,9 +21,9 @@ no sound; the video is narrated.*
   the app changes, render again. There is no timeline to edit by hand.
 - **An audit of every moment.** After the render, scenecast transcribes the final video with Whisper and checks every
   cued step: was the action within 0.30 s of its word, does the ring or zoom contain the element, does any caption
-  cover the target, the cursor or an open panel, is the zoom cropped, was a spinner or a blank page showing, is the loudness right. The
-  result is a table, a contact sheet and an exit code. The included demo passes every cued moment with a median gap of
-  0.0165 s and a largest gap of 0.127 s.
+  cover the target, the cursor or an open panel, is the zoom cropped, was a spinner or a blank page showing, is the
+  loudness right. The result is a table, a contact sheet and an exit code. The included demo passes every cued moment,
+  with a median gap of 0.013 s between word and action and a largest gap of 0.127 s.
 - **Captions that know the UI.** Captions move out of the way of whatever is being clicked, typed into or highlighted,
   including while the view is zoomed in.
 - **Local and free.** Voice by [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), speech recognition by
