@@ -79,10 +79,10 @@ class G2PFallback:
         return (ps, 1) if ps else (None, None)
 
 
-def make_g2p():
+def make_g2p(british: bool = False):
     from misaki import en
 
-    return en.G2P(trf=False, british=False, fallback=G2PFallback())
+    return en.G2P(trf=False, british=british, fallback=G2PFallback())
 
 
 if __name__ == "__main__":
