@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { detectFlash } from '../src/ffmpeg.js';
 import { DEFAULT_TRAVEL_SEC, type Take, type TakeEvent } from '../src/record/record.js';
 import { retime, type Segment } from '../src/retime.js';
@@ -27,15 +27,10 @@ const sceneLen = (segs: Segment[]) => {
   const l = segs[segs.length - 1]!;
   return l.outStart + (l.hold ?? l.srcOut - l.srcIn);
 };
-/** Output time at which source time `s` is shown (start of the segment that begins at it). */
+/** Output time at which source time `s` is shown (a play segment containing it; the earlier one wins at joins, so an action is timed on arrival). */
 const outTimeOf = (segs: Segment[], s: number) => {
-  const start = segs.find((g) => g.hold === undefined && Math.abs(g.srcIn - s) < 1e-6);
-  if (start) return start.outStart;
-  const end = segs.find((g) => g.hold === undefined && Math.abs(g.srcOut - s) < 1e-6);
-  if (end) return end.outStart + end.srcOut - end.srcIn;
-  // early action followed by trimmed idle: the hold of the frame just before the action ends at the action
-  const h = segs.find((g) => g.hold !== undefined && g.srcIn <= s && s - g.srcIn <= 0.04 + 1e-6)!;
-  return h.outStart + h.hold!;
+  const g = segs.find((x) => x.hold === undefined && x.srcIn - 1e-6 <= s && s <= x.srcOut + 1e-6)!;
+  return g.outStart + s - g.srcIn;
 };
 
 describe('retime', () => {
@@ -43,7 +38,7 @@ describe('retime', () => {
     // click recorded 3.0 s after the flash, scheduled to land at 1.0 + travel
     const segs = retime(take([{ index: 0, kind: 'click', at: 3.0 }]), sched([{ index: 0, do: 'click', startAt: 1.0 }]), voice(4), opts);
     expect(segs.some((g) => g.hold)).toBe(false);
-    expect(segs[0]!.srcIn).toBeGreaterThan(FLASH_END + 0.5);
+    expect(segs.length).toBeGreaterThan(1);
     expect(outTimeOf(segs, FLASH + 3.0)).toBeCloseTo(1.0 + DEFAULT_TRAVEL_SEC, 3);
   });
 
@@ -53,14 +48,33 @@ describe('retime', () => {
     expect(h).toBeDefined();
     expect(h!.srcIn).toBe(h!.srcOut);
     expect(h!.hold).toBeGreaterThan(1);
+    expect(h!.srcIn).toBeCloseTo(FLASH + 0.8 - (DEFAULT_TRAVEL_SEC + 0.15), 6);
     expect(outTimeOf(segs, FLASH + 0.8)).toBeCloseTo(2.0 + DEFAULT_TRAVEL_SEC, 3);
   });
 
   it('scene length = voice + breath, first frame is after the flash', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
     const segs = retime(take([{ index: 0, kind: 'zoom', at: 1.5 }]), sched([{ index: 0, do: 'zoom', startAt: 1.0 }]), voice(4), opts);
     expect(sceneLen(segs)).toBeCloseTo(4.45, 6);
     expect(Math.min(...segs.map((g) => g.srcIn))).toBeGreaterThanOrEqual(FLASH_END);
     expect(segs[0]!.outStart).toBe(0);
+  });
+
+  it('late action keeps 0.8 s after the previous result and the glide before the action', () => {
+    const segs = retime(
+      take([{ index: 0, kind: 'click', at: 1.0 }, { index: 1, kind: 'click', at: 7.0 }]),
+      sched([{ index: 0, do: 'click', startAt: 1.0 }, { index: 1, do: 'click', startAt: 3.0 }]),
+      voice(6),
+      opts,
+    );
+    const p = FLASH + 1.0;
+    const base = outTimeOf(segs, p);
+    for (let t = p; t <= p + 0.8; t += 0.01) expect(outTimeOf(segs, t) - base).toBeCloseTo(t - p, 6);
+    const n = FLASH + 7.0;
+    for (let t = n - 0.67; t <= n; t += 0.01) expect(outTimeOf(segs, t) - outTimeOf(segs, n)).toBeCloseTo(t - n, 6);
+    // the cut comes from the middle of [p + 0.8, n - 0.67]
+    const cut = segs.find((g, i) => i > 0 && g.srcIn > segs[i - 1]!.srcOut + 1e-6)!;
+    expect(cut.srcIn).toBeGreaterThan(p + 0.8);
   });
 
   it('holds the last frame when the source runs out', () => {
@@ -72,6 +86,7 @@ describe('retime', () => {
   });
 
   it('every event lands within 1/30 s for random late/early patterns', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
     let seed = 12345;
     const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
     for (let trial = 0; trial < 200; trial++) {
@@ -92,7 +107,18 @@ describe('retime', () => {
       expect(sceneLen(segs)).toBeCloseTo(dur + 0.45, 6);
       events.forEach((e, i) => {
         const want = items[i]!.startAt + (e.kind === 'click' ? DEFAULT_TRAVEL_SEC : 0);
-        expect(Math.abs(outTimeOf(segs, FLASH + e.at) - want)).toBeLessThanOrEqual(FRAME);
+        const got = outTimeOf(segs, FLASH + e.at);
+        expect(Math.abs(got - want)).toBeLessThanOrEqual(FRAME);
+      });
+      // the 0.67 s before every action plays 1:1 (as far back as the previous event)
+      events.forEach((e, i) => {
+        const sT = FLASH + e.at;
+        const prev = i ? FLASH + events[i - 1]!.at : FLASH_END;
+        const tOut = (j: number) => items[j]!.startAt + (events[j]!.kind === 'click' ? DEFAULT_TRAVEL_SEC : 0);
+        if (tOut(i) - (i ? tOut(i - 1) : 0) < 0.67) return; // too little output time between events to keep it
+        const base = outTimeOf(segs, sT);
+        for (let t = Math.max(sT - 0.67, prev) + 0.005; t < sT; t += 0.01)
+          expect(Math.abs(outTimeOf(segs, t) - (base - (sT - t)))).toBeLessThan(1e-6);
       });
       // 1:1 speed, contiguous
       let t = 0;

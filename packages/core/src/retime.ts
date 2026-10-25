@@ -24,12 +24,43 @@ export interface RetimeOpts {
 
 const EPS = 1e-6;
 const POINTER = new Set(['click', 'hover', 'type']);
-/** Source seconds kept before an action when a hold is inserted, so the action itself is not shown early. */
-const PRE_ACTION = 0.04;
+/** Never cut or freeze inside this long a stretch before an action: the cursor glide plus a margin. */
+const PROTECT_BEFORE = DEFAULT_TRAVEL_SEC + 0.15;
+/** Never cut this soon after the previous event, so its visible result plays out. */
+const KEEP_AFTER = 0.8;
+/** Last-resort cuts start just after this. */
+const FALLBACK_AFTER = 0.3;
+
+type Range = [number, number];
+
+/** Source ranges to remove from [p, n] so that `excess` seconds go, quietest places first. */
+function cutRanges(p: number, n: number, excess: number, label: string): Range[] {
+  const g = Math.max(p, n - PROTECT_BEFORE);
+  const winLo = p + KEEP_AFTER;
+  const w = g - winLo;
+  if (w >= excess) {
+    const mid = (winLo + g) / 2;
+    return [[mid - excess / 2, mid + excess / 2]];
+  }
+  console.warn(`scenecast: retime: ${label}: quiet window (${Math.max(0, w).toFixed(2)} s) is shorter than the ${excess.toFixed(2)} s to cut`);
+  const cuts: Range[] = [];
+  let left = excess;
+  const take = (lo: number, hi: number) => {
+    const len = Math.min(left, hi - lo);
+    if (len <= EPS) return;
+    cuts.push([lo, lo + len]);
+    left -= len;
+  };
+  if (w > 0) take(winLo, g);
+  take(p + FALLBACK_AFTER, Math.min(winLo, g));
+  take(p, Math.min(p + FALLBACK_AFTER, g));
+  take(g, n); // only if everything quieter is used up
+  return cuts.sort((x, y) => x[0] - y[0]);
+}
 
 /**
  * Maps the take onto the voice clock at 1:1 speed: between consecutive events, late idle time is trimmed
- * from the start of the interval and early arrivals are covered by holding the frame just before the action.
+ * from a quiet window (after the previous result, before the cursor glide); early arrivals hold the frame before the glide.
  */
 export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice, opts: RetimeOpts = {}): Segment[] {
   const flash = opts.flashTime ?? take.flashAt;
@@ -65,19 +96,25 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
     outT += len;
   };
 
-  for (const a of anchors) {
+  anchors.forEach((a, k) => {
     const d = a.out - outT;
-    const s = Math.max(0, a.src - srcT);
-    if (s >= d) {
-      play(srcT + (s - d), d);
+    const span = Math.max(0, a.src - srcT);
+    if (span > d) {
+      let from = srcT;
+      for (const [lo, hi] of cutRanges(srcT, a.src, span - d, `event ${take.events[k]!.index}`)) {
+        play(from, lo - from);
+        from = hi;
+      }
+      play(from, a.src - from);
     } else {
-      const pre = Math.min(PRE_ACTION, s);
-      play(srcT, s - pre);
-      hold(Math.min(a.src - pre, srcEnd), d - s + pre);
+      const h = Math.max(srcT, a.src - PROTECT_BEFORE);
+      play(srcT, h - srcT);
+      hold(h, d - span);
+      play(h, a.src - h);
     }
     outT = a.out;
     srcT = Math.max(srcT, a.src);
-  }
+  });
   play(srcT, total - outT);
   return segs;
 }
