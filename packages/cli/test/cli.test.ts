@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import type { BrowserContext, Page } from 'playwright';
 import { loadScene, sessionStoragePath } from '@scenecast/core';
 import { saveSession } from '../src/index.js';
@@ -187,4 +190,12 @@ describe('cards and pages', () => {
       else process.env.SCENECAST_FAKE_TTS = prevFake;
     }
   }, 120_000);
+});
+
+describe('the scenecast binary', () => {
+  it('loads and prints its usage (the sources run on Node type stripping)', async () => {
+    const bin = fileURLToPath(new URL('../bin/scenecast.js', import.meta.url));
+    const { stdout } = await promisify(execFile)(process.execPath, [bin, '--help'], { timeout: 30_000 });
+    expect(stdout).toMatch(/^Usage:/);
+  }, 40_000);
 });

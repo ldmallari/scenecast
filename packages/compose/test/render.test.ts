@@ -428,7 +428,7 @@ describe('renderVideo', () => {
     expect(Math.max(...cap)).toBeLessThan(90);
   }, 180_000);
 
-  it('renders a card with a gradient background and the card font', async () => {
+  it('renders a card with a CSS-angle gradient background', async () => {
     const plan: ComposePlan = {
       brand: { ...brand, cardFont: 'Georgia', background: { from: '#102030', to: '#F0E0D0' } },
       cards: { entrance: 'reveal' },
@@ -469,6 +469,43 @@ describe('renderVideo', () => {
     const pageAt = await pixel(out, 1.6, 960, 540);
     expect(Math.abs(pageAt[1]! - 0xc0), `page image ${pageAt}`).toBeLessThanOrEqual(12);
     expect(Math.max(pageAt[0]!, pageAt[2]!)).toBeLessThanOrEqual(12);
+  }, 180_000);
+
+  it('keeps the subtitle and next line at 4.5:1 or more over a white photo with no dim', async () => {
+    const white = path.join(dir, 'white.png');
+    await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=#FFFFFF:s=1600x1200', '-frames:v', '1', white]);
+    const plan: ComposePlan = {
+      brand: { ...brand, background: { image: white, dim: 0 } },
+      scenes: [
+        { kind: 'card', duration: 2, card: { variant: 'intro' } },
+        { kind: 'card', duration: 1.5, card: { variant: 'outro', title: 'Thanks for watching', next: 'Next: approving requests' } },
+      ],
+    };
+    const out = path.join(dir, 'white-photo.mp4');
+    await renderVideo(plan, out);
+    /** Relative luminance (WCAG) of the brightest and of the average pixel in a crop. */
+    const crop = async (t: number, x: number, y: number, w: number, h: number) => {
+      const { stdout } = await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-ss', String(t), '-i', out, '-frames:v', '1',
+        '-vf', `crop=${w}:${h}:${x}:${y}`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { encoding: 'buffer', maxBuffer: 1 << 24 });
+      const lin = (c: number) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : Math.pow((c / 255 + 0.055) / 1.055, 2.4));
+      let max = 0, sum = 0;
+      for (let i = 0; i + 2 < stdout.length; i += 3) {
+        const l = 0.2126 * lin(stdout[i]!) + 0.7152 * lin(stdout[i + 1]!) + 0.0722 * lin(stdout[i + 2]!);
+        max = Math.max(max, l);
+        sum += l;
+      }
+      return { max, mean: sum / (stdout.length / 3) };
+    };
+    const ratio = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    // Settled frames, clear of the dissolve: the intro subtitle (40 px, centred at y 618 with no logo) at 1.2 s, and
+    // the outro next line (34 px, y 616) 1.2 s into the outro.
+    for (const [what, t] of [['subtitle', 1.2], ['next line', 3.2]] as const) {
+      const ink = await crop(t, 660, 600, 600, 36);
+      const beside = await crop(t, 330, 600, 120, 36); // the same band, clear of the text
+      const contrast = ratio(ink.max, beside.mean);
+      console.info(`scenecast: ${what} over a white photo: ${contrast.toFixed(2)}:1`);
+      expect(contrast, what).toBeGreaterThanOrEqual(4.5);
+    }
   }, 180_000);
 
   it('shows the recording on frame 0 of an app scene (not a blank frame)', async () => {

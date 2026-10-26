@@ -102,10 +102,14 @@ quoted, so `font-family: var(--sc-card-font), sans-serif` works). The capture wa
 
 - The card is a still. CSS animations and transitions do not play in the video: finite ones are captured at their
   end state. The card entrance does not apply to a page; the page fades in and out with the dissolve like any scene.
-- Keep everything the page loads local (fonts, images, styles), so it renders the same offline. The cache notices a
+- Everything the page loads must be local (fonts, images, styles): the network is blocked, so it renders the same
+  offline. The cache notices a
   change to the HTML file itself; after changing only a file it loads, render with `--fresh`.
 - Routes, init scripts and the signed-in session do not apply to card pages.
+- The page replaces the whole drawn card: the logo, `introTitle`/`introSubtitle`, `outroTitle` and `outroNext` are
+  not drawn on it.
 - A title scene's narration captions are drawn over its page.
+- Requests to anything but local files are blocked, and each blocked URL is named in a warning.
 
 ## brand
 

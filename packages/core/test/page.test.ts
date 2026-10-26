@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +43,37 @@ describe('renderCardPage', () => {
     // The page's own script already saw the (quoted) font variables.
     const seen = await pixel(out, 1900, 20);
     expect(near(seen, [0, 255, 0], 1), `script saw the variables: ${seen}`).toBe(true);
+  }, 60_000);
+
+  it('a page that references the network is captured quickly, offline, with a warning naming each URL', async () => {
+    // A server that answers slowly and counts requests: nothing may reach it.
+    let hits = 0;
+    const server = http.createServer((_req, res) => {
+      hits++;
+      setTimeout(() => res.end(), 20_000);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const html = path.join(dir, 'remote.html');
+      fs.writeFileSync(html, `<!doctype html><style>
+        @font-face { font-family: Remote; src: url(${base}/font.woff2); }
+        body { margin: 0; background: var(--sc-primary); font-family: Remote; }
+      </style><p>card</p><img src="${base}/logo.png"><img src="${base}/logo.png">`);
+      const logs: string[] = [];
+      const started = Date.now();
+      const out = await renderCardPage(html, path.join(dir, 'remote.png'), { primary: '#1F3A5F', accent: '#F5C518', font: 'Inter', cardFont: 'Lora' }, { log: (m) => logs.push(m) });
+      expect(Date.now() - started).toBeLessThan(10_000);
+      expect(hits).toBe(0);
+      expect(near(await pixel(out, 960, 540), [31, 58, 95], 1)).toBe(true);
+      // One warning per blocked URL, naming it (the image appears twice but is named once).
+      expect(logs.filter((l) => l.includes(`${base}/logo.png`))).toHaveLength(1);
+      expect(logs.some((l) => l.includes(`${base}/font.woff2`))).toBe(true);
+      expect(logs.every((l) => /^warning: card page .* must be local/.test(l))).toBe(true);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
   }, 60_000);
 
   it('a missing page fails clearly', async () => {

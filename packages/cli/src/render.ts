@@ -167,13 +167,13 @@ async function voiceStage(spec: VideoSpec, scenes: Scene[], cache: StageCache, l
  * Renders a card page (`cards.introPage`, `cards.outroPage` or a title scene's `page`) to a PNG once, cached as
  * `cards/<name>`. The key covers the HTML file and the brand values it receives, not files the page loads.
  */
-async function cardPageStage(spec: VideoSpec, name: string, page: string, cache: StageCache): Promise<string> {
+async function cardPageStage(spec: VideoSpec, name: string, page: string, cache: StageCache, log: (m: string) => void): Promise<string> {
   const vars = { primary: spec.brand.primary, accent: spec.brand.accent, font: spec.brand.font, cardFont: spec.brand.cardFont ?? spec.brand.font };
   const { result } = await cache.run({
     name: `cards/${name}`,
     input: { page, vars },
     files: [page],
-    run: async (dir) => ({ png: await renderCardPage(page, path.join(dir, 'card.png'), vars) }),
+    run: async (dir) => ({ png: await renderCardPage(page, path.join(dir, 'card.png'), vars, { log }) }),
     outputs: (r) => [r.png],
   });
   return result.png;
@@ -199,7 +199,7 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
 
   const voices = await voiceStage(spec, scenes, cache, log);
   const cards = !opts.only;
-  const cardImage = (name: string, page: string | undefined) => (page ? cardPageStage(spec, name, page, cache) : Promise.resolve(undefined));
+  const cardImage = (name: string, page: string | undefined) => (page ? cardPageStage(spec, name, page, cache, log) : Promise.resolve(undefined));
   const introImage = cards && spec.cards.introSec > 0 ? await cardImage('intro', spec.cards.introPage) : undefined;
   const outroImage = cards && spec.cards.outroSec > 0 ? await cardImage('outro', spec.cards.outroPage) : undefined;
 

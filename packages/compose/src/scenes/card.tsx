@@ -9,15 +9,20 @@ import { caption, fontStack } from './app.js';
 
 type Scene = ResolvedPlan['scenes'][number];
 
-/** Relative luminance of a #rgb / #rrggbb colour (WCAG). */
-function luminance(hex: string): number {
+/** The 0–1 sRGB channels of a #rgb / #rrggbb colour. */
+function channels(hex: string): [number, number, number] {
   const h = hex.replace('#', '');
   const full = h.length === 3 ? [...h].map((c) => c + c).join('') : h.slice(0, 6);
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255).map((c) =>
-    c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4),
-  ) as [number, number, number];
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255) as [number, number, number];
 }
+
+/** Relative luminance of sRGB channels (WCAG). */
+function luminanceOf([r, g, b]: [number, number, number]): number {
+  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+const luminance = (hex: string) => luminanceOf(channels(hex));
 
 const DARK_INK = '#14161B';
 const LIGHT_INK = '#FFFFFF';
@@ -25,11 +30,43 @@ const LIGHT_INK = '#FFFFFF';
 /** White text on dark brand colours, near-black on light ones. */
 export const inkOn = (bg: string) => (luminance(bg) > 0.4 ? DARK_INK : LIGHT_INK);
 
-/** The text colour for a background: a gradient is judged by its middle, an image (under its dim) gets white. */
+/**
+ * The text colour for a background. A gradient is judged by its colour at the middle of the frame, where the text
+ * sits (the gradient line's midpoint is the frame centre); an image gets white over its dim and the text scrim.
+ */
 export function inkFor(bg: ResolvedBackground): string {
   if (bg.kind === 'color') return inkOn(bg.color);
-  if (bg.kind === 'gradient') return (luminance(bg.from) + luminance(bg.to)) / 2 > 0.4 ? DARK_INK : LIGHT_INK;
+  if (bg.kind === 'gradient') {
+    const [a, b] = [channels(bg.from), channels(bg.to)];
+    const mid = a.map((c, i) => (c + b[i]!) / 2) as [number, number, number];
+    return luminanceOf(mid) > 0.4 ? DARK_INK : LIGHT_INK;
+  }
   return LIGHT_INK;
+}
+
+/**
+ * Behind the text on an image background: a soft elliptical shade of black at `alpha` over the text block, fading
+ * out beyond it. With the lines in white at full opacity this keeps them at 4.5:1 or more over any photo, even pure
+ * white with no dim (white over 255 × (1 − 0.55) grey is 4.7:1).
+ */
+const SCRIM = { alpha: 0.55, halfW: 1250, halfH: 400, plateau: 0.66 };
+
+function textScrim(centreY: number, width: number, height: number): Node {
+  // A radial gradient is a circle: draw it in a box stretched vertically by 1/k and squash the box by k.
+  const k = SCRIM.halfH / SCRIM.halfW;
+  const fill = new Gradient({
+    type: 'radial',
+    from: { x: 0, y: 0 },
+    to: { x: 0, y: 0 },
+    fromRadius: 0,
+    toRadius: SCRIM.halfW,
+    stops: [
+      { offset: 0, color: `rgba(0,0,0,${SCRIM.alpha})` },
+      { offset: SCRIM.plateau, color: `rgba(0,0,0,${SCRIM.alpha})` },
+      { offset: 1, color: 'rgba(0,0,0,0)' },
+    ],
+  });
+  return (<Rect width={width} height={height / k} y={centreY} scaleY={k} fill={fill} />) as Node;
 }
 
 /** The card background, full-frame. Also the phone stage's backdrop. */
@@ -83,14 +120,19 @@ export function cardScene(scene: Scene, plan: ResolvedPlan, time: () => number):
   const subtitle = card.subtitle ?? (card.variant === 'intro' ? brand.introSubtitle : undefined);
   const ink = inkFor(plan.background);
   const font = fontStack(plan.cardFont);
-  // Over a photo, a soft shadow keeps the text legible whatever is behind it.
-  const shadow = plan.background.kind === 'image' ? { shadowColor: 'rgba(0,0,0,0.45)', shadowBlur: 24 } : {};
+  // Over a photo the text gets a scrim, a soft shadow, and the subtitle and next line at full strength.
+  const onImage = plan.background.kind === 'image';
+  const shadow = onImage ? { shadowColor: 'rgba(0,0,0,0.45)', shadowBlur: 24 } : {};
+  const subtitleOpacity = onImage ? 1 : LAYOUT.subtitleOpacity;
+  const nextOpacity = onImage ? 1 : LAYOUT.nextOpacity;
 
   const big = LAYOUT.titlePx[card.variant];
   const hasLogo = !!plan.logoUrl && card.variant !== 'chapter';
   const top = hasLogo ? -40 : -20;
   const subtitleY = top + big + 10;
   const nextY = subtitle ? subtitleY + LAYOUT.subtitlePx + 24 : top + big + 8;
+  const barY = top - big - 10;
+  const lastY = card.next ? nextY : subtitle ? subtitleY : top;
 
   const logo = look('logo');
   const bar = look('bar');
@@ -101,6 +143,7 @@ export function cardScene(scene: Scene, plan: ResolvedPlan, time: () => number):
   return (
     <Node opacity={() => sceneOpacity(scene, time())}>
       {background}
+      {onImage ? textScrim((barY + lastY) / 2, plan.width, plan.height) : null}
       {hasLogo ? (
         <Img src={plan.logoUrl!} height={LAYOUT.logoH} y={() => LAYOUT.logoY + logo().dy} opacity={() => logo().opacity} scale={() => logo().scale} />
       ) : null}
@@ -109,7 +152,7 @@ export function cardScene(scene: Scene, plan: ResolvedPlan, time: () => number):
         height={LAYOUT.barH}
         radius={LAYOUT.barH / 2}
         fill={brand.accent}
-        y={() => top - big - 10 + bar().dy}
+        y={() => barY + bar().dy}
         opacity={() => bar().opacity}
       />
       <Txt
@@ -130,7 +173,7 @@ export function cardScene(scene: Scene, plan: ResolvedPlan, time: () => number):
         <Txt
           text={subtitle}
           y={() => subtitleY + subLook().dy}
-          opacity={() => LAYOUT.subtitleOpacity * subLook().opacity}
+          opacity={() => subtitleOpacity * subLook().opacity}
           fill={ink}
           fontFamily={font}
           fontSize={LAYOUT.subtitlePx}
@@ -145,7 +188,7 @@ export function cardScene(scene: Scene, plan: ResolvedPlan, time: () => number):
         <Txt
           text={card.next}
           y={() => nextY + nextLook().dy}
-          opacity={() => LAYOUT.nextOpacity * nextLook().opacity}
+          opacity={() => nextOpacity * nextLook().opacity}
           fill={ink}
           fontFamily={font}
           fontSize={LAYOUT.nextPx}
