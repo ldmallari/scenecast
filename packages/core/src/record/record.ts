@@ -23,6 +23,31 @@ const CURSOR_TIP = { x: 3, y: 2 };
 /** The touch indicator's colour when the caller gives none (the highlight ring's yellow). */
 const DEFAULT_TOUCH_COLOUR = '#F5C518';
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+/**
+ * The touch indicator's colour as a #rrggbb hex: a #rgb/#rrggbb accent as is, any other CSS colour (`gold`,
+ * `rgb(…)`, `#RRGGBBAA`, `hsl(…)`) as the browser computes it (alpha dropped). Something that is not a colour
+ * warns and falls back to the default yellow, so a v1 scene file still renders.
+ */
+export async function resolveTouchColour(browser: Browser, colour: string, sceneId: string): Promise<string> {
+  if (HEX.test(colour)) return colour;
+  const page = await browser.newPage();
+  try {
+    const rgb = await page.evaluate((c) => {
+      const probe = document.createElement('div');
+      probe.style.color = c;
+      if (!probe.style.color) return null;
+      document.body.appendChild(probe);
+      const m = /rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/.exec(getComputedStyle(probe).color);
+      return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+    }, colour);
+    if (rgb) return '#' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('');
+  } finally {
+    await page.close();
+  }
+  console.warn(`scenecast: scene "${sceneId}": brand.accent ${JSON.stringify(colour)} is not a CSS colour; the touch indicator uses ${DEFAULT_TOUCH_COLOUR}`);
+  return DEFAULT_TOUCH_COLOUR;
+}
 /** Phone takes show taps with a touch indicator of this size (see overlay.js), centred on the tap. */
 const TOUCH_PX = DEFAULTS.phone.touchPx;
 /** The flash stays up this long: 2 frames of a 25 fps webm plus a vsync. */
@@ -452,7 +477,7 @@ export async function recordScene(
   opts: {
     minTakeSec?: number;
     cursor?: CursorCfg;
-    /** The touch indicator's colour on phone takes: the brand accent, a #rgb or #rrggbb hex. */
+    /** The touch indicator's colour on phone takes: the brand accent, any CSS colour (resolved to a hex). */
     touchColour?: string;
     /** The wall clock the browser stamps video frames with (default `Date.now`); tests replace it to step it. */
     wallClock?: () => number;
@@ -482,8 +507,7 @@ export async function recordScene(
     await applyAppContext(context, app, { sessionFile: storageState });
     // Phone takes tap: the overlay starts every document in touch mode (no arrow; a touch indicator per tap).
     if (phone) {
-      const colour = opts.touchColour ?? DEFAULT_TOUCH_COLOUR;
-      if (!HEX.test(colour)) throw new Error(`scene "${scene.id}": the touch colour must be a #rgb or #rrggbb hex (brand.accent is ${JSON.stringify(colour)})`);
+      const colour = await resolveTouchColour(browser, opts.touchColour ?? DEFAULT_TOUCH_COLOUR, scene.id);
       await context.addInitScript({ content: `window.__scenecastInitMode = 'touch'; window.__scenecastTouchColour = ${JSON.stringify(colour)};` });
     }
     await context.addInitScript({ content: OVERLAY_JS });

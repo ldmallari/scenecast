@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { chromium, type Browser } from 'playwright';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -8,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { lastFrameTime } from '../src/ffmpeg.js';
 import { findUv, uvEnv } from '../src/toolchain.js';
-import { DEFAULT_TRAVEL_SEC, recordScene, travelSecFor, type TakeEvent } from '../src/record/record.js';
+import { DEFAULT_TRAVEL_SEC, recordScene, resolveTouchColour, travelSecFor, type TakeEvent } from '../src/record/record.js';
 import { DEFAULTS, type AppConn, type Scene, type Step } from '../src/scene/schema.js';
 import { actionAt, schedule, spotPoint, type ScheduledStep } from '../src/schedule.js';
 
@@ -105,6 +106,27 @@ const fired = (e: TakeEvent) => e.at - (e.clockShift ?? 0);
 
 const inFrame = (b: { x: number; y: number; w: number; h: number }) =>
   b.w > 0 && b.h > 0 && b.x >= 0 && b.y >= 0 && b.x + b.w <= DEFAULTS.video.width && b.y + b.h <= DEFAULTS.video.height;
+
+describe('resolveTouchColour', () => {
+  let browser: Browser;
+  beforeAll(async () => {
+    browser = await chromium.launch();
+  });
+  afterAll(async () => {
+    await browser?.close();
+  });
+  it('turns any CSS colour into a hex, and falls back with a warning on anything else', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await resolveTouchColour(browser, '#E0457B', 's')).toBe('#E0457B');
+    expect(await resolveTouchColour(browser, 'gold', 's')).toBe('#ffd700');
+    expect(await resolveTouchColour(browser, 'rgb(10, 20, 30)', 's')).toBe('#0a141e');
+    expect(await resolveTouchColour(browser, '#11223380', 's')).toBe('#112233');
+    expect(warn).not.toHaveBeenCalled();
+    expect(await resolveTouchColour(browser, 'not-a-colour', 'phone')).toBe('#F5C518');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('scene "phone": brand.accent "not-a-colour" is not a CSS colour'));
+    warn.mockRestore();
+  }, 60_000);
+});
 
 describe('recordScene', () => {
   it('records a scene and logs target box', async () => {
@@ -405,6 +427,20 @@ describe('recordScene', () => {
       const before = pixelTrack(take.file, c.x + 15, c.y).slice(frameAt(ev.at - 0.6), frameAt(ev.at - 0.35));
       expect(before.some(pink), `${ev.index}: before ${JSON.stringify(before)}`).toBe(false);
     }
+  }, 60_000);
+
+  it('a named accent colour (gold) on a phone scene records, and the indicator is drawn in it', async () => {
+    const steps: Step[] = [{ do: 'click', sel: ".nav a[href='/requests']" }];
+    const s = { ...scene('tapgold', '/dashboard', steps), viewport: 'phone' } as Scene;
+    const plan = steps.map((step, index) => ({ index, step, cueTime: null, startAt: 0.5, travel: travelSecFor(step, { touch: true }) }));
+    const take = await recordScene(s, plan, app, path.join(work, 'takes'), { touchColour: 'gold' });
+    const magenta = pixelTrack(take.file, DEFAULTS.phone.width / 2, DEFAULTS.phone.height / 2).findIndex(([r, g, b]) => r > 200 && g < 80 && b > 200);
+    const frameAt = (t: number) => magenta + Math.round(t * VIDEO_FPS);
+    const ev = take.events[0]!;
+    const c = { x: ev.cursorTo!.x + 17, y: ev.cursorTo!.y + 17 };
+    const ring = pixelTrack(take.file, c.x + 15, c.y).slice(frameAt(ev.at - 0.12), frameAt(ev.at + 0.2) + 1);
+    const gold = ([r, g, b]: [number, number, number]) => r > 200 && g > 160 && b < 100;
+    expect(ring.some(gold), `ring ${JSON.stringify(ring)}`).toBe(true);
   }, 60_000);
 
   it('a phone check taps the box', async () => {

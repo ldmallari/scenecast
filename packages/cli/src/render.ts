@@ -227,7 +227,7 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
     const minTakeSec = voice.duration + DEFAULTS.video.breathSec + DEFAULTS.video.takeTailSec;
     const { result: recorded } = await cache.run<Recorded>({
       name: `record/${scene.id}`,
-      input: { scene, scheduled, app, cursor: spec.cursor, minTakeSec, ...(scene.viewport === 'phone' ? { touchColour: spec.brand.accent } : {}) },
+      input: recordStageInput(scene, scheduled, app, spec.cursor, minTakeSec, spec.brand.accent),
       files: [...appFiles(app), ...(seedFile ? [seedFile] : [])],
       run: async (dir) => {
         if (app.seed && !seeded) {
@@ -284,6 +284,33 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
   });
   const name = opts.only ? `${spec.output}-${opts.only}` : spec.output;
   return { spec, video, cache, workDir, name };
+}
+
+/**
+ * The record stage's own version, part of its cache key: bump it when takes recorded before a change must be
+ * recorded again (2: blank frames are frozen in the take). The global cache version stays, so voice and music
+ * clips are kept.
+ */
+export const RECORD_STAGE_VERSION = 2;
+
+/** Everything a scene's take depends on: the record stage's cache input. */
+export function recordStageInput(
+  scene: Scene,
+  scheduled: ScheduledStep[],
+  app: VideoSpec['app'],
+  cursor: VideoSpec['cursor'],
+  minTakeSec: number,
+  accent: string,
+): Record<string, unknown> {
+  return {
+    rec: RECORD_STAGE_VERSION,
+    scene,
+    scheduled,
+    app,
+    cursor,
+    minTakeSec,
+    ...(scene.viewport === 'phone' ? { touchColour: accent } : {}),
+  };
 }
 
 /**

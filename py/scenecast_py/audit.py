@@ -223,7 +223,7 @@ def _captions(windows, cues, zooms, rules, screen=None):
     protected there: no caption could clear it."""
     frame = _frame(rules)
     sc = screen or frame
-    share = rules.get("fullFrameShare", 0.9)
+    share = rules["fullFrameShare"]  # DEFAULTS.captions.fullFrameShare, sent by the TS side
     problems = []
     for cue in cues:
         hit = False

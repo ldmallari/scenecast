@@ -429,6 +429,15 @@ describe('blank frames', () => {
     // A run with no good frame to hold is left alone.
     expect(await freezeBlankFrames(file, [{ start: 0, end: 0.08, holdAt: 0, frames: { first: 0, last: 1, hold: 0 } }])).toBe(0);
   }, 60_000);
+
+  it('freezeBlankFrames leaves no temp file behind when ffmpeg fails', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-freeze-'));
+    const file = path.join(dir, 'take.webm');
+    fs.writeFileSync(file, 'not a video');
+    await expect(freezeBlankFrames(file, [{ start: 1, end: 1.04, holdAt: 0.96, frames: { first: 25, last: 25, hold: 24 } }])).rejects.toThrow(/ffmpeg exited/);
+    expect(fs.readdirSync(dir)).toEqual(['take.webm']);
+    expect(fs.readFileSync(file, 'utf8')).toBe('not a video');
+  }, 30_000);
 });
 
 describe('retime never cuts inside an action that is still playing out', () => {

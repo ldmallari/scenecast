@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { StageCache } from '../src/cache.js';
+import { RECORD_STAGE_VERSION, recordStageInput } from '../src/render.js';
 
 let work: string;
 beforeEach(() => {
@@ -95,5 +96,31 @@ describe('stage cache', () => {
     let runs = 0;
     await cache.run({ name: 'f', input: 1, run: async () => ++runs });
     expect(runs).toBe(1);
+  });
+});
+
+describe('the record stage version', () => {
+  const scene = { id: 'sign-in', kind: 'app', narration: 'Hello.', steps: [] } as never;
+  const app = { baseUrl: 'http://127.0.0.1:4310' } as never;
+  const cursor = { start: 'center', park: 'right', parkAfterSec: 2.5 } as never;
+
+  it('a take cached without it (before blank frames were frozen in the take) is recorded again', async () => {
+    const cache = new StageCache(work);
+    const name = 'record/sign-in';
+    const now = recordStageInput(scene, [], app, cursor, 6, '#F5C518');
+    expect(now.rec).toBe(RECORD_STAGE_VERSION);
+    const { rec: _rec, ...before } = now;
+    await cache.save(name, await cache.key(name, before), { take: 'old' });
+    expect(await cache.lookup(name, await cache.key(name, before))).toEqual({ take: 'old' });
+    expect(await cache.lookup(name, await cache.key(name, now))).toBeUndefined();
+  });
+
+  it('leaves every other stage key as it was, so voice and music clips are still reused', async () => {
+    // Keys computed before the record stage version was added (same global cache version).
+    const cache = new StageCache(work);
+    expect(await cache.key('music', { seconds: 10, seed: 0 })).toBe('9f37274d5c2edab8549b58e30d9a6a69b586d7a7d014a8202d4a381463ff2ee0');
+    expect(await cache.key('voice', { text: 'Hello there.', voice: 'af_heart' })).toBe('26a107f0522c4d5e7ecff3dc00cd32d3e95c304da06cac1db107291d389df46f');
+    await cache.save('music', await cache.key('music', { seconds: 10, seed: 0 }), { wav: 'bed.wav' });
+    expect(await cache.lookup('music', '9f37274d5c2edab8549b58e30d9a6a69b586d7a7d014a8202d4a381463ff2ee0')).toEqual({ wav: 'bed.wav' });
   });
 });

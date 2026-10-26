@@ -144,13 +144,18 @@ export async function freezeBlankFrames(file: string, blanks: BlankRange[]): Pro
     .map((b, i) => `[${i ? `v${i}` : '0:v:0'}]split[a${i}][b${i}];[a${i}][b${i}]freezeframes=first=${b.frames!.first}:last=${b.frames!.last}:replace=${b.frames!.hold}[v${i + 1}]`)
     .join(';');
   const tmp = `${file}.frozen${path.extname(file)}`;
-  await runFfmpeg(ffmpeg, [
-    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', file,
-    '-filter_complex', graph, '-map', `[v${runs.length}]`, '-fps_mode', 'passthrough',
-    // Near-lossless VP8, like the recorder's own output (the composer re-encodes it anyway).
-    '-c:v', 'libvpx', '-crf', '4', '-b:v', '40M', '-qmin', '0', '-qmax', '10', '-deadline', 'good', '-cpu-used', '4',
-    tmp,
-  ]);
+  try {
+    await runFfmpeg(ffmpeg, [
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', file,
+      '-filter_complex', graph, '-map', `[v${runs.length}]`, '-fps_mode', 'passthrough',
+      // Near-lossless VP8, like the recorder's own output (the composer re-encodes it anyway).
+      '-c:v', 'libvpx', '-crf', '4', '-b:v', '40M', '-qmin', '0', '-qmax', '10', '-deadline', 'good', '-cpu-used', '4',
+      tmp,
+    ]);
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    throw e;
+  }
   fs.renameSync(tmp, file);
   return runs.length;
 }

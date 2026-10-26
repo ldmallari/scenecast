@@ -151,7 +151,8 @@ menu appears. Ring the revealed element with a separate `ring` step cued a word 
   an element inside that container: it is scrolled into the middle of the view, whichever element scrolls.
 - **`zoom selector "<sel>" not found`** (a scene's `zoom`). The element is measured before recording starts, on
   `route`: it must be there without any step.
-- **The touch indicator colour is rejected** on a phone scene: `brand.accent` must be `#rgb` or `#rrggbb`.
+- **`brand.accent "…" is not a CSS colour; the touch indicator uses #F5C518`** (a warning on a phone scene). The
+  render goes on with the default yellow; give `brand.accent` a CSS colour (`#rrggbb`, a name, `rgb(…)`) to use yours.
 
 ## Loading FAILs
 
@@ -164,7 +165,8 @@ data, prewarm the route, or wait. A spinner that the action itself brings up is 
 `login` steps run before each signed-in scene that is recorded, so a cold render signs in once per scene. If the app
 limits sign-ins, or for SSO or two-factor sign-in, use `scenecast login video.yaml` to sign in by hand
 and save `app.storageState`, or write an `app.loginHook`. The saved session holds credentials: keep it out of version
-control.
+control, together with the `<session>.session-storage.json` file saved next to it when the app keeps its sign-in in
+sessionStorage.
 
 **The app keeps its sign-in in sessionStorage.** Cookies and localStorage are in the Playwright session; sessionStorage
 is not, so scenecast saves it separately (the sessionStorage of `baseUrl`'s origin, next to the session file) and
@@ -190,7 +192,9 @@ signed in. Record the signed-out part as its own scene with `signedOut: true`.
 ## Fonts
 
 Captions and drawn cards use `brand.font` and `brand.cardFont`. Inter is bundled and always available. Any other font
-must be installed where the render runs, or the render fails and names it (it never falls back silently). Card
+must be installed where the render runs, or the render fails and names it (it never falls back silently). The check
+runs when the video is composed, after the voice and the recordings, so try a short `--only` render first after
+changing the font; a name the system maps to an installed font (an alias) counts as installed. Card
 **pages** (`cards.introPage`, `cards.outroPage`, a title scene's `page`) are rendered by Chromium with the host's
 fonts, not the bundled ones: ship the font file next to the page and load it with `@font-face`.
 

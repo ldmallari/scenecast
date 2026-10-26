@@ -18,6 +18,7 @@ RULES = {
     "toleranceLu": 1,
     "truePeakDb": -1.5,
     "zoomEaseSec": 0.7,
+    "fullFrameShare": 0.9,
 }
 
 TARGET = {"x": 800, "y": 300, "w": 200, "h": 60}

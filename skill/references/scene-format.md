@@ -146,8 +146,8 @@ quoted, so `font-family: var(--sc-card-font), sans-serif` works). The capture wa
 | Field | Required | Meaning |
 |---|---|---|
 | `primary` | yes | Background colour of the intro, outro and chapter cards, unless `background` is set. The card text is light or dark to suit the background. |
-| `accent` | yes | The accent bar on the cards, and the touch indicator on phone scenes. A file with a phone scene needs it as `#rgb` or `#rrggbb` (a named colour fails when that scene is recorded). |
-| `font` | yes | Font family for captions (and cards, unless `cardFont` is set), for example `Inter`. Inter is bundled with scenecast (OFL-1.1) and always works, offline. Any other family must be installed on the machine that renders: a font that is missing fails the render and names the font, rather than falling back to another typeface. |
+| `accent` | yes | The accent bar on the cards, and the touch indicator on phone scenes. Any CSS colour works (`#F5C518`, `gold`, `rgb(245 197 24)`); the touch indicator uses it as computed by the browser, without alpha. A value that is not a colour prints a warning and the indicator falls back to `#F5C518`. |
+| `font` | yes | Font family for captions (and cards, unless `cardFont` is set), for example `Inter`. Inter is bundled with scenecast (OFL-1.1) and always works, offline. Any other family must be installed on the machine that renders: a font that is missing fails the render and names the font, rather than falling back to another typeface. The check runs when the video is composed (after the voice and the recordings), and a name the system resolves as an alias of an installed font counts as installed. |
 | `cardFont` | no | Font family of the card text. Defaults to `font`. The same rule applies: Inter, or a font installed where the render runs (use a free one; OFL is fine). |
 | `background` | no | Background of the cards and of the stage behind the phone on phone scenes: a colour (`"#1F3A5F"`), a gradient `{ from, to, angle }` (`angle` in CSS degrees, default 135: from the top-left to the bottom-right), or an image `{ image, dim }` (a path; it covers the frame, under a black overlay of `dim`, 0 to 1, default 0.35). Default: `primary`. |
 | `logo` | no | An image file shown on the intro and outro cards (not on chapter cards). |
@@ -176,7 +176,10 @@ A scene with `signedOut: true` is recorded without the session.
 When the app keeps its sign-in in **sessionStorage** (not only in cookies), the unattended sign-in and
 `scenecast login` save it in a second file next to the session (`<session>.session-storage.json`), and every
 recording restores it once per tab, before the app's scripts run. An app that clears it (by signing out, say) is not
-signed back in on its next navigation. The render deletes both files when it is done.
+signed back in on its next navigation. The session files the unattended sign-in (`app.login` or `app.loginHook`)
+writes for a recording are deleted when that recording ends, even when it fails. The files `scenecast login` writes
+next to `app.storageState` (the session and its `.session-storage.json`) are kept, since later renders use them: keep
+both out of version control.
 
 ### Init scripts and routes
 
@@ -294,7 +297,8 @@ What each action does:
   closes it, then eases out. A zoom ended by an `unzoom` may not also set `ms`. The zoomed region keeps the
   frame's 16:9 shape, magnifies at most 2.5×, keeps 24 px of space around the target, stays inside the frame, and
   shows a declared nav whole or not at all. A target too big to need a zoom gets the full frame.
-- **unzoom.** Eases the zoom out, starting on its cue (it needs a `zoom` before it in the scene). It has no `sel`.
+- **unzoom.** Eases the zoom out, starting on its cue (it needs a `zoom` step before it in the scene, or the scene's
+  own `zoom`, which it then ends). It has no `sel`.
   Use it to end a zoom on a word ("…comes **first**") instead of after a fixed `ms`.
 - **ring.** Draws a highlight ring around the element.
 - **park.** Glides the cursor to a [spot](#cursor) out of the way (`at`, default `cursor.park`). Not allowed on phone
@@ -303,7 +307,8 @@ What each action does:
 - **wait.** Pauses.
 
 The first pointer step of a scene that comes too soon after the scene starts for a glide is **pre-positioned**: the
-cursor is already on its target from the first frame, and the action fires on its cue.
+cursor is already on its target from the first frame, and the action fires on its cue. On a phone scene, a
+pre-positioned first tap's touch indicator appears at the tap without fading in.
 
 A step without a `cue` runs right after the step before it (plus that step's `ms`). Only steps with a cue are checked
 for sync by the audit, so give a cue to every step a viewer should see happen on a word.
@@ -333,7 +338,7 @@ stage (`brand.background`). With `phone.align: left` (the default) the phone's c
 with captions in a column beside it; `right` puts it at 70%; `center` is the v1 layout, with captions below.
 
 - A tap has no glide: a 34 px touch indicator in `brand.accent` fades in 0.25 s before the tap, taps on the cue, and
-  fades out. So `brand.accent` must be `#rgb` or `#rrggbb`.
+  fades out. `brand.accent` may be any CSS colour; one that is not a colour warns and falls back to `#F5C518`.
 - `park` steps are not allowed (there is no cursor).
 
 ## Captions
