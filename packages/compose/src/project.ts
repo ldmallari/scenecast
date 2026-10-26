@@ -3,6 +3,7 @@
 // The resolved plan is injected at build time as __SCENECAST_PLAN__ (see render.ts).
 import { makeScene2D } from '@revideo/2d';
 import { makeProject, useThread, waitFor } from '@revideo/core';
+import { loadFonts } from './fonts.js';
 import type { ResolvedPlan } from './plan.js';
 import { appScene } from './scenes/app.js';
 import { cardScene } from './scenes/card.js';
@@ -12,6 +13,8 @@ const plan = __SCENECAST_PLAN__;
 
 const main = makeScene2D('scenecast', function* (view) {
   const time = useThread().time;
+  // Fonts first: every caption and card is set in them, and a missing one fails the render here.
+  yield loadFonts(plan.fonts);
   for (const scene of plan.scenes) {
     const node = scene.kind === 'card' ? cardScene(scene, plan, time) : appScene(scene, plan, time);
     view.add(node);

@@ -9,10 +9,7 @@ import { caption, fontStack } from './app.js';
 
 type Scene = ResolvedPlan['scenes'][number];
 
-
-
 const luminance = (hex: string) => luminanceOf(channels(hex));
-
 
 /** White text on dark brand colours, near-black on light ones. */
 export const inkOn = (bg: string) => (luminance(bg) > 0.4 ? DARK_INK : LIGHT_INK);

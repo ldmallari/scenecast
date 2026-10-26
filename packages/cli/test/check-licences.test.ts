@@ -9,7 +9,8 @@ const REPO = fileURLToPath(new URL('../../../', import.meta.url));
 const SCRIPT = path.join(REPO, 'scripts/check-licences.mjs');
 
 interface Pkg {
-  ecosystem: 'npm' | 'python';
+  ecosystem: 'npm' | 'python' | 'font';
+  missing?: string[];
   name: string;
   version: string;
   licence?: string;
@@ -47,6 +48,7 @@ const THIRD_PARTY = [
   '| `some-ffmpeg-binary` | GPL-2.0-or-later | https://example.invalid |',
   '| `@scope/native-*` | MIT | https://example.invalid |',
   '| `Some_Py.Package` | MIT | https://example.invalid |',
+  '| `Some Font` | OFL-1.1 | https://example.invalid |',
 ].join('\n');
 
 const npm = (name: string, licence?: string): Pkg => ({ ecosystem: 'npm', name, version: '1.0.0', ...(licence ? { licence } : {}) });
@@ -129,6 +131,16 @@ describe('check-licences', () => {
     ]);
     expect(rows.map((r) => r.ok)).toEqual([false, true, true]);
     expect(rows[0]!.problems).toEqual(['missing from THIRD_PARTY.md']);
+  });
+
+  it('accepts OFL-1.1 for a bundled font only, and needs its files', () => {
+    const font = (licence: string, missing: string[] = []): Pkg => ({ ecosystem: 'font', name: 'Some Font', version: '1', licence, missing });
+    expect(check([font('OFL-1.1')])[0]!.ok).toBe(true);
+    expect(check([npm('dual-licensed', 'OFL-1.1')])[0]!.ok).toBe(false); // not for code
+    const gpl = check([font('GPL-3.0-only')])[0]!;
+    expect(gpl.ok).toBe(false);
+    expect(gpl.problems.join()).toContain('not allowed for a font');
+    expect(check([font('OFL-1.1', ['Some-OFL.txt'])])[0]!.problems.join()).toContain('missing from the repository: Some-OFL.txt');
   });
 
   it.skipIf(!findUv())('passes on the real dependency tree', () => {

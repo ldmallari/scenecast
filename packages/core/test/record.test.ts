@@ -383,6 +383,30 @@ describe('recordScene', () => {
     expect(take.events[1]!.target!.w).toBeGreaterThan(0);
   }, 60_000);
 
+  it('the touch indicator reads on white and on dark UI, in the colour it is given', async () => {
+    const steps: Step[] = [
+      { do: 'click', sel: ".nav a[href='/requests']" }, // a white tab bar
+      { do: 'click', sel: '#menu-button' }, // the dark avatar button
+    ];
+    const s = { ...scene('tapcolour', '/dashboard', steps), viewport: 'phone' } as Scene;
+    const plan = steps.map((step, index) => ({ index, step, cueTime: null, startAt: [0.5, 2.0][index]!, travel: travelSecFor(step, { touch: true }) }));
+    const take = await recordScene(s, plan, app, path.join(work, 'takes'), { touchColour: '#E0457B' });
+    const magenta = pixelTrack(take.file, DEFAULTS.phone.width / 2, DEFAULTS.phone.height / 2).findIndex(([r, g, b]) => r > 200 && g < 80 && b > 200);
+    expect(magenta).toBeGreaterThanOrEqual(0);
+    const frameAt = (t: number) => magenta + Math.round(t * VIDEO_FPS);
+    const pink = ([r, g, b]: [number, number, number]) => r > 160 && g < 130 && b > 70 && r - g > 70;
+    for (const ev of take.events) {
+      const c = { x: ev.cursorTo!.x + 17, y: ev.cursorTo!.y + 17 };
+      // The 3 px ring (radius 14 to 17) in the accent, around the tap: full from the tap until its press ends, and
+      // the screencast can show a frame up to ~0.1 s late under load, so the window runs on past the tap.
+      const ring = pixelTrack(take.file, c.x + 15, c.y).slice(frameAt(ev.at - 0.12), frameAt(ev.at + 0.2) + 1);
+      expect(ring.some(pink), `${ev.index}: ring ${JSON.stringify(ring)}`).toBe(true);
+      // Before the indicator fades in, that spot is not the accent (it is the app itself).
+      const before = pixelTrack(take.file, c.x + 15, c.y).slice(frameAt(ev.at - 0.6), frameAt(ev.at - 0.35));
+      expect(before.some(pink), `${ev.index}: before ${JSON.stringify(before)}`).toBe(false);
+    }
+  }, 60_000);
+
   it('a phone check taps the box', async () => {
     const steps: Step[] = [{ do: 'check', sel: '#agree' }];
     const s = { ...scene('tapcheck', '/form', steps), viewport: 'phone' } as Scene;

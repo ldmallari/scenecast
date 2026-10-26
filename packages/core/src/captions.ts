@@ -32,9 +32,17 @@ export function phoneCaptions(align: PhoneAlign): CaptionLayout {
   if (align === 'center') return DESKTOP_CAPTIONS;
   const W = DEFAULTS.video.width;
   const { charsPerLine, maxLines, gapPx } = DEFAULTS.captions.beside;
+  const body = phoneBody(align);
   const s = phoneScreen(align);
-  const [x0, x1] = align === 'left' ? [s.x + s.w + gapPx, W - gapPx] : [gapPx, s.x - gapPx];
+  const [x0, x1] = align === 'left' ? [body.x + body.w + gapPx, W - gapPx] : [gapPx, body.x - gapPx];
   return { charsPerLine, maxLines, sides: ['beside', 'bottom', 'top'], beside: { x: x0, y: s.y, w: x1 - x0, h: s.h } };
+}
+
+/** The drawn phone (its screen plus the bezel the composer draws around it), in frame px. */
+export function phoneBody(align: PhoneAlign): Box {
+  const s = phoneScreen(align);
+  const b = DEFAULTS.phone.bezelPx;
+  return { x: s.x - b, y: s.y - b, w: s.w + 2 * b, h: s.h + 2 * b };
 }
 
 /** The column beside the phone lies right of the frame's centre (the phone is on the left). */
@@ -59,6 +67,12 @@ export interface CaptionEvent {
   start: number;
   end: number;
   boxes: Box[];
+  /**
+   * The phone as shown while a zoom on a phone scene magnifies it: the column beside the phone is not free while
+   * it overlaps them, so the cue goes to the next side (with a plate). Never a reason to report: only `beside` is
+   * ruled out by them.
+   */
+  besideBlockers?: Box[];
 }
 
 const FONT_PX = 44;
@@ -187,6 +201,18 @@ export function zoomedCaptionEvents(
       out.push({ start: lo, end: hi, boxes: views(lo, hi, regions, ease).flatMap((v) => shown(boxes, v)) });
     }
   });
+  // A zoom on a phone scene magnifies the phone, which can then reach under the column beside it: from the zoom's
+  // start until it has eased out, the phone as shown (both ends of the ease, spanned) rules that column out.
+  if (phone) {
+    const body = phoneBody(align);
+    for (const z of regions) {
+      const ends = [body, onScreen(body, z.box)].map((b) => intersect(b, frame));
+      const x = Math.min(...ends.map((b) => b.x));
+      const y = Math.min(...ends.map((b) => b.y));
+      const span = { x, y, w: Math.max(...ends.map((b) => b.x + b.w)) - x, h: Math.max(...ends.map((b) => b.y + b.h)) - y };
+      out.push({ start: z.start, end: Math.min(sceneEnd, z.end + ease), boxes: [], besideBlockers: [span] });
+    }
+  }
   return out;
 }
 
@@ -205,10 +231,16 @@ const FUNCTION_WORD_BREAK = 1e6;
 /** A break that does not follow clause punctuation (`, : ; — .`). */
 const MID_CLAUSE_BREAK = 1;
 const CLAUSE_END = /[,:;—.]["'”’)\]]*$/u;
-/** A possessive ("Demo Co's", "users'"): it belongs with the word after it, so a break after it costs like a function word's. */
-const POSSESSIVE = /(?:['’]s|s['’])$/iu;
-/** Abbreviations whose full stop ends no clause ("e.g.", "i.e.", "etc."), with any comma after them. */
-const ABBREVIATION = /^(?:e\.g|i\.e|etc|vs|cf|approx|incl|mr|mrs|ms|dr)\.,?$/iu;
+/**
+ * A possessive ("Demo Co's", "users'"): it belongs with the word after it, so a break after it costs like a function
+ * word's. A quoted label ending in s ("‘Requests’", "'Settings'") is not one: it opens with a quote.
+ */
+const POSSESSIVE = /^(?!['‘"“]).*\p{L}(?:['’]s|s['’])$/u;
+/**
+ * Abbreviations whose full stop ends no clause ("e.g.", "a.m.", "Demo Co."), inside brackets or quotes and with a
+ * comma or closing bracket after them.
+ */
+const ABBREVIATION = /^[(\["“‘]*(?:e\.g|i\.e|etc|vs|cf|approx|incl|a\.m|p\.m|co|inc|ltd|no|st|jr|sr|mr|mrs|ms|dr)\.[)\]"”’]*,?$/iu;
 
 /** The cost of breaking after `word`. */
 function breakCost(word: string): number {
@@ -410,11 +442,15 @@ export function layoutCaptions(
       const start = i === 0 ? phrase.start : phrase.start + ((phrase.end - phrase.start) * acc) / sum;
       acc += chars[i]!;
       const end = i === groups.length - 1 ? phrase.end : phrase.start + ((phrase.end - phrase.start) * acc) / sum;
-      const boxes = events.filter((e) => e.start < end && e.end > start).flatMap((e) => e.boxes);
+      const during = events.filter((e) => e.start < end && e.end > start);
+      const boxes = during.flatMap((e) => e.boxes);
+      const blockers = during.flatMap((e) => e.besideBlockers ?? []);
       let best: { side: CaptionSide; box: Box; hit: number } | null = null;
       let tie = false;
       for (const side of layout.sides) {
         const box = captionBox(lines, side, layout);
+        // The magnified phone under the column: that side is out (unless it is the only one).
+        if (side === 'beside' && layout.sides.length > 1 && blockers.some((b) => overlap(b, box) > 0)) continue;
         const hit = boxes.some((b) => overlap(b, box) > 0) ? unionArea(boxes, box) : 0;
         // Areas within a rounding error of each other are a tie (box edges are fractional px).
         if (!best || hit < best.hit - EPS) [best, tie] = [{ side, box, hit }, false];

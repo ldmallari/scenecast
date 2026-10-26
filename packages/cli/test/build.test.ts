@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { clampZoom, DEFAULTS, parseSrt, phoneScreen, phoneToFrame, travelSecFor, type Box, type Scene, type SceneVoice, type ScheduledStep, type Take, type VideoSpec } from '@scenecast/core';
+import { clampZoom, DEFAULTS, parseSrt, schedule, phoneScreen, phoneToFrame, travelSecFor, type Box, type Scene, type SceneVoice, type ScheduledStep, type Take, type VideoSpec } from '@scenecast/core';
 import { buildVoiceTrack, readWav, writeWav } from '../src/audio.js';
-import { appPlanScene, buildVideo, captionEvents, chaptersTxt, eventTimes, finalSrt, INTRO_SEC, OUTRO_SEC, onScreen, planZooms, toFrames, type Recorded } from '../src/build.js';
+import { appPlanScene, buildVideo, scheduleOptsFor, captionEvents, chaptersTxt, eventTimes, finalSrt, INTRO_SEC, OUTRO_SEC, onScreen, planZooms, toFrames, type Recorded } from '../src/build.js';
 
 const brand = { primary: '#1F3A5F', accent: '#F5C518', font: 'Inter', introTitle: 'Intro' };
 const spec = { id: 'v', title: 'The video', output: 'v', brand, app: { baseUrl: 'http://x' }, voice: DEFAULTS.voice, scenes: [] } as unknown as VideoSpec;
@@ -225,6 +225,28 @@ describe('captionEvents', () => {
     // A centred phone keeps the desktop captions; desktop scenes never go beside.
     const centred = buildVideo({ ...spec, phone: { align: 'center' } }, [appInput('p', { phone: true }), appInput('d')], { cards: false });
     for (const sc of centred.plan.scenes) for (const c of sc.cues!) expect(c.side).not.toBe('beside');
+  });
+});
+
+describe('scheduleOptsFor', () => {
+  const cursor = { start: 'center' as const, park: 'right' as const, parkAfterSec: 2.5 };
+  const steps = [{ cue: 'Open', do: 'click' as const, sel: '#a' }];
+  const v: SceneVoice = { duration: 8, phrases: [{ text: 'Open it now.', start: 0, end: 1.5 }], words: [{ w: 'Open', start: 1, end: 1.3 }, { w: 'it', start: 1.3, end: 1.4 }, { w: 'now.', start: 1.4, end: 1.5 }] };
+  const sceneOf = (viewport: 'phone' | 'desktop') => ({ id: 's', kind: 'app', viewport, narration: 'Open it now.', steps } as unknown as Scene);
+
+  it('a phone scene never parks and taps with the touch lead', () => {
+    const [s] = schedule(sceneOf('phone'), v, scheduleOptsFor(sceneOf('phone'), cursor, v.duration));
+    expect(s!.park).toBeUndefined();
+    expect(s!.travel).toBe(DEFAULTS.phone.touchLeadSec);
+    expect(scheduleOptsFor(sceneOf('phone'), cursor, v.duration).park).toBeUndefined();
+  });
+
+  it('a desktop scene parks after a lone click (unless parking is off)', () => {
+    const [s] = schedule(sceneOf('desktop'), v, scheduleOptsFor(sceneOf('desktop'), cursor, v.duration));
+    expect(s!.park).toBeDefined();
+    expect(s!.travel).toBeCloseTo(0.52, 9);
+    const [off] = schedule(sceneOf('desktop'), v, scheduleOptsFor(sceneOf('desktop'), { ...cursor, park: 'off' }, v.duration));
+    expect(off!.park).toBeUndefined();
   });
 });
 

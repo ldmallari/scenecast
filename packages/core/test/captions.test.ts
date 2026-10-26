@@ -6,6 +6,7 @@ import {
   FUNCTION_WORDS,
   layoutCaptions,
   parseSrt,
+  phoneBody,
   phoneCaptions,
   splitCaption,
   toSrt,
@@ -14,6 +15,7 @@ import {
 } from '../src/captions.js';
 import { phoneFrame, phoneScreen, phoneToFrame } from '../src/frame.js';
 import type { Take } from '../src/record/record.js';
+import { DEFAULTS } from '../src/scene/schema.js';
 import { travelSecFor, type ScheduledStep } from '../src/schedule.js';
 import type { SceneVoice } from '../src/voice.js';
 
@@ -441,7 +443,7 @@ describe('phone captions beside the phone', () => {
     expect(cue!.box.x).toBeGreaterThanOrEqual(f.x + f.w + 120);
     expect(cue!.box.x + cue!.box.w).toBeLessThanOrEqual(1920 - 120);
     // Against the column's edge facing the phone, centred on the phone vertically, in lines of at most 30 characters.
-    expect(cue!.box.x).toBeCloseTo(f.x + f.w + 120, 6);
+    expect(cue!.box.x).toBeCloseTo(f.x + f.w + DEFAULTS.phone.bezelPx + 120, 6); // 120 px from the phone body
     expect(cue!.box.y + cue!.box.h / 2).toBeCloseTo(540, 6);
     expect(Math.max(...cue!.lines.map((l) => l.length))).toBeLessThanOrEqual(30);
     expect(cue!.reason).toBeUndefined();
@@ -452,14 +454,16 @@ describe('phone captions beside the phone', () => {
     const [cue] = layoutCaptions({ id: 's' }, shortVoice('Tap Requests to see everything you asked for.'), [], phoneCaptions('right'));
     expect(cue!.side).toBe('beside');
     expect(cue!.box.x).toBeGreaterThanOrEqual(120);
-    expect(cue!.box.x + cue!.box.w).toBeCloseTo(f.x - 120, 6);
+    expect(cue!.box.x + cue!.box.w).toBeCloseTo(f.x - DEFAULTS.phone.bezelPx - 120, 6);
   });
 
   it('phone layouts: 30 characters, 3 lines, beside then bottom then top; a centred phone uses the desktop layout', () => {
     const left = phoneCaptions('left');
     expect(left).toMatchObject({ charsPerLine: 30, maxLines: 3, sides: ['beside', 'bottom', 'top'] });
     const f = phoneScreen('left');
-    expect(left.beside).toEqual({ x: f.x + f.w + 120, y: f.y, w: 1920 - 120 - (f.x + f.w + 120), h: f.h });
+    const b = phoneBody('left');
+    expect(b.x + b.w).toBeCloseTo(f.x + f.w + DEFAULTS.phone.bezelPx, 9);
+    expect(left.beside).toEqual({ x: b.x + b.w + 120, y: f.y, w: 1920 - 120 - (b.x + b.w + 120), h: f.h });
     expect(phoneCaptions('center')).toBe(DESKTOP_CAPTIONS);
     // Up to 3 lines of 30: a long phrase uses the column's height before it splits into more cues.
     const text = 'Every request you send lands here, with its status and the date it is due back.';
@@ -526,5 +530,62 @@ describe('caption breaks: possessives, abbreviations and the fallback reason', (
     // Every side equally covered: the first is kept.
     const [all] = layoutCaptions({ id: 's' }, voice('Everything is covered'), [{ start: 0, end: 10, boxes: [box(0, 0, 1920, 1080)] }]);
     expect(all!.reason).toBe('no free position; all equal, bottom kept');
+  });
+});
+
+describe('fix round 1: zoomed phones, quoted labels, more abbreviations', () => {
+  it('a zoom on a phone scene rules out the column while the phone is magnified under it', () => {
+    // A left phone zoomed on a target at the middle of its screen: magnified, the phone reaches under the column.
+    const target = { x: 145, y: 400, w: 100, h: 40 };
+    const take: Take = { file: 't.webm', flashAt: 0, viewport: 'phone', events: [{ index: 0, kind: 'zoom', at: 1, target, panels: [], loading: false }] };
+    const events = zoomedCaptionEvents(take, new Map([[0, 1]]), [{ start: 1, end: 4, box: target }], 6, 'left');
+    const blocked = events.filter((e) => e.besideBlockers?.length);
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0]).toMatchObject({ start: 1, end: 4 + DEFAULTS.video.zoomEaseSec });
+    const layout = phoneCaptions('left');
+    const v: SceneVoice = {
+      duration: 7,
+      phrases: [
+        { text: 'Before the zoom.', start: 0.1, end: 0.9 },
+        { text: 'During the zoom.', start: 2, end: 3.5 },
+        { text: 'Long after it.', start: 5.5, end: 6 },
+      ],
+      words: [],
+    };
+    const [before, during, after] = layoutCaptions({ id: 's' }, v, events, layout);
+    expect(before!.side).toBe('beside');
+    // Not beside during the hold: a plated side, with no reason (the magnified phone alone is no overlap to report).
+    expect(['bottom', 'top']).toContain(during!.side);
+    expect(during!.reason).toBeUndefined();
+    expect(after!.side).toBe('beside');
+    // The magnified phone does reach the column: the blocker overlaps it.
+    const span = blocked[0]!.besideBlockers![0]!;
+    expect(span.x + span.w).toBeGreaterThan(layout.beside!.x);
+  });
+
+  it('an unzoomed phone never blocks its own column', () => {
+    const take: Take = { file: 't.webm', flashAt: 0, viewport: 'phone', events: [{ index: 0, kind: 'click', at: 1, target: box(10, 20), panels: [], loading: false }] };
+    expect(zoomedCaptionEvents(take, new Map([[0, 1]]), [], 5, 'left').some((e) => e.besideBlockers)).toBe(false);
+  });
+
+  it('a quoted label ending in s is not a possessive', () => {
+    const text = 'Tap ‘Requests’ to see every request you have sent this month';
+    for (const l of splitCaption(text).flat()) expect(FUNCTION_WORDS.has(l.split(' ').at(-1)!.toLowerCase().replace(/[^a-z]/g, ''))).toBe(false);
+    for (const l of splitCaption("Open 'Settings' and then the tab for every saved report you shared").flat())
+      expect(FUNCTION_WORDS.has(l.split(' ').at(-1)!.toLowerCase().replace(/[^a-z]/g, ''))).toBe(false);
+  });
+
+  it('a.m., p.m., Co., Inc., No. and a bracketed e.g. are not clause breaks', () => {
+    const cases = [
+      'The report goes out at 9 a.m. every Monday to the whole finance team and the managers',
+      'Every invoice from Demo Co. lands in this list with its amount and its due date shown',
+      'Pick the item, (e.g. a laptop or a phone) and the team sends it to your desk the same week',
+      'Order No. 4417 is the one with the blue label and the delivery note attached to it',
+    ];
+    for (const text of cases) {
+      const lines = splitCaption(text).flat();
+      expect(lines.join(' ')).toBe(text);
+      for (const l of lines) expect(l, text).not.toMatch(/(?:a\.m\.|p\.m\.|Co\.|Inc\.|No\.|e\.g\.)$/);
+    }
   });
 });

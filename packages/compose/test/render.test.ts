@@ -340,6 +340,9 @@ describe('card look', () => {
     expect(inkOver(g, { x: 0, y: 400, w: 300, h: 100 }, 1920, 1080)).toBe('#FFFFFF');
     expect(inkOver(g, { x: 1620, y: 400, w: 300, h: 100 }, 1920, 1080)).toBe('#14161B');
     expect(inkOver(g, { x: 400, y: 400, w: 1100, h: 100 }, 1920, 1080)).toBeNull();
+    // Red to cyan: both ends pass with dark ink (4.5 and 9.2:1), but the greyish middle (3.5:1) does not.
+    // Read across the box, not only at its corners.
+    expect(inkOver({ kind: 'gradient', from: '#FF0000', to: '#00C8FF', angle: 90 }, { x: 0, y: 400, w: 1920, h: 100 }, 1920, 1080)).toBeNull();
   });
 
   it('gradient angles follow CSS: 135 runs from the top-left to the bottom-right', () => {
@@ -457,7 +460,7 @@ describe('renderVideo', () => {
 
   it('renders a card with a CSS-angle gradient background', async () => {
     const plan: ComposePlan = {
-      brand: { ...brand, cardFont: 'Georgia', background: { from: '#102030', to: '#F0E0D0' } },
+      brand: { ...brand, background: { from: '#102030', to: '#F0E0D0' } }, // Inter: bundled, so every render host has it
       cards: { entrance: 'reveal' },
       scenes: [{ kind: 'card', duration: 1.5, card: { variant: 'intro' } }],
     };
@@ -536,6 +539,38 @@ describe('renderVideo', () => {
       console.info(`scenecast: ${what} over a white photo, dim ${dim ?? 'default'}: ${contrast.toFixed(2)}:1`);
       expect(contrast, what).toBeGreaterThanOrEqual(4.5);
     }
+  }, 180_000);
+
+  it('sets text in the bundled Inter, checked in the page before the first frame', async () => {
+    const plan: ComposePlan = {
+      brand,
+      scenes: [{ kind: 'card', duration: 1, card: { variant: 'chapter', title: 'Fonts' },
+        cues: [{ start: 0, end: 1, lines: ['Set in Inter'], side: 'bottom', box: { x: 660, y: 916, w: 600, h: 93 } }] }],
+    };
+    const logs: string[] = [];
+    await renderVideo(plan, path.join(dir, 'fonts.mp4'), { onLog: (l) => logs.push(l) });
+    // The page loaded the bundled face and document.fonts.check passed for it.
+    expect(logs.some((l) => l.includes('scenecast fonts: "Inter" ok'))).toBe(true);
+  }, 180_000);
+
+  it('fails the render, naming the font, when a brand font is not available', async () => {
+    const plan: ComposePlan = { brand: { ...brand, font: 'Nowhere Sans Scenecast' }, scenes: [{ kind: 'card', duration: 1, card: { variant: 'chapter', title: 'Fonts' } }] };
+    await expect(renderVideo(plan, path.join(dir, 'nofont.mp4'))).rejects.toThrow(/font "Nowhere Sans Scenecast" is not available/);
+  }, 180_000);
+
+  it('draws a phone scene on the brand stage, the phone at 30% of the width', async () => {
+    const plan: ComposePlan = {
+      brand: { ...brand, background: '#223344' },
+      phoneAlign: 'left',
+      scenes: [{ kind: 'app', duration: 1, phone: true, segments: [{ src: fixture, srcIn: 0.6, srcOut: 1.6, outStart: 0 }] }],
+    };
+    const out = path.join(dir, 'phone-stage.mp4');
+    await renderVideo(plan, out);
+    const near = (got: number[], want: number[]) => Math.max(...got.map((c, i) => Math.abs(c - want[i]!)));
+    // The stage left of the phone and far right of it is the brand colour; the phone's centre shows the take.
+    for (const [x, y] of [[40, 540], [1860, 100], [1300, 900]] as const)
+      expect(near(await pixel(out, 0.5, x, y), [0x22, 0x33, 0x44]), `stage at ${x},${y}`).toBeLessThanOrEqual(8);
+    expect(near(await pixel(out, 0.5, 572, 536), [0x22, 0x33, 0x44])).toBeGreaterThan(30);
   }, 180_000);
 
   it('shows the recording on frame 0 of an app scene (not a blank frame)', async () => {

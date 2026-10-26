@@ -7,7 +7,25 @@
 
   const CURSOR_PX = 28;
   /** Touch mode (phone takes): a soft fingertip circle instead of the arrow. */
-  const TOUCH = { px: 34, fill: 'rgba(255,255,255,0.55)', ring: 'rgba(20,20,30,0.5)', pressScale: 0.85, pressMs: 90, fadeOutMs: 250 };
+  // Touch mode (phone takes): a dot in the brand accent instead of the arrow. A 40% accent fill, a 3 px solid accent
+  // ring and a soft dark shadow, so it reads on white UI and on dark UI alike. The recorder passes the accent
+  // (`__scenecastTouchColour`, a #rgb or #rrggbb hex) in the same init script that turns touch mode on.
+  const accentHex = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(window.__scenecastTouchColour || '') ? window.__scenecastTouchColour : '#F5C518';
+  const rgb = (() => {
+    const h = accentHex.slice(1);
+    const full = h.length === 3 ? [...h].map((c) => c + c).join('') : h;
+    return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16)).join(',');
+  })();
+  const TOUCH = {
+    px: 34,
+    fill: `rgba(${rgb},0.4)`,
+    ring: accentHex,
+    ringPx: 3,
+    shadow: '0 2px 8px rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.18)',
+    pressScale: 0.85,
+    pressMs: 90,
+    fadeOutMs: 250,
+  };
   // The recorder sets this in an init script before the overlay runs, so every document of a phone take starts in touch mode.
   let mode = window.__scenecastInitMode === 'touch' ? 'touch' : 'mouse';
   const RING = { color: '#F5C518', width: 3, opacity: 0.9, fadeMs: 150, radius: 10 };
@@ -32,7 +50,8 @@
       .flash { position: fixed; inset: 0; background: #FF00FF; }
       .touch { position: absolute; left: 0; top: 0; width: ${TOUCH.px}px; height: ${TOUCH.px}px; box-sizing: border-box;
         margin: ${-TOUCH.px / 2}px 0 0 ${-TOUCH.px / 2}px; border-radius: 50%; background: ${TOUCH.fill};
-        box-shadow: 0 0 0 2px ${TOUCH.ring}; opacity: 0; display: none; will-change: transform, opacity; }
+        border: ${TOUCH.ringPx}px solid ${TOUCH.ring}; box-shadow: ${TOUCH.shadow};
+        opacity: 0; display: none; will-change: transform, opacity; }
       .nudge { position: absolute; left: 0; top: 0; width: 1px; height: 1px; background: #000; opacity: 0.01; }
     </style>
     <div class="layer">
@@ -87,7 +106,7 @@
    * Fades the indicator at (x, y) from opacity `from` (at epoch ms `start`) to 1 at `endAt`, then presses it to 0.85
    * and fades it out. Timed on the epoch clock, so a tap that navigates carries on in the next document.
    */
-  function animateTouch(x, y, start, endAt, from) {
+  function animateTouch(x, y, start, endAt, from, press) {
     const run = ++touchRun;
     touchEl.style.display = 'block';
     touchEl.style.left = `${x}px`;
@@ -101,7 +120,8 @@
       else {
         const after = t - endAt;
         const p = Math.min(1, after / TOUCH.pressMs);
-        scale = 1 - (1 - TOUCH.pressScale) * (1 - (1 - p) * (1 - p));
+        // A hover shows the finger resting there: no press.
+        if (press !== false) scale = 1 - (1 - TOUCH.pressScale) * (1 - (1 - p) * (1 - p));
         opacity = after <= TOUCH.pressMs ? 1 : Math.max(0, 1 - (after - TOUCH.pressMs) / TOUCH.fadeOutMs);
       }
       touchEl.style.opacity = String(opacity);
@@ -142,7 +162,7 @@
     try {
       t = JSON.parse(sessionStorage.getItem(TOUCH_KEY) || 'null');
     } catch {}
-    if (t && touchRun === 0 && now() < t.endAt + TOUCH.pressMs + TOUCH.fadeOutMs) animateTouch(t.x, t.y, t.start, t.endAt, t.from);
+    if (t && touchRun === 0 && now() < t.endAt + TOUCH.pressMs + TOUCH.fadeOutMs) animateTouch(t.x, t.y, t.start, t.endAt, t.from, t.press);
   }
   if (document.documentElement) mount();
   else document.addEventListener('readystatechange', mount, { once: true });
@@ -162,16 +182,16 @@
      * Touch indicator at (x, y): fades in until epoch ms `endAt` (the tap), presses down to 0.85 and fades out
      * over 250 ms. Calling it again while one shows moves that one there and restarts its timing.
      */
-    touch(x, y, endAt) {
+    touch(x, y, endAt, press = true) {
       mount();
       const start = now();
       const from = endAt > start && touchEl.style.display === 'block' ? Number(touchEl.style.opacity) || 0 : 0;
       pos = { x, y };
       remember();
       try {
-        sessionStorage.setItem(TOUCH_KEY, JSON.stringify({ x, y, start, endAt, from }));
+        sessionStorage.setItem(TOUCH_KEY, JSON.stringify({ x, y, start, endAt, from, press }));
       } catch {}
-      animateTouch(x, y, start, endAt, from);
+      animateTouch(x, y, start, endAt, from, press);
     },
     /** Put the cursor at (x, y) CSS px with no visible travel. */
     cursor(x, y) {

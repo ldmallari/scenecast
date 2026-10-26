@@ -17,6 +17,9 @@ production set in `py/uv.lock`), and fails when one of them:
   text it reviewed (when the package's metadata later changes, the entry stops applying and the check fails);
 - is missing from the tables below.
 
+Bundled fonts (see below) are checked the same way, against the font licence OFL-1.1, which is accepted for fonts
+only.
+
 A few permissive licences outside the allow-list (MIT-0, MIT-CMU, Zlib, PSF-2.0, CNRI-Python) pass only through a
 reviewed override, never on metadata alone. A tool binary that scenecast runs as a separate program passes only through
 an override marked `tool`. The test suite runs the check on fixtures and, once `scenecast doctor`
@@ -34,6 +37,16 @@ Downloaded by `scenecast doctor` into `~/.cache/scenecast/` (never committed, ne
 | spaCy `en_core_web_sm` 3.8.0 (installed as a Python package) | MIT | https://github.com/explosion/spacy-models |
 | CMU Pronouncing Dictionary (NLTK data `cmudict`) | BSD-2-Clause-style (the licence is in its README) | https://github.com/cmusphinx/cmudict |
 | NLTK averaged perceptron tagger (NLTK data `averaged_perceptron_tagger`, `averaged_perceptron_tagger_eng`) | not stated in the download; distributed by the NLTK data project | https://github.com/nltk/nltk_data |
+
+## Bundled fonts
+
+Shipped in `packages/compose/fonts/` (listed in its `fonts.json`, with each file's SHA-256) so captions and cards
+render in the same typeface on every machine, offline. The check above reads `fonts.json`: each font must carry a
+font licence (SIL OFL 1.1) and ship with its licence text.
+
+| Font | Licence | Source |
+|---|---|---|
+| `Inter` 4.1 (`InterVariable.woff2`, licence in `Inter-OFL.txt`) | OFL-1.1 | https://github.com/rsms/inter/releases/tag/v4.1 |
 
 ## Code derived from other projects
 

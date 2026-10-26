@@ -20,6 +20,10 @@ import {
   type ScheduledStep,
   type Segment,
   type CardsCfg,
+  type CursorCfg,
+  type ScheduleOpts,
+  spotPoint,
+  travelSecFor,
   type PhoneAlign,
   type PhoneCfg,
   type Take,
@@ -27,6 +31,21 @@ import {
   zoomedCaptionEvents as captionEvents,
 } from '@scenecast/core';
 import type { ComposePlan, PlanScene, Timed } from '@scenecast/compose';
+
+/**
+ * How a scene's steps are scheduled. Desktop scenes park the cursor between distant pointer steps (unless
+ * `cursor.park` is off); phone scenes never park (there is no cursor; the touch indicator fades by itself) and tap
+ * with no glide, the touch indicator fading in for the touch lead.
+ */
+export function scheduleOptsFor(scene: Scene, cursor: CursorCfg, sceneEnd: number): ScheduleOpts {
+  const phone = scene.viewport === 'phone';
+  const parkSpot = phone || cursor.park === 'off' ? undefined : cursor.park;
+  return {
+    travelSec: (step) => travelSecFor(step, { touch: phone }),
+    ...(parkSpot ? { park: { to: spotPoint(parkSpot, { width: DEFAULTS.video.width, height: DEFAULTS.video.height }), afterSec: cursor.parkAfterSec } } : {}),
+    sceneEnd,
+  };
+}
 
 // The zoom-aware caption events live in core (captions.ts); re-exported for the CLI's tests and callers.
 export { onScreen, captionEvents };

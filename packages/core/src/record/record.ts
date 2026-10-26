@@ -20,6 +20,9 @@ const PARK_GLIDE_MS = DEFAULT_TRAVEL_SEC * 1000;
 const CURSOR_PX = 28;
 /** Where the arrow's tip sits inside its 28 px box (see overlay.js). */
 const CURSOR_TIP = { x: 3, y: 2 };
+/** The touch indicator's colour when the caller gives none (the highlight ring's yellow). */
+const DEFAULT_TOUCH_COLOUR = '#F5C518';
+const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 /** Phone takes show taps with a touch indicator of this size (see overlay.js), centred on the tap. */
 const TOUCH_PX = DEFAULTS.phone.touchPx;
 /** The flash stays up this long: 2 frames of a 25 fps webm plus a vsync. */
@@ -142,7 +145,7 @@ export interface Take {
 
 interface OverlayApi {
   mode(m: 'mouse' | 'touch'): void;
-  touch(x: number, y: number, endAt: number): void;
+  touch(x: number, y: number, endAt: number, press?: boolean): void;
   cursor(x: number, y: number): void;
   moveTo(x: number, y: number, endAt: number): void;
   ripple(x: number, y: number): void;
@@ -155,6 +158,8 @@ declare global {
     __scenecast: OverlayApi;
     /** Set by an init script before the overlay runs: phone takes start in touch mode. */
     __scenecastInitMode?: 'touch';
+    /** The touch indicator's colour (the brand accent), set in the same init script. */
+    __scenecastTouchColour?: string;
   }
 }
 
@@ -447,6 +452,8 @@ export async function recordScene(
   opts: {
     minTakeSec?: number;
     cursor?: CursorCfg;
+    /** The touch indicator's colour on phone takes: the brand accent, a #rgb or #rrggbb hex. */
+    touchColour?: string;
     /** The wall clock the browser stamps video frames with (default `Date.now`); tests replace it to step it. */
     wallClock?: () => number;
   } = {},
@@ -474,7 +481,11 @@ export async function recordScene(
     });
     await applyAppContext(context, app, { sessionFile: storageState });
     // Phone takes tap: the overlay starts every document in touch mode (no arrow; a touch indicator per tap).
-    if (phone) await context.addInitScript({ content: "window.__scenecastInitMode = 'touch';" });
+    if (phone) {
+      const colour = opts.touchColour ?? DEFAULT_TOUCH_COLOUR;
+      if (!HEX.test(colour)) throw new Error(`scene "${scene.id}": the touch colour must be a #rgb or #rrggbb hex (brand.accent is ${JSON.stringify(colour)})`);
+      await context.addInitScript({ content: `window.__scenecastInitMode = 'touch'; window.__scenecastTouchColour = ${JSON.stringify(colour)};` });
+    }
     await context.addInitScript({ content: OVERLAY_JS });
     let take: Omit<Take, 'file'>;
     let page: Page | undefined;
@@ -632,12 +643,12 @@ async function runTake(
    * Touch: no glide. The indicator fades in at `p` from `due` (Node epoch ms) and is full when the tap comes, `travel` s
    * later (the touch lead). Set off late, the fade is compressed the same way a glide is. Returns the tap time.
    */
-  const touchAt = async (p: Point, due: number, travel: number): Promise<number> => {
+  const touchAt = async (p: Point, due: number, travel: number, press = true): Promise<number> => {
     await freshOffset();
     await sleepUntil(due);
     const arrive = Math.max(due + travel * 1000, epoch() + travel * 500);
     cursor = { ...p };
-    quiet(page.evaluate(([x, y, end]) => window.__scenecast.touch(x, y, end), [p.x, p.y, arrive + offset] as const));
+    quiet(page.evaluate(([x, y, end, pr]) => window.__scenecast.touch(x, y, end, pr), [p.x, p.y, arrive + offset, press] as const));
     return arrive;
   };
 
@@ -691,7 +702,9 @@ async function runTake(
       // Each step glides for its own travel. With none (pre-positioned) the cursor is already on the
       // target: no glide and no lead, and the action fires at `due`.
       // On a phone the indicator fades in on the target instead (with no lead, a pre-positioned tap shows it at the tap).
-      const arrive = travel > 0 ? await (touch ? touchAt : glideTo)(centre(m.first), due, travel) : due;
+      // A hover on a phone shows the finger resting on the target without a press.
+      const press = step.do !== 'hover';
+      const arrive = travel > 0 ? (touch ? await touchAt(centre(m.first), due, travel, press) : await glideTo(centre(m.first), due, travel)) : due;
       await sleepUntil(arrive - AIM_CHECK_MS);
       m = await aim(m, sels, scene.id, index);
       if (ringM) ringM = await boxesOf(ringM.els, ringSels, scene.id, index);
@@ -704,7 +717,7 @@ async function runTake(
       if (touch && (travel === 0 || Math.abs(aimed.x - cursor.x) > 1 || Math.abs(aimed.y - cursor.y) > 1)) {
         // The indicator on the target as it is now: moved there if the target moved, shown now if there was no lead.
         cursor = aimed;
-        quiet(page.evaluate(([x, y, end]) => window.__scenecast.touch(x, y, end), [aimed.x, aimed.y, arrive + offset] as const));
+        quiet(page.evaluate(([x, y, end, pr]) => window.__scenecast.touch(x, y, end, pr), [aimed.x, aimed.y, arrive + offset, press] as const));
       }
       await sleepUntil(arrive);
       ev.at = stamp(ev);

@@ -166,13 +166,15 @@ function colourAt(bg: Exclude<ResolvedBackground, { kind: 'image' }>, x: number,
  */
 export function inkOver(bg: ResolvedBackground, box: { x: number; y: number; w: number; h: number }, width: number, height: number): string | null {
   if (bg.kind === 'image') return null;
-  const corners = [
-    [box.x, box.y],
-    [box.x + box.w, box.y],
-    [box.x, box.y + box.h],
-    [box.x + box.w, box.y + box.h],
-  ].map(([x, y]) => luminanceOf(colourAt(bg, x! - width / 2, y! - height / 2, width, height)));
-  const worst = (ink: string) => Math.min(...corners.map((l) => contrast(l, luminanceOf(channels(ink)))));
+  // A grid across the box, not just its corners: a gradient between two hues can be darkest or lightest inside it.
+  const STEPS = 8;
+  const samples: number[] = [];
+  for (let i = 0; i <= STEPS; i++)
+    for (let j = 0; j <= STEPS; j++) {
+      const [x, y] = [box.x + (box.w * i) / STEPS, box.y + (box.h * j) / STEPS];
+      samples.push(luminanceOf(colourAt(bg, x - width / 2, y - height / 2, width, height)));
+    }
+  const worst = (ink: string) => Math.min(...samples.map((l) => contrast(l, luminanceOf(channels(ink)))));
   const ink = worst(LIGHT_INK) >= worst(DARK_INK) ? LIGHT_INK : DARK_INK;
   return worst(ink) >= 4.5 ? ink : null;
 }

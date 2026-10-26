@@ -154,6 +154,13 @@ describe('v1.1 scene fields', () => {
     expect(() => parseScene(one([{ cue: 'open', do: 'ring', sel: '.a', ringSel: '.b' }]))).toThrow('ringSel and ringMs are for click, type, hover and check steps');
     expect(() => parseScene(one([{ cue: 'open', do: 'click', sel: '.a', at: 'left' }]))).toThrow('at is for park steps');
   });
+  it('a park step on a phone scene is rejected, pointing to wait', () => {
+    expect(() => parseScene(one([{ cue: 'open', do: 'park' }], { viewport: 'phone' }))).toThrow(
+      'park has no effect on a phone scene (there is no cursor; the touch indicator fades by itself); use wait to hold',
+    );
+    expect(() => parseScene(one([{ cue: 'open', do: 'wait', ms: 500 }], { viewport: 'phone' }))).not.toThrow();
+  });
+
   it('park and check steps and their fields are accepted; ringSel does not set ring', () => {
     const s = parseScene(one([
       { cue: 'open', do: 'park', at: { x: 10, y: 20 }, glideMs: 300 },

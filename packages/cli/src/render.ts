@@ -22,8 +22,6 @@ import {
   sceneWarnings,
   sessionStoragePath,
   splitPhrases,
-  spotPoint,
-  travelSecFor,
   type AuditCounts,
   type Scene,
   type SceneVoice,
@@ -32,7 +30,7 @@ import {
 } from '@scenecast/core';
 import { renderVideo } from '@scenecast/compose';
 import { buildVoiceTrack } from './audio.js';
-import { buildVideo, chaptersTxt, finalSrt, type BuiltVideo, type Recorded, type SceneInput } from './build.js';
+import { buildVideo, chaptersTxt, finalSrt, scheduleOptsFor, type BuiltVideo, type Recorded, type SceneInput } from './build.js';
 import { StageCache } from './cache.js';
 
 export interface RenderOptions {
@@ -212,24 +210,14 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
       inputs.push({ scene, voice, ...(image ? { cardImage: image } : {}) });
       continue;
     }
-    // Desktop scenes park the cursor between distant pointer steps; phone scenes never do (the touch indicator fades).
-    const parkSpot = scene.viewport === 'phone' || spec.cursor.park === 'off' ? undefined : spec.cursor.park;
-    const scheduled: ScheduledStep[] = schedule(scene, voice, {
-      // A phone taps: no glide, the touch indicator fades in for the touch lead.
-      travelSec: (step) => travelSecFor(step, { touch: scene.viewport === 'phone' }),
-      park: parkSpot && {
-        to: spotPoint(parkSpot, { width: DEFAULTS.video.width, height: DEFAULTS.video.height }),
-        afterSec: spec.cursor.parkAfterSec,
-      },
-      sceneEnd: voice.duration,
-    });
+    const scheduled: ScheduledStep[] = schedule(scene, voice, scheduleOptsFor(scene, spec.cursor, voice.duration));
     const app = spec.app;
     const seedFile = app.seed && path.isAbsolute(app.seed) && fs.existsSync(app.seed) ? app.seed : undefined;
     // The take runs at least as long as the scene it fills (voice, breath) plus a tail, so retime never runs out of frames.
     const minTakeSec = voice.duration + DEFAULTS.video.breathSec + DEFAULTS.video.takeTailSec;
     const { result: recorded } = await cache.run<Recorded>({
       name: `record/${scene.id}`,
-      input: { scene, scheduled, app, cursor: spec.cursor, minTakeSec },
+      input: { scene, scheduled, app, cursor: spec.cursor, minTakeSec, ...(scene.viewport === 'phone' ? { touchColour: spec.brand.accent } : {}) },
       files: [...appFiles(app), ...(seedFile ? [seedFile] : [])],
       run: async (dir) => {
         if (app.seed && !seeded) {
@@ -248,7 +236,7 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
         };
         process.once('exit', removeSession);
         try {
-          take = await recordScene(scene, scheduled, app, dir, { minTakeSec, cursor: spec.cursor });
+          take = await recordScene(scene, scheduled, app, dir, { minTakeSec, cursor: spec.cursor, touchColour: spec.brand.accent });
         } finally {
           removeSession();
           process.removeListener('exit', removeSession);

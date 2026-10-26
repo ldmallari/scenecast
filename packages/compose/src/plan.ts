@@ -2,6 +2,7 @@
 // page uses live in timing.ts, which stays free of Node imports.
 import { DEFAULTS, phoneToFrame, type Box, type Brand, type CardsCfg, type Cue, type NavBox, type PhoneAlign, type Segment } from '@scenecast/core';
 export { clampZoom } from '@scenecast/core';
+import type { PageFonts } from './fonts.js';
 export { CARD_BAR_W, easeInOutCubic, entranceAt, gradientLine, inkOver, ringAlpha, sceneOpacity, srcTimeAt, zoomBoxAt, type CardPart, type PartLook } from './timing.js';
 
 /** Something shown from `start` to `end` (scene seconds) around `box` (frame px; take px on phone scenes). */
@@ -95,8 +96,13 @@ export interface ResolvedPlan {
   background: ResolvedBackground;
   cardFont: string;
   entrance: CardsCfg['entrance'];
+  /** The fonts the page loads (bundled faces) and must find (every family the plan names). */
+  fonts: PageFonts;
   /** Phone take rectangle in frame px (where `phoneAlign` puts it). */
   phoneRect: Box;
+  phoneAlign: PhoneAlign;
+  /** The phone body drawn around the screen (`DEFAULTS.phone.bezelPx`; captions keep their gap from it). */
+  phoneBezel: number;
   scenes: (PlanScene & SceneTiming)[];
 }
 

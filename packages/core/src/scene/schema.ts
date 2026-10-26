@@ -30,7 +30,8 @@ export const DEFAULTS = {
     truePeakTargetDb: -2,
     musicFadeSec: 4,
   },
-  phone: { width: 390, height: 844, align: 'left', touchPx: 34, touchLeadSec: 0.25, centreShare: 0.3 },
+  /** `bezelPx`: the phone body the composer draws around the screen, in frame px. */
+  phone: { width: 390, height: 844, align: 'left', touchPx: 34, touchLeadSec: 0.25, centreShare: 0.3, bezelPx: 14 },
   cards: { introSec: 3, outroSec: 3, entrance: 'reveal' },
   /** `brand.background`: a gradient's angle (CSS degrees: 0 points up, 135 runs top-left to bottom-right) and an image's black overlay. */
   background: { angle: 135, dim: 0.35 },
@@ -257,6 +258,8 @@ function checkStepFields(scene: SceneIn, si: number, ctx: z.RefinementCtx): void
     if ((step.ringSel !== undefined || step.ringMs !== undefined) && !pointer.includes(step.do))
       bad('ringSel and ringMs are for click, type, hover and check steps');
     if (step.at !== undefined && step.do !== 'park') bad('at is for park steps');
+    if (step.do === 'park' && scene.viewport === 'phone')
+      bad('park has no effect on a phone scene (there is no cursor; the touch indicator fades by itself); use wait to hold');
     if ((step.by !== undefined || step.to !== undefined) && step.do !== 'scroll')
       bad('by and to are for scroll steps');
     if (step.do === 'scroll' && [step.sel, step.by, step.to].filter((v) => v !== undefined).length > 1)

@@ -23,6 +23,12 @@ const REPO = fileURLToPath(new URL('..', import.meta.url));
 export const ALLOWED = ['MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC', 'MPL-2.0', 'Python-2.0', '0BSD', 'CC0-1.0'];
 const LGPL = /^LGPL(-[23]\.[01])?(-only|-or-later|\+)?$/;
 
+/**
+ * Font licences, accepted for bundled fonts only (packages/compose/fonts): the SIL Open Font License permits
+ * bundling and use in rendered output; it is not a licence for code.
+ */
+export const FONT_ALLOWED = ['OFL-1.1'];
+
 /** Permissive licences accepted only for a package with a reviewed override (never on metadata alone). */
 export const REVIEWED_ONLY = ['MIT-0', 'MIT-CMU', 'Zlib', 'PSF-2.0', 'CNRI-Python'];
 
@@ -193,6 +199,13 @@ export function checkPackages(packages, { thirdParty, overrides }) {
         const r = evaluate(override.licence ?? '', REVIEWED_ONLY);
         if (!r.ok) problems.push(`licence ${override.licence} is not allowed (${r.offending.join(', ')})`);
       }
+    } else if (pkg.ecosystem === 'font') {
+      // A bundled font: its manifest names the licence; the font and its licence text must ship together.
+      how = 'bundled font';
+      const r = evaluate(licence ?? '', FONT_ALLOWED);
+      if (licence === undefined) problems.push('its fonts.json entry names no licence');
+      else if (!r.ok) problems.push(`licence ${licence} is not allowed for a font (${r.offending.join(', ')})`);
+      if (pkg.missing?.length) problems.push(`missing from the repository: ${pkg.missing.join(', ')}`);
     } else if (licence === undefined) {
       problems.push(`no licence in its metadata (raw: ${JSON.stringify(pkg.licence ?? pkg.candidates ?? null)}); add a reviewed override`);
     } else {
@@ -214,6 +227,19 @@ function npmPackages() {
   for (const [licence, list] of Object.entries(byLicence))
     for (const p of list) for (const version of p.versions) pkgs.push({ ecosystem: 'npm', name: p.name, version, licence });
   return pkgs;
+}
+
+/** The fonts bundled in packages/compose/fonts (fonts.json), with any of their files that are missing. */
+function fontPackages() {
+  const dir = path.join(REPO, 'packages/compose/fonts');
+  const { fonts } = JSON.parse(fs.readFileSync(path.join(dir, 'fonts.json'), 'utf8'));
+  return fonts.map((f) => ({
+    ecosystem: 'font',
+    name: f.family,
+    version: f.version,
+    licence: f.licence,
+    missing: [f.file, f.licenceFile].filter((file) => !file || !fs.existsSync(path.join(dir, file))),
+  }));
 }
 
 const PY_META = `
@@ -266,7 +292,7 @@ async function pythonPackages() {
 async function main() {
   const thirdParty = fs.readFileSync(path.join(REPO, 'THIRD_PARTY.md'), 'utf8');
   const overrides = JSON.parse(fs.readFileSync(path.join(REPO, 'scripts/licence-overrides.json'), 'utf8'));
-  const packages = [...npmPackages(), ...(await pythonPackages())];
+  const packages = [...npmPackages(), ...(await pythonPackages()), ...fontPackages()];
   const rows = checkPackages(packages, { thirdParty, overrides });
   const failed = rows.filter((r) => !r.ok);
   const count = (eco) => rows.filter((r) => r.ecosystem === eco).length;
@@ -274,7 +300,7 @@ async function main() {
     console.log(`  reviewed  ${r.ecosystem} ${r.name}@${r.version}: ${r.licence} (${r.how})`);
   for (const r of failed) console.log(`  FAIL      ${r.ecosystem} ${r.name}@${r.version}: ${r.problems.join('; ')}`);
   console.log(
-    `check-licences: ${failed.length ? 'FAIL' : 'PASS'} (${count('npm')} npm and ${count('python')} Python production packages, ${failed.length} failing)`,
+    `check-licences: ${failed.length ? 'FAIL' : 'PASS'} (${count('npm')} npm and ${count('python')} Python production packages, ${count('font')} bundled fonts, ${failed.length} failing)`,
   );
   return failed.length ? 1 : 0;
 }

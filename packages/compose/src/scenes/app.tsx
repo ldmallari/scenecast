@@ -12,7 +12,7 @@ type Scene = ResolvedPlan['scenes'][number];
 
 const CAPTION = { fontPx: 44, lineHeight: 1.3, padX: 28, padY: 18, radius: 14, fill: 'rgba(20,20,30,0.82)', fade: 0.1 };
 const RING = { color: '#F5C518', width: 3, radius: 10 };
-const PHONE = { bezel: 14, radius: 58, body: '#16181D', edge: 'rgba(255,255,255,0.16)', screenRadius: 44 };
+const PHONE = { radius: 58, body: '#16181D', edge: 'rgba(255,255,255,0.16)', screenRadius: 44 };
 
 export const SYSTEM_SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif';
 export const fontStack = (font: string) => `"${font.replace(/"/g, '')}", ${SYSTEM_SANS}`;
@@ -39,8 +39,8 @@ export function caption(cue: Cue, plan: ResolvedPlan, local: () => number) {
   const lh = CAPTION.fontPx * CAPTION.lineHeight;
   const top = -cue.box.h / 2 + CAPTION.padY + lh / 2;
   const beside = cue.side === 'beside';
-  // Beside the phone: the column is right of the frame's centre when the phone is on the left.
-  const align = beside ? (c.x > 0 ? -1 : 1) : 0;
+  // Beside the phone: against the phone, so left-aligned right of a left phone and right-aligned left of a right one.
+  const align = beside ? (plan.phoneAlign === 'right' ? 1 : -1) : 0;
   const ink = beside ? inkOver(plan.background, cue.box, plan.width, plan.height) : null;
   const lineX = align * (cue.box.w / 2 - CAPTION.padX);
   return (
@@ -98,8 +98,8 @@ export function appScene(scene: Scene, plan: ResolvedPlan, time: () => number): 
     <Rect
       x={screenCentre.x}
       y={screenCentre.y}
-      width={screen.w + 2 * PHONE.bezel}
-      height={screen.h + 2 * PHONE.bezel}
+      width={screen.w + 2 * plan.phoneBezel}
+      height={screen.h + 2 * plan.phoneBezel}
       radius={PHONE.radius}
       fill={PHONE.body}
       stroke={PHONE.edge}

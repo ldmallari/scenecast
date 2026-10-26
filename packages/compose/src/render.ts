@@ -1,6 +1,7 @@
 // Node side of the composer: prepares media, resolves the plan and drives Revideo's headless
 // renderer (or its editor, for `preview`). Writes a SILENT MP4; audio is muxed later (Task 9).
 import { execFile, execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +11,7 @@ import { promisify } from 'node:util';
 import { DEFAULTS, ensureToolchain, phoneScreen } from '@scenecast/core';
 import { clampZoom, inFramePixels, resolveLook, timeline, type ComposePlan, type ResolvedPlan } from './plan.js';
 import { runRevideo } from './supervise.js';
+import type { BundledFont } from './fonts.js';
 export { runRevideo, STALL_SEC } from './supervise.js';
 
 // Revideo phones home by default; scenecast never sends telemetry (the editor in `preview` runs here).
@@ -19,6 +21,37 @@ const run = promisify(execFile);
 const require = createRequire(import.meta.url);
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PROJECT_FILE = path.join(PKG_DIR, 'src', 'project.ts');
+const FONTS_DIR = path.join(PKG_DIR, 'fonts');
+
+interface FontEntry {
+  family: string;
+  file: string;
+  weight: string;
+  sha256: string;
+}
+
+/** The fonts bundled with scenecast (packages/compose/fonts/fonts.json): loaded by every render, offline. */
+export function bundledFonts(): FontEntry[] {
+  return (JSON.parse(fs.readFileSync(path.join(FONTS_DIR, 'fonts.json'), 'utf8')) as { fonts: FontEntry[] }).fonts;
+}
+
+/** Copies the bundled fonts the plan's families name into `publicDir/fonts` (checking each file's hash). */
+function serveFonts(families: string[], publicDir: string): BundledFont[] {
+  const wanted = new Set(families.map((f) => f.toLowerCase()));
+  const out: BundledFont[] = [];
+  for (const f of bundledFonts()) {
+    if (!wanted.has(f.family.toLowerCase())) continue;
+    const src = path.join(FONTS_DIR, f.file);
+    const data = fs.readFileSync(src);
+    const sha = createHash('sha256').update(data).digest('hex');
+    if (sha !== f.sha256) throw new Error(`bundled font ${f.file} is damaged (sha256 ${sha}, expected ${f.sha256})`);
+    fs.mkdirSync(path.join(publicDir, 'fonts'), { recursive: true });
+    fs.writeFileSync(path.join(publicDir, 'fonts', f.file), data);
+    out.push({ family: f.family, url: `/fonts/${f.file}`, weight: f.weight });
+  }
+  return out;
+}
+
 /** Requires modules as @revideo/ffmpeg sees them (fluent-ffmpeg, the ffprobe installer). */
 const ffmpegRequire = () => createRequire(createRequire(require.resolve('@revideo/renderer')).resolve('@revideo/ffmpeg'));
 
@@ -109,6 +142,8 @@ async function resolvePlan(plan: ComposePlan, publicDir: string, ffmpeg: string,
     cardImages.set(img, url);
   }
 
+  const look = resolveLook(plan, { logoUrl, backgroundUrl });
+  const required = [...new Set([plan.brand.font, look.cardFont])];
   // The phone where the plan places it; its boxes are mapped with the same alignment (captions and the audit agree).
   const align = plan.phoneAlign ?? 'center';
   const phoneRect = phoneScreen(align);
@@ -117,8 +152,11 @@ async function resolvePlan(plan: ComposePlan, publicDir: string, ffmpeg: string,
     total: tl.total,
     brand: plan.brand,
     logoUrl,
-    ...resolveLook(plan, { logoUrl, backgroundUrl }),
+    ...look,
+    fonts: { bundled: serveFonts(required, publicDir), required },
     phoneRect,
+    phoneAlign: align,
+    phoneBezel: DEFAULTS.phone.bezelPx,
     scenes: plan.scenes.map((s) => inFramePixels(s, align)).map((s, i) => {
       if (s.kind === 'card' && !s.card) throw new Error(`scene ${i}: card scene needs \`card\``);
       if (s.kind === 'card' && s.card!.variant !== 'intro' && !s.card!.title) throw new Error(`scene ${i}: ${s.card!.variant} card needs a title`);
