@@ -236,6 +236,20 @@ def test_caption_overlapping_open_panel_fails(tmp_path):
     assert only_row(run(fixture(tmp_path, events=later, cues=early_cue)))["verdict"] == "PASS"
 
 
+def test_corner_caption_is_checked_by_its_box_and_named_in_the_table(tmp_path):
+    panel = {"x": 600, "y": 820, "w": 700, "h": 200}
+    ev = [event(boxes=[{"kind": "target", "box": TARGET}, {"kind": "panel", "box": panel}])]
+    left = {"x": 72, "y": 915, "w": 322, "h": 93}  # bottom-left: the bottom box's size, 72 px from the left
+    clear = run(fixture(tmp_path, events=ev, cues=[{"start": 0.5, "end": 2.5, "side": "bottom-left", "box": left, "text": "Press Save."}]))
+    assert only_row(clear)["verdict"] == "PASS"
+    assert only_row(clear)["captionSide"] == "bottom-left"
+    assert "| bottom-left |" in (tmp_path / "audit" / "audit-table.md").read_text()
+    right = {"x": 1920 - 72 - 960, "y": 915, "w": 960, "h": 93}  # a wide bottom-right box reaches the panel
+    hit = only_row(run(fixture(tmp_path, events=ev, cues=[{"start": 0.5, "end": 2.5, "side": "bottom-right", "box": right, "text": "x"}])))
+    cap = next(c for c in hit["checks"] if c["name"] == "captions")
+    assert cap["verdict"] == "FAIL" and "(bottom-right) covers the panel" in cap["detail"]
+
+
 def test_caption_with_layout_reason_fails_and_zoom_moves_the_target(tmp_path):
     bottom = {"x": 600, "y": 900, "w": 720, "h": 100}
     reason = [{"start": 0.5, "end": 2.5, "side": "bottom", "box": bottom, "text": "x", "reason": "both sides overlap the target; bottom overlaps less"}]

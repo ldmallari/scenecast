@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { eventsForCaptions, fillsScreen, layoutCaptions, parseSrt, toSrt, zoomedCaptionEvents, type CaptionEvent } from '../src/captions.js';
+import {
+  DESKTOP_CAPTIONS,
+  eventsForCaptions,
+  fillsScreen,
+  FUNCTION_WORDS,
+  layoutCaptions,
+  parseSrt,
+  splitCaption,
+  toSrt,
+  zoomedCaptionEvents,
+  type CaptionEvent,
+} from '../src/captions.js';
 import { phoneFrame, phoneToFrame } from '../src/frame.js';
 import type { Take } from '../src/record/record.js';
 import { travelSecFor, type ScheduledStep } from '../src/schedule.js';
@@ -107,19 +118,22 @@ describe('captions', () => {
     expect(cue!.reason).toBeUndefined();
   });
 
+  // Boxes over all four corner positions of a short caption, so only bottom and top are in play.
+  const corners = (h = 160) => [box(0, 0, 700, h), box(1220, 0, 700, h), box(0, 1080 - h, 700, h), box(1220, 1080 - h, 700, h)];
+
   it('no free side → least real overlap + reason', () => {
     const ev: CaptionEvent[] = [{ start: 0, end: 10, boxes: [box(0, 0, 1920, 1080)] }];
     const [cue] = layoutCaptions(scene, voice('Everything is covered'), ev);
     expect(cue!.reason).toMatch(/both sides overlap the target/);
-    // top fully covered, bottom only grazed -> bottom, with a reason
+    // top and the corners fully covered, bottom only grazed -> bottom, with a reason
     const [c0] = layoutCaptions(scene, voice('Everything is covered'), []);
-    const grazed: CaptionEvent[] = [{ start: 0, end: 10, boxes: [box(0, 0, 1920, 300), box(c0!.box.x, c0!.box.y, 20, 20)] }];
+    const grazed: CaptionEvent[] = [{ start: 0, end: 10, boxes: [box(0, 0, 1920, 300), ...corners(), box(c0!.box.x, c0!.box.y, 20, 20)] }];
     const [c1] = layoutCaptions(scene, voice('Everything is covered'), grazed);
     expect(c1!.side).toBe('bottom');
     expect(c1!.reason).toBeDefined();
-    // bottom fully covered, top grazed -> top, with a reason
+    // bottom and the corners fully covered, top grazed -> top, with a reason
     const top = { x: c0!.box.x, y: 72, w: 20, h: 20 };
-    const ev2: CaptionEvent[] = [{ start: 0, end: 10, boxes: [box(0, 700, 1920, 380), top] }];
+    const ev2: CaptionEvent[] = [{ start: 0, end: 10, boxes: [box(0, 700, 1920, 380), ...corners(), top] }];
     const [c2] = layoutCaptions(scene, voice('Everything is covered'), ev2);
     expect(c2!.side).toBe('top');
     expect(c2!.reason).toBe('both sides overlap the target; top overlaps less');
@@ -130,7 +144,7 @@ describe('captions', () => {
     const { x, w, h } = c0!.box;
     const topFull = { x, y: 72, w, h };
     const half = { x, y: c0!.box.y, w: w * 0.6, h };
-    const ev: CaptionEvent[] = [{ start: 0, end: 10, boxes: [topFull, half, { ...half }] }];
+    const ev: CaptionEvent[] = [{ start: 0, end: 10, boxes: [topFull, half, { ...half }, ...corners()] }];
     const [cue] = layoutCaptions(scene, voice('Hi there'), ev);
     expect(cue!.side).toBe('bottom'); // union 0.6 < 1.0 (a sum would say 1.2 and pick top)
     expect(cue!.reason).toBeDefined();
@@ -223,8 +237,8 @@ describe('captions during a zoom (on-screen geometry)', () => {
   });
 
   it('no free side during a zoom keeps the least-overlap side with a reason', () => {
-    // A tall target zoomed 1.44x covers both caption bands on screen.
-    const target = box(900, 200, 100, 700);
+    // A wide, tall target zoomed 1.09x covers both caption bands, corners included, on screen (y 160-920).
+    const target = box(100, 200, 1720, 700);
     const v = voice('Look at this.', 0.2, 4.5);
     const [cue] = layoutCaptions(scene, v, zoomedCaptionEvents(zoomTake(target), times, [{ start: 1, end: 4, box: target }], 5));
     expect(cue!.reason).toMatch(/both sides overlap the target/);
@@ -292,5 +306,114 @@ describe('targets that fill the screen', () => {
     const first = events.find((e) => e.start >= 0.2 - 1e-6 && e.end <= 0.7 + 1e-6)!;
     expect(first.boxes).toHaveLength(1);
     expect(first.boxes[0]).not.toEqual(target);
+  });
+});
+
+describe('clause-first captions', () => {
+  const lastWord = (line: string) => line.split(' ').at(-1)!.toLowerCase().replace(/[^a-z]/g, '');
+
+  it('exports the desktop layout from the global constraints', () => {
+    expect(DESKTOP_CAPTIONS).toEqual({ charsPerLine: 42, maxLines: 2, sides: ['bottom', 'top', 'bottom-left', 'bottom-right', 'top-left', 'top-right'] });
+  });
+
+  it('breaks at clause punctuation before balancing', () => {
+    const cues = splitCaption('When the request is approved, a green note appears beside it and the owner gets an email straight away.');
+    expect(cues[0]!.join(' ')).toBe('When the request is approved,');
+  });
+
+  it('never ends a cue or a line on a function word', () => {
+    const text = 'Open the account menu at the top of the page and choose your profile to change the name on your account.';
+    const cues = splitCaption(text);
+    expect(cues.length).toBeGreaterThan(1);
+    expect(cues.flat().join(' ')).toBe(text);
+    for (const cue of cues) for (const line of cue) expect(FUNCTION_WORDS.has(lastWord(line))).toBe(false);
+  });
+
+  it('a phrase whose only breaks end on function words still splits', () => {
+    const text = 'the the the the the the the the the the the the the the the the the the the the the the the end';
+    const cues = splitCaption(text);
+    expect(cues.length).toBeGreaterThan(1);
+    expect(cues.flat().join(' ')).toBe(text);
+    for (const cue of cues) {
+      expect(cue.length).toBeLessThanOrEqual(2);
+      for (const line of cue) expect(line.length).toBeLessThanOrEqual(42);
+    }
+  });
+
+  it('a long phrase with no punctuation splits within the limits', () => {
+    const text = 'open the settings page then scroll down past the team list and pick the billing tab then change the plan and save it';
+    const cues = splitCaption(text);
+    expect(cues.length).toBeGreaterThan(1);
+    expect(cues.flat().join(' ')).toBe(text);
+    for (const cue of cues) {
+      expect(cue.length).toBeLessThanOrEqual(2);
+      for (const line of cue) {
+        expect(line.length).toBeLessThanOrEqual(42);
+        expect(FUNCTION_WORDS.has(lastWord(line))).toBe(false);
+      }
+    }
+  });
+
+  it('uses the fewest cues that fit', () => {
+    // 80 characters fit one two-line cue even though a clause break would make two cues.
+    expect(splitCaption('Open the settings page, and you will see every option that controls your account')).toHaveLength(1);
+  });
+
+  it('follows the layout it is given', () => {
+    const cues = splitCaption('Open the settings page and you will see every option that controls your account', { ...DESKTOP_CAPTIONS, charsPerLine: 30, maxLines: 3 });
+    expect(cues).toHaveLength(1);
+    expect(cues[0]!.length).toBe(3);
+    for (const line of cues[0]!) expect(line.length).toBeLessThanOrEqual(30);
+  });
+});
+
+describe('corner positions', () => {
+  const shortVoice = (text: string) => voice(text, 1, 3);
+  const blocks = [{ x: 600, y: 900, w: 700, h: 120 }, { x: 600, y: 60, w: 700, h: 120 }];
+
+  it('moves to a corner when bottom and top are both blocked', () => {
+    const [cue] = layoutCaptions({ id: 's' }, shortVoice('Press Save.'), [{ start: 0, end: 9, boxes: blocks }]);
+    expect(cue!.side).toBe('bottom-left');
+    expect(cue!.box.x).toBe(72);
+    expect(cue!.reason).toBeUndefined();
+  });
+
+  it('a corner box is the bottom box moved: same size, 72 px from its sides', () => {
+    const [free] = layoutCaptions(scene, shortVoice('Press Save.'), []);
+    const bl = box(0, 880, 500, 200);
+    const tries: [string, { x: number; y: number; w: number; h: number }[]][] = [
+      ['bottom-right', [...blocks, bl]],
+      ['top-left', [...blocks, bl, box(1420, 880, 500, 200)]],
+      ['top-right', [...blocks, bl, box(1420, 880, 500, 200), box(0, 0, 500, 200)]],
+    ];
+    for (const [side, boxes] of tries) {
+      const [cue] = layoutCaptions(scene, shortVoice('Press Save.'), [{ start: 0, end: 9, boxes }]);
+      expect(cue!.side).toBe(side);
+      expect(cue!.reason).toBeUndefined();
+      expect([cue!.box.w, cue!.box.h]).toEqual([free!.box.w, free!.box.h]);
+      expect(cue!.box.x).toBeCloseTo(side.endsWith('right') ? 1920 - 72 - free!.box.w : 72, 9);
+      expect(cue!.box.y).toBe(side.startsWith('top') ? 72 : free!.box.y);
+    }
+  });
+
+  it('a cue keeps its lines wherever it lands', () => {
+    const text = 'When the request is approved, a green note appears.';
+    const [free] = layoutCaptions(scene, voice(text), []);
+    const [cornered] = layoutCaptions(scene, voice(text), [{ start: 0, end: 9, boxes: [box(860, 0, 200, 1080)] }]);
+    expect(free!.lines).toEqual(['When the request is approved,', 'a green note appears.']);
+    expect(cornered!.side).toBe('bottom-left');
+    expect(cornered!.lines).toEqual(free!.lines);
+  });
+
+  it('keeps the bottom when nothing is in the way', () => {
+    // Regression guard (v1 also keeps the bottom here): with the top and all four corners blocked but
+    // the centred bottom box clear, the longer side search must still stop at the first side, bottom.
+    const [cue] = layoutCaptions(scene, shortVoice('Press Save.'), [
+      { start: 0, end: 9, boxes: [box(0, 0, 1920, 200), box(0, 880, 500, 200), box(1420, 880, 500, 200)] },
+    ]);
+    expect(cue!.side).toBe('bottom');
+    expect(cue!.reason).toBeUndefined();
+    expect(cue!.box.x).toBeCloseTo((1920 - cue!.box.w) / 2, 9);
+    expect(cue!.box.y).toBeCloseTo(1080 - 72 - cue!.box.h, 9);
   });
 });

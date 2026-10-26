@@ -4,11 +4,34 @@ import { DEFAULTS, type Scene } from './scene/schema.js';
 import { actionAt, type ScheduledStep } from './schedule.js';
 import type { SceneVoice } from './voice.js';
 
+/** Where a cue sits: centred at the bottom or top, in a corner, or (phone scenes) in the column beside the phone. */
+export type CaptionSide = 'bottom' | 'top' | 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right' | 'beside';
+
+/** How captions are cut and where they may go: `sides` are tried in order. */
+export interface CaptionLayout {
+  charsPerLine: number;
+  maxLines: number;
+  sides: CaptionSide[];
+  /** The column (frame px) a `beside` cue sits in. */
+  beside?: Box;
+}
+
+export const DESKTOP_CAPTIONS: CaptionLayout = {
+  charsPerLine: DEFAULTS.captions.charsPerLine,
+  maxLines: DEFAULTS.captions.maxLines,
+  sides: ['bottom', 'top', 'bottom-left', 'bottom-right', 'top-left', 'top-right'],
+};
+
+/** Words a cue or a line never ends on (compared lower-cased, letters only). */
+export const FUNCTION_WORDS: ReadonlySet<string> = new Set(
+  'a an the to of and or but for in on at by with from into onto as if so than then that this is are be your my our their its'.split(' '),
+);
+
 export interface Cue {
   start: number;
   end: number;
   lines: string[];
-  side: 'bottom' | 'top';
+  side: CaptionSide;
   box: Box;
   reason?: string;
 }
@@ -150,66 +173,124 @@ function breakLongWords(words: string[], max: number): string[] {
 
 const len = (ws: string[]) => ws.join(' ').length;
 
-/** Splits words into two lines, as even as possible, avoiding a one-word line when there are 4+ words. */
-function twoLines(words: string[]): string[] {
-  if (words.length < 2) return [words.join(' ')];
-  const minWords = words.length >= 4 ? 2 : 1;
-  let best = -1;
-  let bestMax = Infinity;
-  for (let k = minWords; k <= words.length - minWords; k++) {
-    const m = Math.max(len(words.slice(0, k)), len(words.slice(k)));
-    if (m < bestMax) {
-      bestMax = m;
-      best = k;
-    }
+/**
+ * A break after a function word costs this much: finite, so when every way to cut needs one the cut still
+ * happens (the rule is dropped for that break only); far above any other cost, so it never wins otherwise.
+ */
+const FUNCTION_WORD_BREAK = 1e6;
+/** A break that does not follow clause punctuation (`, : ; — .`). */
+const MID_CLAUSE_BREAK = 1;
+const CLAUSE_END = /[,:;—.]["'”’)\]]*$/u;
+
+/** The cost of breaking after `word`. */
+function breakCost(word: string): number {
+  if (FUNCTION_WORDS.has(word.toLowerCase().replace(/[^a-z]/g, ''))) return FUNCTION_WORD_BREAK;
+  return CLAUSE_END.test(word) ? 0 : MID_CLAUSE_BREAK;
+}
+
+/**
+ * The cheapest way to cut words[0..n) into `parts` pieces: the sum of each piece's cost and the cost of
+ * each break. `piece(i, j)` is the cost of words[i..j) as one piece (Infinity when it can't be one).
+ * Returns the end index of each piece, or null when no cut is finite.
+ */
+function cheapestCut(words: string[], parts: number, piece: (i: number, j: number) => number): number[] | null {
+  const n = words.length;
+  // best[k][j]: cheapest cost of words[0..j) in k pieces; from[k][j]: where the last of them starts.
+  const best = Array.from({ length: parts + 1 }, () => new Array<number>(n + 1).fill(Infinity));
+  const from = Array.from({ length: parts + 1 }, () => new Array<number>(n + 1).fill(-1));
+  best[0]![0] = 0;
+  for (let k = 1; k <= parts; k++)
+    for (let j = k; j <= n; j++)
+      for (let i = k - 1; i < j; i++) {
+        const before = best[k - 1]![i]!;
+        if (before === Infinity) continue;
+        const c = before + piece(i, j) + (i > 0 ? breakCost(words[i - 1]!) : 0);
+        if (c < best[k]![j]!) {
+          best[k]![j] = c;
+          from[k]![j] = i;
+        }
+      }
+  if (best[parts]![n] === Infinity) return null;
+  const ends: number[] = [];
+  for (let k = parts, j = n; k > 0; j = from[k]![j]!, k--) ends.unshift(j);
+  return ends;
+}
+
+/**
+ * Caption imbalance (preflight F17): Σ(len_i − mean)² / charsPerLine², over the pieces' character lengths.
+ * The total length of `parts` pieces is fixed, so the mean is too and each piece adds its own term.
+ */
+const imbalance = (pieceLen: number, mean: number, charsPerLine: number) => (pieceLen - mean) ** 2 / charsPerLine ** 2;
+
+/** The mean piece length when words[0..n) (`total` characters joined) is cut into `parts` pieces. */
+const meanLen = (total: number, parts: number) => (total - (parts - 1)) / parts;
+
+/**
+ * Cuts words into the fewest pieces (from `minParts`) for which `piece` is finite, cheapest first.
+ * Each piece holds at least `minWords` words. Returns the pieces' word ranges, or null.
+ */
+function fewestPieces(
+  words: string[],
+  minParts: number,
+  maxParts: number,
+  minWords: number,
+  piece: (i: number, j: number, mean: number) => number,
+): [number, number][] | null {
+  const total = len(words);
+  for (let parts = Math.max(1, minParts); parts <= Math.min(maxParts, Math.floor(words.length / minWords)); parts++) {
+    const mean = meanLen(total, parts);
+    const ends = cheapestCut(words, parts, (i, j) => (j - i < minWords ? Infinity : piece(i, j, mean)));
+    if (ends) return ends.map((e, k) => [k ? ends[k - 1]! : 0, e]);
   }
-  return [words.slice(0, best).join(' '), words.slice(best).join(' ')];
+  return null;
 }
 
-/** Lines for one cue: a single line when it fits, else two balanced lines. */
-function cueLines(g: string[], max: number): string[] {
-  return len(g) <= max ? [g.join(' ')] : twoLines(g);
+/**
+ * The lines of one cue (one line when it fits), cut with the same costs as cues, or null when the words
+ * can't fit in `maxLines`. `forced` is the cost of the function-word line ends it could not avoid.
+ */
+function cueLines(words: string[], layout: CaptionLayout): { lines: string[]; forced: number } | null {
+  const { charsPerLine, maxLines } = layout;
+  if (len(words) <= charsPerLine) return { lines: [words.join(' ')], forced: 0 };
+  // No one-word line in a cue of 4+ words.
+  const ranges = fewestPieces(words, 2, maxLines, words.length >= 4 ? 2 : 1, (i, j, mean) => {
+    const l = len(words.slice(i, j));
+    return l > charsPerLine ? Infinity : imbalance(l, mean, charsPerLine);
+  });
+  if (!ranges) return null;
+  const forced = ranges.reduce((a, [i]) => a + (i > 0 && breakCost(words[i - 1]!) === FUNCTION_WORD_BREAK ? FUNCTION_WORD_BREAK : 0), 0);
+  return { lines: ranges.map(([i, j]) => words.slice(i, j).join(' ')), forced };
 }
 
-/** Cuts words into n groups of similar size, each with at least `min` words; null if impossible. */
-function breaksFor(words: string[], n: number, min: number): string[][] | null {
-  if (n * min > words.length) return null;
-  const prefix = [0];
-  words.forEach((w, i) => prefix.push(prefix[i]! + w.length + 1));
-  const total = prefix[words.length]!;
-  const groups: string[][] = [];
-  let from = 0;
-  for (let c = 1; c < n; c++) {
-    const lo = from + min;
-    const hi = words.length - (n - c) * min;
-    const target = prefix[from]! + ((total - prefix[from]!) / (n - c + 1));
-    let to = lo;
-    for (let k = lo; k <= hi; k++) if (Math.abs(prefix[k]! - target) < Math.abs(prefix[to]! - target)) to = k;
-    groups.push(words.slice(from, to));
-    from = to;
-  }
-  groups.push(words.slice(from));
-  return groups;
-}
-
-/** Splits a phrase into cues of at most maxLines balanced lines. */
-function splitPhrase(text: string): string[][] {
-  const { maxLines, charsPerLine } = DEFAULTS.captions;
+/**
+ * Splits a phrase into cues of lines. It uses the fewest cues that fit; among those, it picks the breaks
+ * (between cues and between lines) with the lowest total cost: a break after a function word is all but
+ * ruled out, one that does not follow clause punctuation costs 1, and uneven cues or lines add their
+ * imbalance. Cues hold at least two words when the phrase has 4+ (one only when a hard-broken word needs it).
+ * The split depends only on the text and `layout`, never on where a cue is placed.
+ */
+export function splitCaption(text: string, layout: CaptionLayout = DESKTOP_CAPTIONS): string[][] {
+  const { charsPerLine, maxLines } = layout;
   const words = breakLongWords(text.trim().split(/\s+/).filter(Boolean), charsPerLine);
   if (!words.length) return [];
   if (len(words) <= charsPerLine) return [[words.join(' ')]];
-  let fallback: string[][] | null = null;
-  // Prefer two words per cue; drop to one only when pieces of a hard-broken word cannot fit otherwise.
-  for (const min of words.length >= 4 ? [2, 1] : [1]) {
-    for (let n = Math.max(1, Math.ceil(len(words) / (charsPerLine * maxLines))); ; n++) {
-      const groups = breaksFor(words, n, min);
-      if (!groups) break;
-      const lines = groups.map((g) => cueLines(g, charsPerLine));
-      fallback ??= lines;
-      if (lines.every((l) => l.length <= maxLines && l.every((x) => x.length <= charsPerLine))) return lines;
-    }
+  const memo = new Map<string, ReturnType<typeof cueLines>>();
+  const linesOf = (i: number, j: number) => {
+    const key = `${i},${j}`;
+    if (!memo.has(key)) memo.set(key, len(words.slice(i, j)) > charsPerLine * maxLines ? null : cueLines(words.slice(i, j), layout));
+    return memo.get(key)!;
+  };
+  for (const minWords of words.length >= 4 ? [2, 1] : [1]) {
+    const ranges = fewestPieces(words, Math.ceil(len(words) / (charsPerLine * maxLines)), words.length, minWords, (i, j, mean) => {
+      const cue = linesOf(i, j);
+      // A cue is scored by the breaks around it and its imbalance; its own line breaks are chosen
+      // afterwards, except that a cue whose lines must end on a function word costs as if a cue did.
+      return cue ? cue.forced + imbalance(len(words.slice(i, j)), mean, charsPerLine) : Infinity;
+    });
+    if (ranges) return ranges.map(([i, j]) => linesOf(i, j)!.lines);
   }
-  return fallback ?? [[words.join(' ')]];
+  // Unreachable: every word fits a line, so one word per cue always fits.
+  return words.map((w) => [w]);
 }
 
 /** Total area of the union of `boxes` clipped to `clip`. */
@@ -238,12 +319,32 @@ function unionArea(boxes: Box[], clip: Box): number {
   return area;
 }
 
-function captionBox(lines: string[], side: 'bottom' | 'top'): Box {
+/** The cue's box on `side`. Every side but `beside` has the same size, so where a cue lands never changes its lines. */
+function captionBox(lines: string[], side: CaptionSide, layout: CaptionLayout): Box {
   const { width: W, height: H } = DEFAULTS.video;
   const widest = Math.max(...lines.map((l) => l.length));
   const w = Math.min(W, widest * CHAR_EM * FONT_PX + 2 * PAD_X);
   const h = lines.length * FONT_PX * LINE_HEIGHT + 2 * PAD_Y;
-  return { x: Math.max(0, (W - w) / 2), y: side === 'bottom' ? H - EDGE - h : EDGE, w, h };
+  const centred = Math.max(0, (W - w) / 2);
+  const [bottom, top] = [H - EDGE - h, EDGE];
+  const [left, right] = [Math.min(EDGE, centred), Math.max(centred, W - EDGE - w)];
+  switch (side) {
+    case 'bottom':
+      return { x: centred, y: bottom, w, h };
+    case 'top':
+      return { x: centred, y: top, w, h };
+    case 'bottom-left':
+      return { x: left, y: bottom, w, h };
+    case 'bottom-right':
+      return { x: right, y: bottom, w, h };
+    case 'top-left':
+      return { x: left, y: top, w, h };
+    case 'top-right':
+      return { x: right, y: top, w, h };
+    case 'beside':
+      // The phone layouts (and how a cue sits in their column) arrive with phone captions.
+      throw new Error(`captions: no 'beside' placement for this layout${layout.beside ? ' yet' : ' (it has no beside column)'}`);
+  }
 }
 
 function overlap(a: Box, b: Box): number {
@@ -252,13 +353,20 @@ function overlap(a: Box, b: Box): number {
   return w > 0 && h > 0 ? w * h : 0;
 }
 
-/** Phrase by phrase, cue by cue; each cue sits at the bottom unless something it must not cover is there. */
-export function layoutCaptions(_scene: Pick<Scene, 'id'>, voice: SceneVoice, events: CaptionEvent[]): Cue[] {
-  const { width: W, height: H } = DEFAULTS.video;
-  const zone: Box = { x: 0, y: H * (1 - DEFAULTS.captions.bottomZone), w: W, h: H * DEFAULTS.captions.bottomZone };
+/**
+ * Phrase by phrase, cue by cue: each cue takes the first side in `layout.sides` that covers nothing it must
+ * not cover. When every side covers something, it takes the side that covers least (the earliest on a tie)
+ * and says why in `reason`.
+ */
+export function layoutCaptions(
+  _scene: Pick<Scene, 'id'>,
+  voice: SceneVoice,
+  events: CaptionEvent[],
+  layout: CaptionLayout = DESKTOP_CAPTIONS,
+): Cue[] {
   const cues: Cue[] = [];
   for (const phrase of voice.phrases) {
-    const groups = splitPhrase(phrase.text);
+    const groups = splitCaption(phrase.text, layout);
     const chars = groups.map((g) => g.join(' ').length);
     const sum = chars.reduce((a, b) => a + b, 0);
     let acc = 0;
@@ -267,18 +375,20 @@ export function layoutCaptions(_scene: Pick<Scene, 'id'>, voice: SceneVoice, eve
       acc += chars[i]!;
       const end = i === groups.length - 1 ? phrase.end : phrase.start + ((phrase.end - phrase.start) * acc) / sum;
       const boxes = events.filter((e) => e.start < end && e.end > start).flatMap((e) => e.boxes);
-      const bottom = captionBox(lines, 'bottom');
-      const top = captionBox(lines, 'top');
-      const cue: Cue = { start, end, lines, side: 'bottom', box: bottom };
-      // The bottom zone only triggers a look at the top; the choice compares real caption-box overlap.
-      const trigger = boxes.some((b) => overlap(b, zone) > 0 || overlap(b, bottom) > 0);
-      const bottomHit = trigger ? unionArea(boxes, bottom) : 0;
-      if (bottomHit > 0) {
-        const topHit = unionArea(boxes, top);
-        if (topHit === 0) Object.assign(cue, { side: 'top', box: top });
-        else if (topHit < bottomHit)
-          Object.assign(cue, { side: 'top', box: top, reason: 'both sides overlap the target; top overlaps less' });
-        else cue.reason = `both sides overlap the target; ${topHit === bottomHit ? 'equal, bottom kept' : 'bottom overlaps less'}`;
+      let best: { side: CaptionSide; box: Box; hit: number } | null = null;
+      let tie = false;
+      for (const side of layout.sides) {
+        const box = captionBox(lines, side, layout);
+        const hit = boxes.some((b) => overlap(b, box) > 0) ? unionArea(boxes, box) : 0;
+        if (!best || hit < best.hit) [best, tie] = [{ side, box, hit }, false];
+        else if (hit === best.hit) tie = true;
+        if (hit === 0) break;
+      }
+      if (!best) throw new Error('captions: the layout has no sides');
+      const cue: Cue = { start, end, lines, side: best.side, box: best.box };
+      if (best.hit > 0) {
+        const first = layout.sides[0]!;
+        cue.reason = `both sides overlap the target; ${best.side === first && tie ? `equal, ${first} kept` : `${best.side} overlaps less`}`;
       }
       cues.push(cue);
     });

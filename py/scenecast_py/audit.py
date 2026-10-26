@@ -10,7 +10,8 @@ clock, all boxes are {x, y, w, h} in 1920x1080 frame pixels):
    "allowList": [str],
    "scenes": [{"id", "start", "end", "narration",
                "screen": box?,                               # the app's screen: the frame, or the phone screen
-               "cues": [{"start", "end", "side", "box", "text", "reason"?}],
+               "cues": [{"start", "end", "side", "box", "text", "reason"?}],  # side: bottom, top, a corner
+                                                              # (bottom-left, ...) or beside; box is where it is drawn
                "zooms": [{"start", "end", "box", "instant"?}],  # the region the composer shows; instant: no ease-in
                "initialZoom": {"box": box | null, "target"} | null,  # the zoom the scene starts with
                "navBox": box | null,
