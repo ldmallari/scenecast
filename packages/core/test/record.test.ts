@@ -345,15 +345,21 @@ describe('recordScene', () => {
   }, 60_000);
 
   it('ringSel rings another element than the pointer target', async () => {
-    const steps: Step[] = [{ do: 'click', sel: '#agree', ringSel: '#name', pad: 6 }];
-    const take = await recordScene(scene('ringsel', '/form', steps), sched(steps, [0.5]), app, path.join(work, 'takes'));
+    // Zoom steps (pad 0) later in the same take measure #agree and #name on their own.
+    const steps: Step[] = [
+      { do: 'click', sel: '#agree', ringSel: '#name', pad: 6 },
+      { do: 'zoom', sel: '#agree' },
+      { do: 'zoom', sel: '#name' },
+    ];
+    const take = await recordScene(scene('ringsel', '/form', steps), sched(steps, [0.5, 2.8, 3.0]), app, path.join(work, 'takes'));
     const ev = take.events[0]!;
+    const [agree, name] = [take.events[1]!.target!, take.events[2]!.target!];
     const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
-    // The pointer target is #agree (a small checkbox) and lies inside its logged box.
-    expect(ev.target!.w).toBeLessThan(60);
-    // The ring is #name grown by 6; the element as measured at the ring's peak is logged as ringTarget.
-    const name = ev.ringTarget!;
-    expect(name.w).toBeGreaterThan(100);
+    // The pointer target is #agree; the ring is #name grown by 6, and ringTarget is #name at the ring's peak.
+    for (const k of ['x', 'y', 'w', 'h'] as const) {
+      near(ev.target![k], agree[k]);
+      near(ev.ringTarget![k], name[k]);
+    }
     for (const [k, v] of Object.entries({ x: name.x - 6, y: name.y - 6, w: name.w + 12, h: name.h + 12 }))
       near(ev.ringBox![k as keyof typeof name], v);
     expect(ev.busyUntil! - ev.at).toBeCloseTo((1200 + 300) / 1000, 6);
@@ -408,6 +414,21 @@ describe('recordScene', () => {
     expect(take.events[1]!.scrollY).toBeCloseTo(0, 0);
   }, 60_000);
 
+  it('scroll by on a page that scrolls inside a container fails the take', async () => {
+    // The window can't scroll; the body is the scroller (as in many apps with a 100vh shell).
+    const nested: AppConn = {
+      ...app,
+      initScript:
+        "document.addEventListener('DOMContentLoaded', () => { const h = document.documentElement; h.style.overflow = 'hidden'; h.style.height = '100%';" +
+        " document.body.style.height = '100%'; document.body.style.overflow = 'auto';" +
+        " const tall = document.createElement('div'); tall.style.height = '4000px'; document.body.appendChild(tall); })",
+    };
+    const steps: Step[] = [{ do: 'scroll', by: 400 }];
+    await expect(recordScene(scene('nested', '/dashboard', steps), sched(steps, [0.3]), nested, path.join(work, 'takes'))).rejects.toThrow(
+      'scene "nested" step 0: the page did not scroll (the window is not scrollable here; the app probably scrolls inside a container: use a scroll step with sel instead)',
+    );
+  }, 60_000);
+
   it('a zoom hold is not busy; an unzoom logs its time only', async () => {
     const steps: Step[] = [
       { do: 'zoom', sel: '.worklist', ms: 3000 },
@@ -431,6 +452,24 @@ describe('recordScene', () => {
     expect(ref.w).toBeGreaterThan(32);
     for (const k of ['x', 'y', 'w', 'h'] as const) expect(Math.abs(take.initialZoom![k] - ref[k])).toBeLessThanOrEqual(1);
     expect(JSON.parse(fs.readFileSync(path.join(work, 'takes', 'initzoom.boxes.json'), 'utf8')).initialZoom).toEqual(take.initialZoom);
+  }, 60_000);
+
+  it('an initial zoom pushed out of view by the pre-positioned first step fails the take', async () => {
+    // A button far below the fold: pre-positioning the first click scrolls the page down to it.
+    const far: AppConn = {
+      ...app,
+      initScript:
+        "document.addEventListener('DOMContentLoaded', () => { const b = document.createElement('button'); b.id = 'far'; b.textContent = 'Far';" +
+        " b.style.cssText = 'display:block;margin:3000px 0 40px'; document.body.appendChild(b); })",
+    };
+    const steps: Step[] = [{ do: 'click', sel: '#far', cue: 'Far' }];
+    const voice = { duration: 2, phrases: [], words: [{ w: 'Far', start: 0.15, end: 0.4 }] };
+    const s = { ...scene('farzoom', '/dashboard', steps), narration: 'Far', zoom: { sel: '.worklist', pad: 16 } } as Scene;
+    const plan = schedule(s, voice, { travelSec: travelSecFor });
+    expect(plan[0]!.prePosition).toBe(true);
+    await expect(recordScene(s, plan, far, path.join(work, 'takes'))).rejects.toThrow(
+      'scene "farzoom" zoom selector ".worklist" is out of view at the start (the first step\'s target "#far" scrolled the page)',
+    );
   }, 60_000);
 
   it('a missing initial-zoom selector fails with the scene name', async () => {
@@ -474,6 +513,20 @@ describe('recordScene', () => {
       expect(Math.abs(e.cursorTo!.y + 2 - p.y)).toBeLessThanOrEqual(1);
       expect(e.target).toBeUndefined();
     }
+  }, 60_000);
+
+  it('a park cued before its glide fits waits on cursor.park from the start', async () => {
+    const steps: Step[] = [{ do: 'park', cue: 'Aside' }];
+    const voice = { duration: 2, phrases: [], words: [{ w: 'Aside.', start: 0.15, end: 0.5 }] };
+    const s = { ...scene('parkpre', '/dashboard', steps), narration: 'Aside.' } as Scene;
+    const plan = schedule(s, voice, { travelSec: travelSecFor });
+    expect(plan[0]).toMatchObject({ startAt: 0.15, travel: 0, prePosition: true });
+    const take = await recordScene(s, plan, app, path.join(work, 'takes'), { cursor: { start: 'center', park: 'left', parkAfterSec: 2.5 } });
+    const e = take.events[0]!;
+    expect(Math.abs(e.at - 0.15)).toBeLessThanOrEqual(0.1);
+    const p = spotPoint('left', { width: DEFAULTS.video.width, height: DEFAULTS.video.height });
+    expect(Math.abs(e.cursorTo!.x + 3 - p.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(e.cursorTo!.y + 2 - p.y)).toBeLessThanOrEqual(1);
   }, 60_000);
 
   it('an invalid app.panels selector is named, not logged as a spinner', async () => {

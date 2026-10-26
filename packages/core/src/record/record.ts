@@ -266,9 +266,15 @@ async function becomesChecked(el: Locator): Promise<boolean> {
   }
 }
 
-/** The scene's initial zoom: its `zoom.sel` scrolled into view and measured (union of all), plus `pad`. */
-async function measureInitialZoom(page: Page, scene: Scene, zoom: NonNullable<Scene['zoom']>): Promise<Box> {
-  return padBox((await measure(page, scene.id, 'zoom', asList(zoom.sel))).union, zoom.pad);
+/** True when `b` lies wholly inside the viewport. */
+const inViewport = (b: Box, vp: { width: number; height: number }) =>
+  b.x >= -0.5 && b.y >= -0.5 && b.x + b.w <= vp.width + 0.5 && b.y + b.h <= vp.height + 0.5;
+
+/** Resolves the ringSel elements (never scrolled to: the pointer target is what is in view) and measures them. */
+async function findRing(page: Page, sceneId: string, index: number, sels: string[]): Promise<Measured> {
+  const els: Locator[] = [];
+  for (const sel of sels) els.push(await findVisible(page, sceneId, index, sel));
+  return boxesOf(els, sels, sceneId, index);
 }
 
 /** Where a park step glides to: its `at`, else `cursor.park`, else (when parking is off) the right spot. */
@@ -498,7 +504,9 @@ async function runTake(
   await page.goto(url(scene.route ?? '/'));
   await settleTake();
   const navs = await navBoxes(page, app);
-  const initialZoom = scene.zoom && (await measureInitialZoom(page, scene, scene.zoom));
+  // The scene's initial zoom: its `zoom.sel` scrolled into view and measured (union of all), plus `pad`.
+  const zoomSels = asList(scene.zoom?.sel);
+  let zoomM = zoomSels.length ? await measure(page, scene.id, 'zoom', zoomSels) : undefined;
 
   const steps = [...scheduled].sort((a, b) => a.index - b.index);
   // The start spot, unless a pre-positioned step needs the cursor already on its target.
@@ -510,6 +518,19 @@ async function runTake(
   // spent finding the target again (the aim check still re-measures it just before the action).
   const readyM = ready && (await measure(page, scene.id, ready.index, selectors(ready.step)));
   if (readyM) cursor = centre(readyM.first);
+  // The pre-positioned step's ringSel elements, found before the flash for the same reason.
+  const readyRingSels = ready ? asList(ready.step.ringSel) : [];
+  const readyRingM = readyRingSels.length ? await findRing(page, scene.id, ready!.index, readyRingSels) : undefined;
+  if (zoomM && readyM) {
+    // Scrolling the first target into view may have moved the zoomed element: measure it again where it is now.
+    zoomM = await boxesOf(zoomM.els, zoomSels, scene.id, 'zoom');
+    if (!inViewport(zoomM.union, where.viewport))
+      throw new Error(
+        `scene "${scene.id}" zoom selector "${zoomSels.join(', ')}" is out of view at the start ` +
+          `(the first step's target "${selectors(ready!.step)[0]}" scrolled the page)`,
+      );
+  }
+  const initialZoom = zoomM && padBox(zoomM.union, scene.zoom!.pad);
   // A pre-positioned park waits at its spot.
   if (first?.prePosition && first.step.do === 'park') cursor = parkPoint(first.step, where);
   await page.evaluate(([x, y]) => window.__scenecast.cursor(x, y), [cursor.x, cursor.y] as const);
@@ -554,14 +575,9 @@ async function runTake(
    */
   const drawRing = (
     ev: Partial<TakeEvent>,
-    at: number,
-    box: Box,
-    hold: number,
-    m: Measured,
-    sels: string[],
-    index: number,
-    atPeak: (b: Box | undefined) => void,
+    r: { at: number; box: Box; hold: number; m: Measured; sels: string[]; index: number; atPeak: (b: Box | undefined) => void },
   ) => {
+    const { at, box, hold, m, sels, index, atPeak } = r;
     quiet(page.evaluate(([b, ms]) => window.__scenecast.ring(b, ms), [box, hold] as const));
     const end = epoch() + hold + 2 * RING_FADE_MS;
     ev.ringBox = box;
@@ -594,20 +610,17 @@ async function runTake(
 
     if (onTarget(step.do)) {
       let m = readyM && index === ready?.index ? readyM : await measure(page, scene.id, index, sels);
-      // `ringSel`: the recorder rings these elements at the action. They are found and measured before the glide,
-      // after the pointer target was scrolled into view (they are never scrolled to themselves).
+      // `ringSel`: the recorder rings these elements at the action. They are found before the glide, after the
+      // pointer target was scrolled into view (the pre-positioned step's before the flash), and measured again
+      // just before the action. They must be visible before the step (a hover can't reveal its own ringSel).
       const ringSels = asList(step.ringSel);
-      let ringM: Measured | undefined;
-      if (ringSels.length) {
-        const els: Locator[] = [];
-        for (const sel of ringSels) els.push(await findVisible(page, scene.id, index, sel));
-        ringM = await boxesOf(els, ringSels, scene.id, index);
-      }
+      let ringM = readyRingM && index === ready?.index ? readyRingM : ringSels.length ? await findRing(page, scene.id, index, ringSels) : undefined;
       // Each step glides for its own travel. With none (pre-positioned) the cursor is already on the
       // target: no glide and no lead, and the action fires at `due`.
       const arrive = travel > 0 ? await glideTo(centre(m.first), due, travel) : due;
       await sleepUntil(arrive - AIM_CHECK_MS);
       m = await aim(m, sels, scene.id, index);
+      if (ringM) ringM = await boxesOf(ringM.els, ringSels, scene.id, index);
       // A check step presses only an element that isn't checked yet (seeded data may have it ticked already).
       const wasChecked = step.do === 'check' ? await isChecked(m.els[0]!) : undefined;
       ev.loadingBefore = (await snapshot(page, panelSel)).loading;
@@ -622,9 +635,10 @@ async function runTake(
       ev.target = m.union;
       ev.cursorTo = cursorBox(cursor);
       const at = ev.at;
-      if (ringM) drawRing(ev, at, padBox(ringM.union, step.pad), step.ringMs ?? RING_HOLD_MS, ringM, ringSels, index, (b) => {
-        if (b) ev.ringTarget = b;
-      });
+      if (ringM) {
+        const hold = step.ringMs ?? RING_HOLD_MS;
+        drawRing(ev, { at, box: padBox(ringM.union, step.pad), hold, m: ringM, sels: ringSels, index, atPeak: (b) => void (b && (ev.ringTarget = b)) });
+      }
       if (step.do === 'click' || step.do === 'type' || (step.do === 'check' && !wasChecked)) {
         quiet(page.evaluate(([x, y]) => window.__scenecast.ripple(x, y), [cursor.x, cursor.y] as const));
         await page.mouse.down();
@@ -660,10 +674,8 @@ async function runTake(
       ev.at = sinceFlash();
       if (step.do === 'ring') {
         // The element as it is when the ring peaks; gone by then, the audit fails the ring for it.
-        drawRing(ev, ev.at, box, step.ms ?? RING_HOLD_MS, m, sels, index, (b) => {
-          if (b) ev.target = b;
-          else delete ev.target;
-        });
+        const atPeak = (b: Box | undefined) => void (b ? (ev.target = b) : delete ev.target);
+        drawRing(ev, { at: ev.at, box, hold: step.ms ?? RING_HOLD_MS, m, sels, index, atPeak });
       } else ev.target = box;
     } else {
       const el = sels.length ? await findVisible(page, scene.id, index, sels[0]!) : undefined;
@@ -672,12 +684,21 @@ async function runTake(
       ev.at = sinceFlash();
       switch (step.do) {
         case 'scroll': {
+          const before = await page.evaluate(() => scrollY).catch(() => undefined);
           if (el) await el.evaluate((e) => e.scrollIntoView({ behavior: 'smooth', block: 'center' }));
           else if (step.to !== undefined) await page.evaluate((top) => window.scrollTo({ top, behavior: 'smooth' }), step.to);
           else await page.evaluate((by) => window.scrollBy({ top: by ?? innerHeight * 0.8, behavior: 'smooth' }), step.by ?? null);
           await scrollRest(page);
           const y = await page.evaluate(() => scrollY).catch(() => undefined);
           if (y !== undefined) ev.scrollY = round(y);
+          // `by`/`to` scroll the window. An app that scrolls inside a container leaves it where it was: say so
+          // rather than record a scene where nothing moves.
+          const asked = (step.by !== undefined && step.by !== 0) || (step.to !== undefined && before !== undefined && Math.abs(step.to - before) > 1);
+          if (asked && y !== undefined && before !== undefined && Math.abs(y - before) < 1)
+            throw new Error(
+              `scene "${scene.id}" step ${index}: the page did not scroll (the window is not scrollable here; ` +
+                `the app probably scrolls inside a container: use a scroll step with sel instead)`,
+            );
           break;
         }
         case 'press':
