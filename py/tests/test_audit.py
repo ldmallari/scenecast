@@ -739,3 +739,148 @@ def test_a_left_phone_screen_and_a_beside_caption(tmp_path):
     row = only_row(run(data))
     assert next(c for c in row["checks"] if c["name"] == "captions")["verdict"] == "PASS"
     assert row["captionSide"] == "beside"
+
+
+# ---------------------------------------------------------------- forced alignment (Task 10)
+
+
+def _forced(times, narration):
+    """What align_phrases returns: one entry per narration word (start None: that phrase could not be aligned)."""
+    return [{"w": w, "start": t, "end": None if t is None else t + 0.2, "p": 1.0} for w, t in zip(narration.split(), times)]
+
+
+class FakeAligner:
+    def __init__(self, times):
+        self.times, self.calls = times, []
+
+    def __call__(self, pcm, phrases, model, pad=0.4):
+        self.calls.append(phrases)
+        return _forced(self.times, " ".join(p["text"] for p in phrases))
+
+
+def _with_media(monkeypatch, tmp_path, tiny_video, data):
+    """A video and a model are present (so the aligner runs); decoding and loading are stood in for."""
+    import numpy as np
+
+    import scenecast_py.audit as audit
+
+    ffmpeg, video = tiny_video
+    monkeypatch.setattr(audit, "_media", lambda video, model_dir, ffmpeg: (np.zeros(16000 * 6, dtype=np.float32), "model"))
+    data.update(video=str(video), ffmpeg=ffmpeg, whisperModel=str(tmp_path / "model"))
+    return data
+
+
+NARRATION = "Open 2 documents for Ana Reyes."
+PHRASES = [{"start": 0.5, "end": 2.2, "words": 3, "text": "Open 2 documents"}, {"start": 2.4, "end": 3.4, "words": 3, "text": "for Ana Reyes."}]
+
+
+def test_cue_time_comes_from_forced_alignment(tmp_path, tiny_video, monkeypatch):
+    # The transcript hears "documents" at 2.40 (after its phrase ends); the aligner puts it at 2.05.
+    words = [dict(w) for w in WORDS]
+    words[2].update(start=2.40, end=2.60)
+    m = moment(cue="documents", cueWord=2, planWordTime=1.9, actionTime=2.05)
+    data = _with_media(monkeypatch, tmp_path, tiny_video, fixture(tmp_path, words=words, moments=[m]))
+    data["scenes"][0]["phrases"] = PHRASES
+    aligner = FakeAligner([1.0, 1.4, 2.05, 2.5, 2.8, 3.0])
+    row = only_row(run(data, aligner=aligner))
+    assert row["wordTime"] == pytest.approx(2.05)
+    assert row["wordSource"] == "transcript"
+    assert row["verdict"] == "PASS"
+    assert [p["text"] for p in aligner.calls[0]] == ["Open 2 documents", "for Ana Reyes."]
+
+
+def test_unheard_cue_still_warns_with_the_plan_time(tmp_path, tiny_video, monkeypatch):
+    words = [w for w in WORDS if w["w"].strip() != "documents"]
+    m = moment(cue="documents", cueWord=2, planWordTime=1.9, actionTime=2.0)
+    data = _with_media(monkeypatch, tmp_path, tiny_video, fixture(tmp_path, words=words, moments=[m]))
+    data["scenes"][0]["phrases"] = PHRASES
+    row = only_row(run(data, aligner=FakeAligner([1.0, 1.4, 2.05, 2.5, 2.8, 3.0])))
+    assert row["wordSource"] == "plan"
+    assert row["wordTime"] == pytest.approx(1.9)
+    assert any(c["name"] == "word" and c["verdict"] == "WARN" for c in row["checks"])
+
+
+def test_forced_time_is_clamped_to_its_phrase_and_untimed_phrases_use_the_transcript(tmp_path, tiny_video, monkeypatch):
+    data = _with_media(monkeypatch, tmp_path, tiny_video, fixture(tmp_path, moments=[
+        moment(index=0, cue="Open", cueWord=0, planWordTime=0.5, actionTime=0.5),
+        moment(index=1, cue="Ana", cueWord=4, planWordTime=2.5, actionTime=2.5, target=None)]))
+    data["scenes"][0]["phrases"] = PHRASES
+    rows = run(data, aligner=FakeAligner([0.2, 1.4, 1.9, None, None, None]))["moments"]
+    assert rows[0]["wordTime"] == pytest.approx(0.5)  # 0.2 is before its phrase starts at 0.5
+    assert rows[1]["wordTime"] == pytest.approx(2.5)  # no forced time: the transcript's "Anna" at 2.50
+
+
+def test_adjacent_words_sharing_a_start_are_separated_by_alignment(tmp_path, tiny_video, monkeypatch):
+    """v1 evidence: free Whisper gave a room name and the word after it the same start (2.1 s), so one of two actions
+    cued on them had to be out of sync. The aligned times (1.75 and 2.45) put both in sync."""
+    narration = "Book the Garden Room, then invite the team."
+    heard = [{"w": " Book", "start": 0.6, "end": 0.9}, {"w": " the", "start": 0.95, "end": 1.05},
+             {"w": " Garden", "start": 1.1, "end": 1.6}, {"w": " Room,", "start": 2.1, "end": 2.3},
+             {"w": " then", "start": 2.1, "end": 2.6}, {"w": " invite", "start": 2.8, "end": 3.1},
+             {"w": " the", "start": 3.15, "end": 3.25}, {"w": " team.", "start": 3.3, "end": 3.6}]
+    moments = [moment(index=0, cue="Room", cueWord=3, planWordTime=1.7, actionTime=1.75),
+               moment(index=1, cue="then", cueWord=4, planWordTime=2.4, actionTime=2.45, target=None)]
+
+    def data_for(tmp):
+        d = fixture(tmp, words=heard, moments=[dict(m) for m in moments], events=[event(time=1.75)])
+        d["allowList"] = []
+        d["scenes"][0].update(narration=narration, phrases=[{"start": 0.5, "end": 3.7, "words": 8, "text": narration}])
+        return d
+
+    free = run(data_for(tmp_path / "free"))["moments"]
+    assert free[0]["wordTime"] == free[1]["wordTime"] == pytest.approx(2.1)
+    assert [r["verdict"] for r in free] == ["FAIL", "FAIL"]
+
+    data = _with_media(monkeypatch, tmp_path, tiny_video, data_for(tmp_path / "forced"))
+    rows = run(data, aligner=FakeAligner([0.6, 0.95, 1.1, 1.75, 2.45, 2.8, 3.15, 3.3]))["moments"]
+    assert [r["wordTime"] for r in rows] == pytest.approx([1.75, 2.45])
+    assert [r["verdict"] for r in rows] == ["PASS", "PASS"]
+
+
+def test_transcription_runs_per_scene_from_half_a_second_before_it(tmp_path, tiny_video, monkeypatch):
+    calls = []
+
+    def transcriber(video, model, ffmpeg, start=None, end=None):
+        calls.append((start, end))
+        return [w for w in WORDS if start <= w["start"] < end]
+
+    data = _with_media(monkeypatch, tmp_path, tiny_video, fixture(tmp_path, words=None))
+    second = {**data["scenes"][0], "id": "s2", "start": 6.0, "end": 9.0, "moments": [], "events": [], "narration": "Done."}
+    data["scenes"].append(second)
+    v = run(data, transcriber=transcriber, aligner=FakeAligner([]))
+    assert calls == [(0.0, 6.0), (5.5, 9.0)]
+    assert only_row(v)["wordSource"] == "transcript"
+
+
+def test_no_aligner_without_a_model_or_matching_phrases(tmp_path, tiny_video, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("the aligner must not run")
+
+    # A video but no model (the v1 inputs): no alignment.
+    ffmpeg, video = tiny_video
+    data = fixture(tmp_path, video=str(video), ffmpeg=ffmpeg)
+    data["scenes"][0]["phrases"] = PHRASES
+    assert only_row(run(data, aligner=boom))["wordTime"] == pytest.approx(1.0)
+    # Phrases without text, or whose words don't add up to the narration: no alignment either.
+    data = _with_media(monkeypatch, tmp_path, tiny_video, fixture(tmp_path))
+    data["scenes"][0]["phrases"] = [{k: v for k, v in p.items() if k != "text"} for p in PHRASES]
+    assert only_row(run(data, aligner=boom))["wordTime"] == pytest.approx(1.0)
+    data["scenes"][0]["phrases"] = [PHRASES[0]]
+    assert only_row(run(data, aligner=boom))["wordTime"] == pytest.approx(1.0)
+
+
+def test_first_word_stamped_before_the_scene_still_counts_as_heard(tmp_path):
+    # Free decoding of a window that starts 0.5 s early stamps the first word with the window start (2.5 s for a scene
+    # at 3.0 s); the word runs on into the scene, so it is heard, and the narration matches.
+    heard = [{"w": " Welcome", "start": 2.5, "end": 3.44}, {"w": " to", "start": 3.44, "end": 3.7},
+             {"w": " Demo", "start": 3.7, "end": 3.95}, {"w": " Co.", "start": 3.95, "end": 4.2}]
+    tail = [{"w": " done.", "start": 2.2, "end": 2.6}]  # the previous scene's last word: ends before the scene starts
+    m = moment(cue="Welcome", cueWord=0, planWordTime=3.0, actionTime=3.0)
+    data = fixture(tmp_path, words=tail + heard, moments=[m], events=[event(time=3.0)])
+    data["allowList"] = []
+    data["scenes"][0].update(start=3.0, end=6.0, narration="Welcome to Demo Co.",
+                             phrases=[{"start": 3.0, "end": 4.3, "words": 4, "text": "Welcome to Demo Co."}])
+    v = run(data)
+    assert v["narration"][0]["verdict"] == "PASS", v["narration"]
+    row = only_row(v)
+    assert row["wordSource"] == "transcript" and row["wordTime"] == pytest.approx(3.0)

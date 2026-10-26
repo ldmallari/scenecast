@@ -4,8 +4,12 @@ Usage: python -m scenecast_py.voice --spec <input.json> --out <dir>
 
 input.json: {"voice": {"name", "lang", "speed", "phraseGapSec"},
              "models": {"kokoro", "voices", "whisper"} | null,
-             "scenes": [{"id": str, "phrases": [str, ...]}]}
+             "scenes": [{"id": str, "phrases": [str, ...], "gaps": [float, ...]?}]}
+`gaps[i]` is the silence before phrase i (gaps[0] is 0); without `gaps`, phraseGapSec goes between every phrase.
 Writes <dir>/<scene>.wav (24 kHz mono) and <dir>/timeline.json. Times are seconds from scene start.
+
+Word times come from forced alignment of each phrase clip against its known text (scenecast_py.align). When a
+phrase can't be aligned, the scene falls back to the free transcript mapped onto the script (`align_words`).
 
 SCENECAST_FAKE_TTS=1 swaps Kokoro for 1.0 s of silence per phrase and skips whisper
 (word times then come from the character-position fallback only).
@@ -29,12 +33,15 @@ class FakeTTS:
         return np.zeros(SAMPLE_RATE, dtype=np.float32)
 
 
-def build_scene(phrases, tts, gap_sec, voice="af_heart", speed=1.0, lang="en-us"):
-    """Synthesise each phrase and join them with `gap_sec` of silence. Returns (audio, timeline)."""
-    gap = np.zeros(round(gap_sec * SAMPLE_RATE), dtype=np.float32)
+def build_scene(phrases, tts, gap_sec, voice="af_heart", speed=1.0, lang="en-us", gaps=None):
+    """Synthesise each phrase and join them with silence: `gaps[i]` seconds before phrase i (gaps[0] is ignored), or
+    `gap_sec` between every phrase when `gaps` is None. Returns (audio, timeline)."""
+    if gaps is not None and len(gaps) != len(phrases):
+        raise ValueError(f"{len(gaps)} gaps for {len(phrases)} phrases")
     parts, spans, cursor = [], [], 0
     for i, text in enumerate(phrases):
         if i:
+            gap = np.zeros(round((gap_sec if gaps is None else gaps[i]) * SAMPLE_RATE), dtype=np.float32)
             parts.append(gap)
             cursor += len(gap)
         clip = np.asarray(tts.create(text, voice=voice, speed=speed, lang=lang), dtype=np.float32)
@@ -136,15 +143,56 @@ def _round(scene):
 
 
 WHISPER_RATE = 16000
+ALIGN_PAD_SEC = 0.3  # silence around each phrase clip while aligning it, as context for the first and last word
+
+
+def resample_16k(audio):
+    """24 kHz voice audio as the 16 kHz array Whisper takes (linear interpolation; skips PyAV file decoding)."""
+    n = round(len(audio) * WHISPER_RATE / SAMPLE_RATE)
+    x = np.arange(n) * (SAMPLE_RATE / WHISPER_RATE)
+    return np.interp(x, np.arange(len(audio)), audio).astype(np.float32)
 
 
 def _heard_words(model, audio):
-    """Recognised words with times. Audio goes in as a 16 kHz array (skips PyAV file decoding)."""
-    n = round(len(audio) * WHISPER_RATE / SAMPLE_RATE)
-    x = np.arange(n) * (SAMPLE_RATE / WHISPER_RATE)
-    pcm = np.interp(x, np.arange(len(audio)), audio).astype(np.float32)
-    segments, _ = model.transcribe(pcm, language="en", word_timestamps=True, beam_size=5)
+    """Recognised words with times from free decoding (the fallback when forced alignment fails)."""
+    segments, _ = model.transcribe(resample_16k(audio), language="en", word_timestamps=True, beam_size=5)
     return [{"w": w.word, "start": w.start, "end": w.end} for s in segments for w in (s.words or [])]
+
+
+def forced_words(model, audio, phrases, pad=ALIGN_PAD_SEC):
+    """Word times by forced alignment of each phrase clip (with `pad` of silence on each side) against its text.
+
+    Returns [{w, start, end}] for every script word, each kept inside its phrase, or None when any phrase gives the
+    wrong word count or a start before the previous word's start (the caller then falls back to `align_words`).
+    """
+    from scenecast_py import align
+
+    silence = np.zeros(round(pad * SAMPLE_RATE), dtype=np.float32)
+    words = []
+    for p in phrases:
+        clip = audio[round(p["start"] * SAMPLE_RATE):round(p["end"] * SAMPLE_RATE)]
+        pcm = resample_16k(np.concatenate([silence, clip, silence]))
+        try:
+            got = align.align_text(model, pcm, p["text"], offset=p["start"] - pad)
+        except (ValueError, RuntimeError, IndexError):
+            return None
+        if [w["w"] for w in got] != p["text"].split():
+            return None
+        for w in got:
+            start = min(max(w["start"], p["start"]), p["end"])
+            if words and start < words[-1]["start"]:
+                return None
+            words.append({"w": w["w"], "start": start, "end": min(max(w["end"], start), p["end"])})
+    return words
+
+
+def scene_words(model, audio, phrases):
+    """Per-word times for a voiced scene: forced alignment, else the free transcript mapped onto the script, else
+    (no model, or no audio) each phrase's words spread by character position."""
+    if model is None or not len(audio):
+        return align_words(phrases, [])
+    words = forced_words(model, audio, phrases)
+    return words if words is not None else align_words(phrases, _heard_words(model, audio))
 
 
 def run(spec, out_dir, fake=False):
@@ -165,11 +213,11 @@ def run(spec, out_dir, fake=False):
 
     scenes = {}
     for scene in spec["scenes"]:
-        audio, tl = build_scene(scene["phrases"], tts, v["phraseGapSec"], v["name"], v["speed"], v["lang"])
+        audio, tl = build_scene(scene["phrases"], tts, v["phraseGapSec"], v["name"], v["speed"], v["lang"],
+                                gaps=scene.get("gaps"))
         wav = out_dir / f"{scene['id']}.wav"
         sf.write(str(wav), audio, SAMPLE_RATE, subtype="PCM_16")
-        heard = _heard_words(whisper, audio) if whisper and len(audio) else []
-        tl["words"] = align_words(tl["phrases"], heard)
+        tl["words"] = scene_words(whisper, audio, tl["phrases"])
         scenes[scene["id"]] = _round(tl)
 
     timeline = {"scenes": scenes}

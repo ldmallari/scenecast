@@ -122,11 +122,13 @@ export function buildAuditInput(
   const scenes = opts.scenes.map(({ scene, planIndex, scheduled, take, flashTime, voice }) => {
     const ps = opts.plan.scenes[planIndex];
     const start = starts[planIndex]!;
-    // Phrase windows on the video clock, with how many narration words each holds (whitespace split).
+    // Phrase windows on the video clock, with how many narration words each holds (whitespace split) and the
+    // phrase text, which the audit force-aligns against the final mix.
     const phrases = (voice?.phrases ?? []).map((p) => ({
       start: round(start + p.start),
       end: round(start + p.end),
       words: p.text.trim().split(/\s+/).length,
+      text: p.text,
     }));
     const cues = (ps?.cues ?? []).map((c) => ({
       start: round(start + c.start),

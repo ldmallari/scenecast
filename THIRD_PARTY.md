@@ -34,6 +34,7 @@ Downloaded by `scenecast doctor` into `~/.cache/scenecast/` (never committed, ne
 | Kokoro-82M text-to-speech model (`kokoro-v1.0.onnx`, `voices-v1.0.bin`) | Apache-2.0 | https://huggingface.co/hexgrad/Kokoro-82M (ONNX export and voice pack from the kokoro-onnx `model-files-v1.0` release: https://github.com/thewh1teagle/kokoro-onnx) |
 | Whisper `small.en` speech recognition model | MIT | https://github.com/openai/whisper |
 | faster-whisper conversion of it (`Systran/faster-whisper-small.en`) | MIT | https://huggingface.co/Systran/faster-whisper-small.en |
+| Silero VAD model (`silero_vad_v6.onnx`, shipped inside the faster-whisper package, not downloaded); finds where speech starts before forced alignment | MIT | https://github.com/snakers4/silero-vad |
 | spaCy `en_core_web_sm` 3.8.0 (installed as a Python package) | MIT | https://github.com/explosion/spacy-models |
 | CMU Pronouncing Dictionary (NLTK data `cmudict`) | BSD-2-Clause-style (the licence is in its README) | https://github.com/cmusphinx/cmudict |
 | NLTK averaged perceptron tagger (NLTK data `averaged_perceptron_tagger`, `averaged_perceptron_tagger_eng`) | not stated in the download; distributed by the NLTK data project | https://github.com/nltk/nltk_data |

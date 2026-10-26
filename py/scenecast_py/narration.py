@@ -17,6 +17,7 @@ _ORDINAL = {"one": "first", "two": "second", "three": "third", "five": "fifth", 
             "nine": "ninth", "twelve": "twelfth"}
 # An allow-listed name may come back as this many more heard tokens than it has (e.g. "Ana" -> "An na").
 _ALLOW_SLACK = 1
+SCENE_EDGE_SEC = 0.05  # recognised times this close to the scene start count as inside it
 
 
 def _under_thousand(n):
@@ -133,14 +134,17 @@ def _allowed_positions(script, allow_list):
 class SceneSpeech:
     """The scene's script aligned to what was heard in its time window."""
 
-    def __init__(self, scene, words, allow_list):
+    def __init__(self, scene, words, allow_list, forced=None):
         # Script tokens word by word (whitespace split, as the voice timeline and scheduler count words),
         # so a cue's word index maps to its first token.
         self.script, self.word_token = [], []
         for w in scene["narration"].split():
             self.word_token.append(len(self.script))
             self.script += normalise_words(w)
-        self.words = [w for w in words if scene["start"] - 0.05 <= w["start"] < scene["end"]]
+        # A word belongs to the scene when it starts in it, or runs on past its start: free decoding of a window that
+        # begins in the silence before the scene stamps the first word with the window's start.
+        self.words = [w for w in words if w["start"] < scene["end"]
+                      and (w["start"] >= scene["start"] - SCENE_EDGE_SEC or w["end"] > scene["start"] + SCENE_EDGE_SEC)]
         self.heard, self.owner = [], []
         for i, w in enumerate(self.words):
             for t in normalise_words(w["w"]):
@@ -160,6 +164,9 @@ class SceneSpeech:
         if sum(p["words"] for p in phrases) == len(self.word_token):
             for p in phrases:
                 self.word_phrase += [(p["start"], p["end"])] * p["words"]
+        # Forced-aligned times by narration word ({start} per whitespace word, start None where a phrase could not be
+        # aligned); used only when they line up with the narration word for word.
+        self.forced = forced if forced is not None and len(forced) == len(self.word_token) else None
 
     def _clamp(self, t, word):
         """Clamp a heard start time into the phrase window of narration word `word`.
@@ -181,8 +188,18 @@ class SceneSpeech:
                 return j1 + min(i - i1, j2 - j1 - 1)
         return None
 
+    def _forced_time(self, word):
+        """The forced-aligned start of narration word `word`, kept inside its phrase, or None."""
+        if self.forced is None or word is None or not 0 <= word < len(self.forced):
+            return None
+        t = self.forced[word].get("start")
+        return None if t is None else self._clamp(float(t), word)
+
     def cue_time(self, cue, occ, word_index=None):
         """Start time of the heard word for the cue, or None if it was not heard at all.
+
+        Whether the cue was heard comes from the free transcript (an equal or replace opcode, or an allow-listed
+        position); its time comes from forced alignment when there is one, else from the transcript.
 
         `word_index` is the cue's first word in the narration as the scheduler counted it; without it the
         cue's occ-th occurrence in the normalised script is used.
@@ -195,11 +212,14 @@ class SceneSpeech:
         if i is None or i >= len(self.script):
             return None
         j = self._heard_index(i)
+        if j is None and i not in self.allowed:
+            return None
+        forced = self._forced_time(word_index)
+        if forced is not None:
+            return forced
         if j is not None:
             return self._clamp(float(self.words[self.owner[j]]["start"]), word_index)
-        if i in self.allowed:
-            return self._allowed_gap_time(i, word_index)
-        return None
+        return self._allowed_gap_time(i, word_index)
 
     def _allowed_gap_time(self, i, word_index):
         """An allow-listed cue the recogniser left out (a `delete`): place it by position, where the heard words

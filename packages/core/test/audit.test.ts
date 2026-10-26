@@ -102,7 +102,10 @@ describe('buildAuditInput', () => {
     expect(s.moments).toEqual([]);
     expect(s.events).toEqual([]);
     expect(s.narration).toBe('Next up. The phone view.');
-    expect(s.phrases).toEqual([{ start: 0, end: 0.8, words: 2 }, { start: 1, end: 2.4, words: 3 }]);
+    expect(s.phrases).toEqual([
+      { start: 0, end: 0.8, words: 2, text: 'Next up.' },
+      { start: 1, end: 2.4, words: 3, text: 'The phone view.' },
+    ]);
     expect((s.cues as unknown[]).length).toBe(1);
   });
 

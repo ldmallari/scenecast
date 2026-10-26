@@ -22,6 +22,7 @@ import {
   sceneWarnings,
   sessionStoragePath,
   splitPhrases,
+  phraseGaps,
   type AuditCounts,
   type Scene,
   type SceneVoice,
@@ -128,7 +129,13 @@ async function voiceStage(spec: VideoSpec, scenes: Scene[], cache: StageCache, l
   const out = new Map<string, { wav: string; voice: SceneVoice }>();
   const misses: { scene: Scene; key: string }[] = [];
   for (const scene of scenes) {
-    const input = { voice: spec.voice, phrases: splitPhrases(scene.narration), fake: process.env.SCENECAST_FAKE_TTS === '1' };
+    // The gaps are in the key on their own (not only through spec.voice), so a change in how phrases split re-voices.
+    const input = {
+      voice: spec.voice,
+      phrases: splitPhrases(scene.narration),
+      gaps: phraseGaps(scene.narration, spec.voice),
+      fake: process.env.SCENECAST_FAKE_TTS === '1',
+    };
     const key = await cache.key(`voice/${scene.id}`, input);
     const hit = await cache.lookup<{ wav: string; voice: SceneVoice }>(`voice/${scene.id}`, key);
     if (hit) out.set(scene.id, hit);

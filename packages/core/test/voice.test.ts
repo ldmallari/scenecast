@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { splitPhrases, buildVoice } from '../src/voice.js';
+import { splitPhrases, phraseGaps, buildVoice } from '../src/voice.js';
 import { findUv } from '../src/toolchain.js';
-import { VideoSpecSchema } from '../src/scene/schema.js';
+import { DEFAULTS, VideoSpecSchema } from '../src/scene/schema.js';
 
 function spec(narrations: string[]) {
   return VideoSpecSchema.parse({
@@ -34,6 +34,32 @@ describe('splitPhrases', () => {
     for (const p of phrases) expect(p.length).toBeLessThanOrEqual(140);
     expect(phrases.join(' ')).toBe(long);
   });
+
+  it('splits at : and ; when both sides have three words, with clause gaps', () => {
+    const t = 'Two things matter here: speed and care; then you ship it. Done now.';
+    expect(splitPhrases(t)).toEqual(['Two things matter here:', 'speed and care;', 'then you ship it.', 'Done now.']);
+    expect(phraseGaps(t, DEFAULTS.voice)).toEqual([0, 0.15, 0.15, 0.2]);
+    expect(splitPhrases('Pick one: yes.')).toEqual(['Pick one: yes.']);
+  });
+
+  it('keeps short lists, clock times and colons inside words in one phrase', () => {
+    expect(splitPhrases('Check two things: speed; care.')).toEqual(['Check two things: speed; care.']);
+    expect(splitPhrases('The meeting starts at 9:30 and ends at 10:15 today.')).toEqual([
+      'The meeting starts at 9:30 and ends at 10:15 today.',
+    ]);
+    // Exactly three words on each side splits; a closing quote after the colon still counts.
+    expect(splitPhrases('Open the "Team settings:" pick a role now.')).toEqual(['Open the "Team settings:"', 'pick a role now.']);
+  });
+
+  it('phraseGaps follows the voice settings and matches splitPhrases one to one', () => {
+    const t = 'To sign the work agreement: tick the box, type your name, and press Sign. Then wait.';
+    const voice = { ...DEFAULTS.voice, phraseGapSec: 0.3, clauseGapSec: 0 };
+    expect(splitPhrases(t)).toEqual(['To sign the work agreement:', 'tick the box, type your name, and press Sign.', 'Then wait.']);
+    expect(phraseGaps(t, voice)).toEqual([0, 0, 0.3]);
+    expect(phraseGaps('', voice)).toEqual([]);
+    // The words are kept exactly, in order, so word indices still count the narration split on whitespace.
+    expect(splitPhrases(t).join(' ').split(/\s+/)).toEqual(t.split(/\s+/));
+  });
 });
 
 describe.skipIf(!findUv())('buildVoice (fake TTS)', () => {
@@ -54,6 +80,12 @@ describe.skipIf(!findUv())('buildVoice (fake TTS)', () => {
       expect(fs.existsSync(path.join(dir, 'voice', 's1.wav'))).toBe(true);
       const onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'voice', 'timeline.json'), 'utf8'));
       expect(onDisk).toEqual(tl);
+      const input = JSON.parse(fs.readFileSync(path.join(dir, 'voice', 'input.json'), 'utf8'));
+      expect(input.scenes[0]).toEqual({
+        id: 's1',
+        phrases: ['Welcome to the dashboard.', 'Tick the box, type your name, and press Sign.'],
+        gaps: [0, 0.2],
+      });
     } finally {
       if (prev === undefined) delete process.env.SCENECAST_FAKE_TTS;
       else process.env.SCENECAST_FAKE_TTS = prev;

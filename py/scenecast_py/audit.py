@@ -5,7 +5,8 @@ Usage: python -m scenecast_py.audit --input <audit-input.json>
 audit-input.json (written by packages/core/src/audit.ts; all times are seconds on the final video's
 clock, all boxes are {x, y, w, h} in 1920x1080 frame pixels):
   {"video": str | null, "ffmpeg": str | null, "whisperModel": str | null,
-   "words": [{"w", "start", "end"}] | null,   # a precomputed transcript; null runs faster-whisper on `video`
+   "words": [{"w", "start", "end"}] | null,   # a precomputed transcript; null runs faster-whisper on `video`, one
+                                              # scene at a time from 0.5 s before the scene to its end
    "outDir": str, "rules": {...}, "loudness": {"lufs", "truePeak"}, "music": {"licence"} | null,
    "allowList": [str],
    "scenes": [{"id", "start", "end", "narration",
@@ -16,7 +17,10 @@ clock, all boxes are {x, y, w, h} in 1920x1080 frame pixels):
                "initialZoom": {"box": box | null, "target"} | null,  # the zoom the scene starts with
                "navBox": box | null,
                "navs": [{"edge": "left" | "top", "box"}],     # declared navs: shown whole or not at all
-               "phrases": [{"start", "end", "words"}],        # phrase windows; a heard word is clamped into its own
+               "phrases": [{"start", "end", "words", "text"}],  # phrase windows; a heard word is clamped into its own.
+                                                              # With a video and a model, each window (widened by
+                                                              # 0.4 s, never into its neighbours) is force-aligned
+                                                              # against its text
                "events": [{"index", "time" | null, "boxes": [{"kind", "box"}]}],
                "moments": [{"index", "cue", "occ", "offset", "kind", "label", "actionTime" | null,
                             "planWordTime", "target" | null, "loading", "settleTimedOut",
@@ -26,16 +30,21 @@ clock, all boxes are {x, y, w, h} in 1920x1080 frame pixels):
                             "cueWord": int | null,           # the cue's first word in the narration (scheduler's count)
                             "problems": [str]}]}]}           # each one is a FAIL (e.g. no zoom in the plan)
 
+Word times: the free transcript decides whether a cue word was heard (and feeds the narration diff); a heard cue
+takes its forced-aligned time when there is one (scenecast_py.align), else its transcript time.
+
 Writes <outDir>/audit.json, audit-table.md, frames/<scene>-<cue>.png and contact-sheet.png (whenever there is a
 video; it says so when there are no ring or zoom moments). Narration normalising and alignment live in narration.py.
 Exits 0 when the audit ran (the verdict is in audit.json); a crash exits non-zero.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
 
+from scenecast_py.align import align_phrases
 from scenecast_py.narration import SceneSpeech, normalise_words, number_to_words  # noqa: F401 (re-exported)
 
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
@@ -414,15 +423,51 @@ def grey_frames(video, ffmpeg, rules):
 # ---------------------------------------------------------------- media
 
 
-def transcribe(video, model_dir, ffmpeg):
-    """faster-whisper word timestamps for the video's audio. The audio is decoded by the toolchain's ffmpeg
-    to 16 kHz mono float, and PyAV is never loaded (see scenecast_py.whisper)."""
+PRE_ROLL_SEC = 0.5  # each scene's free transcription starts this early, so its first word is heard in context
+_media_cache = {}
+
+
+def _media(video, model_dir, ffmpeg):
+    """The video's audio (16 kHz mono float, decoded by the toolchain's ffmpeg) and the faster-whisper model, loaded
+    once per video and model for all scenes. PyAV is never loaded (see scenecast_py.whisper)."""
     from scenecast_py.whisper import decode_audio, whisper_model
 
-    pcm = decode_audio(video, ffmpeg)
-    model = whisper_model(model_dir)
-    segments, _ = model.transcribe(pcm, language="en", word_timestamps=True, beam_size=5)
-    return [{"w": w.word, "start": float(w.start), "end": float(w.end)} for s in segments for w in (s.words or [])]
+    st = os.stat(video)
+    key = (str(video), st.st_mtime_ns, st.st_size, str(model_dir), str(ffmpeg))
+    if _media_cache.get("key") != key:
+        _media_cache.clear()
+        _media_cache.update(key=key, value=(decode_audio(video, ffmpeg), whisper_model(model_dir)))
+    return _media_cache["value"]
+
+
+def transcribe(video, model_dir, ffmpeg, start=None, end=None):
+    """faster-whisper word timestamps (free decoding) for the video's audio from `start` to `end` seconds (the whole
+    audio by default), on the video's clock."""
+    from scenecast_py.whisper import WHISPER_RATE
+
+    pcm, model = _media(video, model_dir, ffmpeg)
+    lo = 0 if start is None else max(0, round(start * WHISPER_RATE))
+    hi = len(pcm) if end is None else min(len(pcm), round(end * WHISPER_RATE))
+    if hi <= lo:
+        return []
+    offset = lo / WHISPER_RATE
+    segments, _ = model.transcribe(pcm[lo:hi], language="en", word_timestamps=True, beam_size=5)
+    return [{"w": w.word, "start": float(w.start) + offset, "end": float(w.end) + offset}
+            for s in segments for w in (s.words or [])]
+
+
+def _forced_times(data, scene, aligner):
+    """Forced word times for the scene's narration words, or None: the aligner runs only with a video, a model and
+    ffmpeg, and phrases whose text spells the narration word for word."""
+    if not (data.get("video") and data.get("whisperModel") and data.get("ffmpeg")):
+        return None
+    phrases = scene.get("phrases") or []
+    if not phrases or any("text" not in p for p in phrases):
+        return None
+    if " ".join(p["text"] for p in phrases).split() != scene["narration"].split():
+        return None
+    pcm, model = _media(data["video"], data["whisperModel"], data["ffmpeg"])
+    return aligner(pcm, phrases, model)
 
 
 def _slug(text):
@@ -549,7 +594,7 @@ def write_table(path, verdict):
     path.write_text("\n".join(lines) + "\n")
 
 
-def run(data, transcriber=transcribe):
+def run(data, transcriber=transcribe, aligner=align_phrases):
     out_dir = Path(data["outDir"])
     out_dir.mkdir(parents=True, exist_ok=True)
     rules = data["rules"]
@@ -557,11 +602,13 @@ def run(data, transcriber=transcribe):
     if words is None:
         if not data.get("video") or not data.get("whisperModel") or not data.get("ffmpeg"):
             raise SystemExit("audit: no transcript given and no video/whisperModel/ffmpeg to make one")
-        words = transcriber(data["video"], data["whisperModel"], data["ffmpeg"])
 
     rows, narration, scene_rows = [], [], []
     for scene in data["scenes"]:
-        speech = SceneSpeech(scene, words, data.get("allowList") or [])
+        heard = words if words is not None else transcriber(
+            data["video"], data["whisperModel"], data["ffmpeg"], start=max(0.0, scene["start"] - PRE_ROLL_SEC), end=scene["end"])
+        forced = _forced_times(data, scene, aligner)
+        speech = SceneSpeech(scene, heard, data.get("allowList") or [], forced=forced)
         rows += audit_scene(scene, speech, rules)
         scene_row = audit_scene_row(scene, rules)
         if scene_row is not None:
