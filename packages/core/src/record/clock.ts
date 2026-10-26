@@ -12,10 +12,16 @@ export class VideoClock {
   /** The furthest the video has got (ms after the reference): after a step back it stays here until the wall catches up. */
   private high = 0;
 
+  private readonly mono: () => number;
+  private readonly wall: () => number;
+
+  // Plain fields, not parameter properties: the CLI runs on Node's type stripping, which rejects them.
   constructor(
-    private readonly mono: () => number = () => performance.timeOrigin + performance.now(),
-    private readonly wall: () => number = () => Date.now(),
+    mono: () => number = () => performance.timeOrigin + performance.now(),
+    wall: () => number = () => Date.now(),
   ) {
+    this.mono = mono;
+    this.wall = wall;
     this.monoRef = mono();
     this.wallRef = wall();
   }
