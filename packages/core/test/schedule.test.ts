@@ -133,6 +133,53 @@ describe('pointer timing', () => {
     expect(s).toMatchObject({ startAt: 1.5, travel: 0.52 });
   });
 
+  /** Every pointer glide starts at or after the previous pointer action, and only the first pointer step is pre-positioned. */
+  const glidesInOrder = (out: ReturnType<typeof schedule>) => {
+    const ptr = out.filter((s) => POINTER.has(s.step.do));
+    ptr.forEach((s, k) => {
+      if (k > 0) {
+        expect(s.prePosition).toBeFalsy();
+        expect(s.startAt).toBeGreaterThanOrEqual(actionAt(ptr[k - 1]!) - 1e-9);
+      }
+    });
+  };
+
+  it('two pointer cues in the first 0.52 s: only the first is pre-positioned, the second glides from it', () => {
+    const out = schedule(
+      scene([{ cue: 'Open', do: 'click', sel: '#a' }, { cue: 'Settings', do: 'hover', sel: '#b' }]),
+      v({ Open: 0.15, Settings: 0.45 }),
+      { travelSec: () => 0.52 },
+    );
+    expect(out[0]).toMatchObject({ startAt: 0.15, travel: 0, prePosition: true });
+    expect(out[1]).toMatchObject({ startAt: 0.15, travel: expect.closeTo(0.3, 6) });
+    expect(out[1]!.prePosition).toBeUndefined();
+    expect(actionAt(out[1]!)).toBeCloseTo(0.45, 6);
+    glidesInOrder(out);
+  });
+
+  it('a long glideMs after a short gap is shortened to start at the previous action', () => {
+    const out = schedule(
+      scene([{ cue: 'one', do: 'click', sel: '#a' }, { cue: 'two', do: 'hover', sel: '#b', glideMs: 1500 }]),
+      v({ one: 0.6, two: 1.0 }),
+      { travelSec: (st) => travelSecFor(st) },
+    );
+    expect(out[0]).toMatchObject({ startAt: expect.closeTo(0.08, 6), travel: 0.52 });
+    expect(out[0]!.prePosition).toBeUndefined();
+    expect(out[1]).toMatchObject({ startAt: expect.closeTo(0.6, 6), travel: expect.closeTo(0.4, 6) });
+    expect(actionAt(out[1]!)).toBeCloseTo(1.0, 6);
+    glidesInOrder(out);
+  });
+
+  it('a glide with room keeps its full travel', () => {
+    const out = schedule(
+      scene([{ cue: 'one', do: 'click', sel: '#a' }, { cue: 'two', do: 'click', sel: '#b', glideMs: 800 }]),
+      v({ one: 0.6, two: 2.0 }),
+      { travelSec: (st) => travelSecFor(st) },
+    );
+    expect(out[1]).toMatchObject({ startAt: expect.closeTo(1.2, 6), travel: 0.8 });
+    glidesInOrder(out);
+  });
+
   it('parks after a pointer step when the next pointer step is over parkAfterSec away', () => {
     const out = schedule(scene([{ cue: 'one', do: 'click', sel: '#a' }, { cue: 'two', do: 'click', sel: '#b' }]),
       v({ one: 1.0, two: 5.0 }), { travelSec: () => 0.52, park: { to: { x: 1824, y: 486 }, afterSec: 2.5 }, sceneEnd: 6.0 });

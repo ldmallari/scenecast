@@ -178,6 +178,33 @@ describe('recordScene', () => {
     expect(e.cursorTo).toBeDefined();
   }, 60_000);
 
+  it('two early pointer cues: the second glides (shortened) from the first and lands on its cue', async () => {
+    const steps: Step[] = [
+      { do: 'hover', sel: '#menu-button', cue: 'Open' },
+      { do: 'hover', sel: '#filters', cue: 'filters' },
+    ];
+    const voice = { duration: 3, phrases: [], words: [{ w: 'Open', start: 0.15, end: 0.4 }, { w: 'filters.', start: 0.55, end: 0.9 }] };
+    const plan = schedule({ ...scene('twoearly', '/dashboard', steps), narration: 'Open filters.' } as Scene, voice, { travelSec: travelSecFor });
+    expect(plan[1]).toMatchObject({ startAt: 0.15, travel: expect.closeTo(0.4, 6) });
+    expect(plan[1]!.prePosition).toBeUndefined();
+    const take = await recordScene(scene('twoearly', '/dashboard', steps), plan, app, path.join(work, 'takes'));
+    for (const [i, cue] of [0.15, 0.55].entries()) {
+      const late = take.events[i]!.at - cue;
+      expect(late, `event ${i} late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
+      expect(late, `event ${i} late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
+    }
+  }, 60_000);
+
+  it('a click with glideMs 900 arrives after its own travel', async () => {
+    const steps: Step[] = [{ do: 'click', sel: '#menu-button', glideMs: 900 }];
+    const plan = sched(steps, [0.6]);
+    expect(plan[0]!.travel).toBe(0.9);
+    const take = await recordScene(scene('glide900', '/dashboard', steps), plan, app, path.join(work, 'takes'));
+    const late = take.events[0]!.at - (0.6 + 0.9);
+    expect(late, `late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
+    expect(late, `late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
+  }, 60_000);
+
   it('parks the cursor after a lone click', async () => {
     const steps: Step[] = [{ do: 'click', sel: '#menu-button', cue: 'menu' }];
     const voice = { duration: 5, phrases: [], words: [{ w: 'The', start: 0.6, end: 0.8 }, { w: 'menu.', start: 1.0, end: 1.4 }] };

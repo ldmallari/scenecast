@@ -33,6 +33,9 @@ export const POINTER: ReadonlySet<Step['do']> = new Set<Step['do']>(['click', 'h
 /** Default cursor travel: every glide takes this long, whatever the distance, so the scheduler's arithmetic holds. */
 export const DEFAULT_TRAVEL_SEC = 0.52;
 
+/** Retime never cuts or freezes inside a step's travel plus this margin before its action; a park glide stays clear of it. */
+export const PROTECT_MARGIN_SEC = 0.15;
+
 /** Seconds the cursor travels before a step's action: `glideMs` (default 520 ms) for pointer steps, the touch lead on touch. */
 export function travelSecFor(step: Step, opts: { touch?: boolean } = {}): number {
   if (!POINTER.has(step.do)) return 0;
@@ -104,10 +107,21 @@ export function schedule(scene: Scene, voice: SceneVoice, opts: ScheduleOpts): S
     }
     const target = cue + (step.offset ?? 0);
     const raw = target - travel;
-    // No time to glide before the take starts: the cursor waits on the target and the action fires on its cue.
-    if (raw < 0 && pointer)
+    const prevPointer = pointer ? [...out].reverse().find((s) => POINTER.has(s.step.do)) : undefined;
+    if (pointer && prevPointer) {
+      // Only the first pointer step can wait on its target from the start. A later one never sets off before the
+      // previous pointer action: its glide is shortened to fit and still lands on its cue.
+      const from = Math.max(0, actionAt(prevPointer));
+      if (raw < from) {
+        out.push({ index, step, cueTime: cue, startAt: from, travel: Math.max(0, target - from) });
+        return;
+      }
+    } else if (pointer && raw < 0) {
+      // No time to glide before the take starts: the cursor waits on the target and the action fires on its cue.
       out.push({ index, step, cueTime: cue, startAt: Math.max(0, target), travel: 0, prePosition: true });
-    else out.push({ index, step, cueTime: cue, startAt: Math.max(0, raw), travel });
+      return;
+    }
+    out.push({ index, step, cueTime: cue, startAt: Math.max(0, raw), travel });
   });
   if (opts.park) addParks(out, opts.park, opts.sceneEnd);
   return out;

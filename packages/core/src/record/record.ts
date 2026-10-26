@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
 import { DEFAULTS, type AppConn, type CursorCfg, type Scene, type Step } from '../scene/schema.js';
-import { DEFAULT_TRAVEL_SEC, POINTER, spotPoint, type Point, type ScheduledStep } from '../schedule.js';
+import { DEFAULT_TRAVEL_SEC, POINTER, PROTECT_MARGIN_SEC, spotPoint, type Point, type ScheduledStep } from '../schedule.js';
 import { applyAppContext, captureSessionStorage, panelSelector } from './context.js';
 import { LOADING_SELECTOR, settle, trackNetwork } from './settle.js';
 
@@ -457,7 +457,9 @@ async function runTake(
   const steps = [...scheduled].sort((a, b) => a.index - b.index);
   // The start spot, unless a pre-positioned step needs the cursor already on its target.
   let cursor: Point = { ...start };
-  const ready = steps.find((s) => s.prePosition && onTarget(s.step.do) && selectors(s.step).length > 0);
+  // Only the first pointer step can be pre-positioned (the scheduler's rule); a later one glides.
+  const first = steps.find((s) => POINTER.has(s.step.do));
+  const ready = first?.prePosition && onTarget(first.step.do) && selectors(first.step).length > 0 ? first : undefined;
   // Measured before the flash and reused at its cue, so the little time between the flash and an early cue isn't
   // spent finding the target again (the aim check still re-measures it just before the action).
   const readyM = ready && (await measure(page, scene.id, ready.index, selectors(ready.step)));
@@ -501,9 +503,14 @@ async function runTake(
       let arrive = due;
       if (travel > 0) {
         await sleepUntil(due);
-        arrive = Math.max(epoch(), due) + travel * 1000;
+        // Setting off late (the step's prep ran past `due`, e.g. a shortened glide right after the previous
+        // action) compresses the glide, down to half its travel, so the action still lands on its cue.
+        arrive = Math.max(due + travel * 1000, epoch() + travel * 500);
         cursor = centre(m.first);
-        const glide = [cursor.x, cursor.y, arrive - GLIDE_LEAD_MS + offset] as const;
+        // A short glide (a small glideMs, or one shortened to follow a close previous action) keeps most of its
+        // time moving: the still lead before the action is at most 30% of it.
+        const lead = Math.min(GLIDE_LEAD_MS, (arrive - epoch()) * 0.3);
+        const glide = [cursor.x, cursor.y, arrive - lead + offset] as const;
         quiet(page.evaluate(([x, y, end]) => window.__scenecast.moveTo(x, y, end), glide));
       }
       await sleepUntil(arrive - AIM_CHECK_MS);
@@ -583,7 +590,9 @@ async function runTake(
       const delaySec = park.at - (startAt + travel);
       const setOff = flashEpoch + 1000 * Math.max(park.at, ev.at + delaySec, ev.busyUntil ?? ev.at, sinceFlash());
       const next = steps.slice(k + 1).find((s) => POINTER.has(s.step.do));
-      if (!next || setOff + PARK_GLIDE_MS <= flashEpoch + next.startAt * 1000) {
+      // The margin keeps retime's protected stretch before the next action (its travel + 0.15 s) clear of the
+      // park glide, so an early-arrival hold never freezes the cursor mid-park.
+      if (!next || setOff + PARK_GLIDE_MS + PROTECT_MARGIN_SEC * 1000 <= flashEpoch + next.startAt * 1000) {
         ev.parkTo = cursorBox(park.to);
         ev.parkedAt = Math.round((setOff - flashEpoch) * 10) / 10000;
         ev.busyUntil = ev.parkedAt + PARK_GLIDE_MS / 1000;

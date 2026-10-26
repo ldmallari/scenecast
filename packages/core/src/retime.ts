@@ -1,7 +1,7 @@
 import { DEFAULTS } from './scene/schema.js';
 import type { BlankRange } from './ffmpeg.js';
 import type { Take } from './record/record.js';
-import { actionAt, type ScheduledStep } from './schedule.js';
+import { actionAt, PROTECT_MARGIN_SEC, type ScheduledStep } from './schedule.js';
 import type { SceneVoice } from './voice.js';
 
 /**
@@ -39,8 +39,6 @@ export interface RetimeOpts {
 /** Frame period of the webm the recorder produces; the last decodable frame is this far before the end. */
 const SRC_FRAME = 1 / 25;
 const EPS = 1e-6;
-/** Never cut or freeze inside a step's own travel (its cursor glide) plus this margin before its action. */
-const PROTECT_MARGIN = 0.15;
 /** Never cut this soon after the previous event, so its visible result plays out. */
 const KEEP_AFTER = 0.8;
 /** After an action that lasts (typing, a ring, a held step), keep this long past its end before cutting. */
@@ -114,7 +112,7 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
   const anchors = take.events.map((e) => {
     const sch = byIndex.get(e.index);
     if (!sch) throw new Error(`scene "${sceneId}": take event ${e.index} has no scheduled step`);
-    return { out: actionAt(sch), src: flash + e.at, protect: sch.travel + PROTECT_MARGIN };
+    return { out: actionAt(sch), src: flash + e.at, protect: sch.travel + PROTECT_MARGIN_SEC };
   });
   anchors.forEach((a, i) => {
     const idx = take.events[i]!.index;
