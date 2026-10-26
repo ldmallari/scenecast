@@ -12,11 +12,27 @@ brand:
   primary: "#1F3A5F"
   accent: "#F5C518"
   font: Inter
+  cardFont: Inter
+  background: { from: "#1F3A5F", to: "#0F1E33" }
   introTitle: A quick tour of Demo Co
   introSubtitle: Sign in, check your worklist and sign a form
+cards:
+  introSec: 3.5
+  outroSec: 4
+  outroNext: "Next: approving requests"
+  entrance: reveal
 app:
   baseUrl: http://127.0.0.1:4310
   seed: ./seed.mjs
+  # Feature flags come from the app's API: this route turns on the single sign-on button and keeps the
+  # sign-in in sessionStorage (scenecast saves and restores it like cookies).
+  routes:
+    - { url: "**/api/flags", json: { sso: true, sessionToken: true } }
+  # Runs before the app's own scripts in every page. The document has no <html> yet at that point, so
+  # anything that touches the page waits for DOMContentLoaded.
+  initScript: "document.addEventListener('DOMContentLoaded', () => { document.documentElement.dataset.demo = 'video'; });"
+  # The dashboard's filter pop-over is an open panel too: captions keep clear of it.
+  panels: [".filters-pop"]
   login:
     - { do: goto, text: /login }
     - { do: type, sel: "#email", text: sam@example.com }
@@ -50,14 +66,15 @@ scenes:
       Each item shows when it is due, so the most urgent work comes first.
     steps:
       - { cue: worklist, do: ring, sel: ".worklist", pad: 10 }
-      - { cue: due, do: zoom, sel: ".worklist", pad: 16, ms: 2500 }
+      - { cue: due, do: zoom, sel: ".worklist", pad: 16 }
+      - { cue: first, do: unzoom }
 
   - id: sign-form
     kind: app
     title: Sign a form
     route: /form
     narration: >-
-      To sign the work agreement, tick the box, type your full name, and press Sign.
+      To sign the work agreement: tick the box, type your full name, and press Sign.
       A green note confirms that it is signed.
     steps:
       - { cue: tick, do: click, sel: "#agree" }
@@ -69,11 +86,13 @@ scenes:
     kind: app
     title: The account menu
     route: /dashboard
+    cursor: right
     narration: >-
       Your account menu sits at the top right. Open it to find your profile, your settings, and sign out.
     steps:
       - { cue: Open, do: click, sel: "#menu-button" }
       - { cue: profile, do: ring, sel: "#account-menu", pad: 6 }
+      - { do: park }
 
   # A narrated chapter card, drawn in the brand colours.
   - id: on-the-go

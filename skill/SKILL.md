@@ -30,11 +30,18 @@ mobile apps, or Windows without WSL.
    **box**", "open the **account menu**". Those words become cues. Keep one idea per scene.
 
 3. **Write `video.yaml`.** Use [references/scene-format.md](references/scene-format.md). For each action, add a step
-   with `cue` (the word from the narration), `do` (click, type, zoom, ring, …) and `sel` (a CSS selector). Also:
-   - declare the app's sidebar and top bar in `app.nav`;
-   - make sign-in unattended (`app.login`, `app.storageState` or `app.loginHook`);
+   with `cue` (the word from the narration), `do` (click, type, check, zoom, unzoom, ring, park, …) and `sel` (a CSS
+   selector). Also:
+   - declare the app's sidebar and top bar in `app.nav`, and its own pop-overs or drawers in `app.panels`;
+   - make sign-in unattended (`app.login`, `app.storageState` or `app.loginHook`); a sign-in kept in sessionStorage
+     is saved and restored too;
    - seed the data the video shows with `app.seed`, so every render shows the same thing;
-   - point a zoom or ring at exactly what the narration names.
+   - switch features on, or answer slow third-party calls, with `app.routes`; set things up before the app's own
+     scripts with `app.initScript` (it runs before `<html>` exists: wrap page access in `DOMContentLoaded`);
+   - point a zoom or ring at exactly what the narration names, and end a zoom on a word with `{ cue: …, do: unzoom }`
+     rather than a fixed `ms`;
+   - the cursor parks out of the way by itself between distant steps; add `{ do: park }` (or a scene's `cursor:
+     right`) when it would sit on what the viewer should read. Phone scenes have no cursor (touch only) and no park.
    The file is validated on load: a cue missing from the narration is an error that names the scene and step.
 
 4. **Render.** Start the app, then `scenecast render video.yaml`. It writes `out/<output>.mp4`, `.srt`,
@@ -53,9 +60,11 @@ mobile apps, or Windows without WSL.
    | sync: gap over 0.30 s | Put the cue on the word that names the action. A late action means a slow page: seed the data, `prewarm` the route, or add a `wait` earlier. |
    | word: cue not heard (WARN) | Nothing was heard where the cue is (a misheard word is already matched). For a name, add it to `audit.allowList`; otherwise choose a more distinct cue word, or listen to `work/<id>/voice/<scene>/voice.wav` and respell what the voice gets wrong. |
    | target: box does not contain target | Fix `sel` so it matches the element named, add `pad`, make sure the element is still there when the ring peaks. |
-   | captions: covers the target / cursor / panel | Zoom to a smaller element, or move the step to a phrase where less is on screen. |
+   | captions: covers the target / cursor / panel (`no free position; … overlaps least`) | Zoom to a smaller element, close a panel the step does not need, or move the step to a phrase where less is on screen. |
+   | blank frames | Rare: blank runs are frozen in the take. Zoom to a region with content, or re-render with `--fresh`. |
    | crop: zoom cuts the nav | Declare the nav in `app.nav`. |
-   | crop: target too close to the zoom edge | Zoom the element's card or section instead. |
+   | crop: target too close to the zoom edge | Zoom the element's card or section instead (a side on the frame edge never fails). |
+   | plan: unzoom has no zoom end near it | Put a `zoom` before the `unzoom` in the same scene, and drop the zoom's `ms`. |
    | loading: spinner visible | Seed, prewarm, or wait before the step. |
    | narration WARN, e.g. `-"worklist" +"work list"` | If the voice is right, add the word to `audit.allowList`. If a word was really dropped, rewrite the sentence. |
 

@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ensureToolchain, runFfmpeg } from '@scenecast/core';
+import { prepare } from '../src/render.js';
 
 const REPO = fileURLToPath(new URL('../../../', import.meta.url));
 const BIN = path.join(REPO, 'packages/cli/bin/scenecast.js');
@@ -68,9 +69,24 @@ describe.skipIf(!process.env.SCENECAST_E2E)('e2e', () => {
     expect(first.code).toBe(0);
 
     const out = path.join(dir, 'out');
-    const verdict = JSON.parse(fs.readFileSync(path.join(out, 'audit', 'audit.json'), 'utf8')) as { pass: boolean; counts: { fail: number } };
-    expect(verdict.pass).toBe(true);
-    expect(verdict.counts.fail).toBe(0);
+    // audit.json is the audit; its moments are the table's rows.
+    const audit = JSON.parse(fs.readFileSync(path.join(out, 'audit', 'audit.json'), 'utf8')) as {
+      pass: boolean;
+      counts: { fail: number };
+      moments: { scene: string; kind: string; verdict: string; captionSide: string; gap: number | null }[];
+    };
+    const rows = audit.moments;
+    expect(audit.pass).toBe(true);
+    expect(audit.counts.fail).toBe(0);
+    expect(rows.find((r) => r.kind === 'unzoom')!.verdict).toBe('PASS');
+    expect(rows.filter((r) => r.scene === 'phone').some((r) => r.captionSide === 'beside')).toBe(true);
+    expect(Math.max(...rows.filter((r) => r.gap !== null).map((r) => Math.abs(r.gap!)))).toBeLessThanOrEqual(0.3);
+    // The signed-in session (cookies, and the sessionStorage sign-in the flags route turns on) is never left behind.
+    const recordDir = path.join(dir, 'work', 'demo', 'record');
+    const leftovers = fs.readdirSync(recordDir, { recursive: true }).map(String).filter((f) => /session/.test(path.basename(f)));
+    expect(leftovers).toEqual([]);
+    const srt = fs.readFileSync(path.join(out, 'demo.srt'), 'utf8');
+    expect(srt).toContain('To sign the work agreement:');
     const duration = await durationOf(path.join(out, 'demo.mp4'));
     expect(duration).toBeGreaterThan(30);
     expect(duration).toBeLessThan(120);
@@ -84,5 +100,11 @@ describe.skipIf(!process.env.SCENECAST_E2E)('e2e', () => {
     expect(second.code).toBe(0);
     for (const stage of ['voice', 'record/sign-in', 'record/phone', 'compose', 'music', 'voicetrack', 'mix', 'audit'])
       expect(second.out).toContain(`${stage}: cached`);
+
+    // The plan the render composed: every stage is cached now, so preparing it again is cheap.
+    const { video } = await prepare(SCENE_FILE, { workRoot: path.join(dir, 'work'), log: () => {} });
+    const plan = video.plan;
+    expect(plan.scenes[0]).toMatchObject({ kind: 'card', duration: 3.5 });
+    expect(plan.scenes.at(-1)!.card).toMatchObject({ variant: 'outro', next: 'Next: approving requests' });
   }, 45 * 60_000);
 });

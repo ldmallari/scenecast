@@ -23,8 +23,8 @@ Expect, for each minute of finished video:
 | A whole cold render | about 3.5 to 7× the video length: recording runs in real time, and the voice and speech recognition add to it |
 | A re-run with nothing changed | under a second: every stage is reused from `work/<id>/` |
 
-The demo (about 44 s of video) took about 2.5 minutes cold on a 12-core Linux PC and 4 to 5 minutes on an Apple
-silicon Mac. A busy machine is slower.
+The demo (about 46 s of video) takes about 3 minutes cold on a 12-core Linux PC; an Apple silicon Mac is slower (4 to
+5 minutes for the 44-second v1 demo). A busy machine is slower.
 `scenecast render` prints the time of each stage that ran at the end.
 
 The cache is keyed on the scene file, the saved session, the login hook and the seed script, not on the app itself.
@@ -61,14 +61,25 @@ at the bottom of `audit-table.md` shows what was heard around it. Then:
 - **Check how the voice says it.** Listen to the scene's voice in `work/<id>/voice/<scene>/voice.wav`. If Kokoro
   mispronounces or rushes the word, respell it in the narration (for example spell out an abbreviation).
 
+**A cue at the start of a scene.** A pointer step cued on one of the first words has no time to glide from the
+scene's start position. The first pointer step of a scene is then pre-positioned: the cursor is on its target from
+the first frame and the action fires on the cue, so it is not late. Only the first one is: a second early step glides
+faster from the first to still land on its word. If the cursor appearing on the target looks abrupt, put the cue a
+few words later, or set the scene's `cursor` near the target.
+
 **The cue is ambiguous.** A cue matches whole words, case-insensitively. When the cue appears more than once, set
 `occ`. In "To sign in, type your email, and press Sign in", the button is `{ cue: Sign in, occ: 2 }`.
 
 ## Caption FAILs
 
-**A caption covers the target.** Captions move to the top when the action is in the bottom quarter. When both sides
-are blocked (a tall zoom, or a panel across the screen), zoom to a smaller element, or move the step to a phrase when
-less is on screen.
+**A caption covers the target.** Each caption tries bottom, top, then the four corners, and takes the first position
+that covers nothing it must keep clear. When every position covers something, it takes the one that covers least, and
+the captions check in the table gives the reason, `no free position; <side> overlaps least` (or `all equal, <side> kept`). Then zoom to
+a smaller element, close a panel the step does not need, or move the step to a phrase when less is on screen. Point
+the zoom at what the narration names: a zoom on a whole page leaves no room anywhere.
+
+**A caption covers a panel the audit does not know.** Built-in panels are dialogs, menus, listboxes and modals. Add
+the app's own pop-overs and drawers to `app.panels` (CSS selectors), and captions keep clear of them too.
 
 **A caption covers the previous step's target, and the audit passes.** The audit protects each step's own target,
 not an earlier one that is still on screen. Keep the zoom pointed at what the narration names, so the thing being
@@ -107,13 +118,40 @@ known.
 ## Blank frame FAILs
 
 A page that goes blank while it navigates is frozen over automatically: when recording, scenecast finds near-uniform
-frames in each take and holds the last good frame over them. A blank-frame FAIL means a near-uniform frame is left in an app scene. The times in the audit say where to look.
+frames in each take and replaces them with the last good frame before them, in the take itself. That frame is the one
+on screen at the action that started the navigation (a click on Sign in, say), so the action stays visible, and the
+blank frames right after it never reach the video. The render log says `record/<scene>: 1 blank frame run(s) in the
+take; froze 1 on the last good frame`. A blank-frame FAIL means a near-uniform frame is left in an app scene. The
+times in the audit say where to look.
 
 - **The screen really is near-uniform.** A zoom on a plain area, or a page that is mostly one colour, measures as
   blank (a false FAIL for what the viewer sees, but a dull shot). Zoom to a region with content (text, controls), or
   make the step show something.
 - **Anything else** is unexpected: blank runs in a take are frozen over, including where the video holds a frame while
   it waits for the next action. Re-render with `--fresh`, and report it if it persists.
+
+## The cursor
+
+**The cursor sits on an input, or over what the narration is about.** After a click or typing, the cursor stays
+where it acted. When the next pointer step (or the scene end) is more than `cursor.parkAfterSec` (2.5 s) away, it
+parks by itself at `cursor.park` (96 px in from the right edge by default). To move it sooner, or somewhere else, add
+a `{ do: park }` step (with `at` for the spot); to start a scene with the cursor out of the way, set the scene's
+`cursor` (for example `cursor: right`). `park` is not allowed on phone scenes: there is no cursor, and the touch
+indicator fades by itself (use `wait` to hold).
+
+**A hover step cannot ring what it reveals.** The ring is measured as the cursor arrives, before a tooltip or hover
+menu appears. Ring the revealed element with a separate `ring` step cued a word or two later.
+
+## Steps that fail while recording
+
+- **`<sel> is not checked after the click`** (a `check` step). `sel` must be the element that holds the state: the
+  `<input type=checkbox>` itself, or the element with `role="switch"` and `aria-checked`, not its label or a wrapper.
+- **`the page did not scroll`** (a `scroll` step with `by` or `to`). `by` and `to` scroll the window. Most app
+  layouts scroll inside a container (a main panel, a table), so the window does not move. Use `scroll` with `sel` on
+  an element inside that container: it is scrolled into the middle of the view, whichever element scrolls.
+- **`zoom selector "<sel>" not found`** (a scene's `zoom`). The element is measured before recording starts, on
+  `route`: it must be there without any step.
+- **The touch indicator colour is rejected** on a phone scene: `brand.accent` must be `#rgb` or `#rrggbb`.
 
 ## Loading FAILs
 
@@ -127,6 +165,34 @@ data, prewarm the route, or wait. A spinner that the action itself brings up is 
 limits sign-ins, or for SSO or two-factor sign-in, use `scenecast login video.yaml` to sign in by hand
 and save `app.storageState`, or write an `app.loginHook`. The saved session holds credentials: keep it out of version
 control.
+
+**The app keeps its sign-in in sessionStorage.** Cookies and localStorage are in the Playwright session; sessionStorage
+is not, so scenecast saves it separately (the sessionStorage of `baseUrl`'s origin, next to the session file) and
+restores it once per tab before the app's scripts run. An app that clears it mid-video (signing out, rotating a
+token) is not signed back in on its next navigation. One exception: the "already restored" mark lives in
+`window.name`, which the browser clears on a navigation to another site. If the video signs out through an identity
+provider on another site and then comes back, the saved sessionStorage is applied again and the app may show as
+signed in. Record the signed-out part as its own scene with `signedOut: true`.
+
+## Feature flags, slow third parties and init scripts
+
+- **Turn a feature on for the video** with `app.routes`: answer the app's flags request with the values you want, for
+  example `{ url: "**/api/flags", json: { sso: true } }`. The glob matches any origin, so an API on another host
+  works too.
+- **A `module` route on another origin answers, but the app never sees it.** A module builds its own response, so it
+  must add the CORS headers itself: `access-control-allow-origin` set to the app's origin, and
+  `access-control-allow-credentials: true` when the app sends cookies. (`json` and `body` routes get them
+  automatically.)
+- **An `initScript` that touches the page does nothing**, or throws `Cannot read properties of null`. Init scripts run
+  before `<html>` exists. Wrap such code in
+  `document.addEventListener('DOMContentLoaded', () => { … })`; setting globals or storage works at once.
+
+## Fonts
+
+Captions and drawn cards use `brand.font` and `brand.cardFont`. Inter is bundled and always available. Any other font
+must be installed where the render runs, or the render fails and names it (it never falls back silently). Card
+**pages** (`cards.introPage`, `cards.outroPage`, a title scene's `page`) are rendered by Chromium with the host's
+fonts, not the bundled ones: ship the font file next to the page and load it with `@font-face`.
 
 ## Tests
 

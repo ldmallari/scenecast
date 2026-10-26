@@ -7,7 +7,7 @@ by moment, and fails the render if any moment is off.
 
 It is free and open source, runs on your own machine, and needs no accounts or API keys.
 
-![A scenecast render of the included demo app: a zoom on the worklist, then a form is ticked, filled in and signed while the captions follow the narration](docs/demo.gif)
+![A scenecast render of the included demo app: a zoom on the worklist that eases out on its cue word, then a form is ticked, filled in and signed while the captions follow the narration](docs/demo.gif)
 
 *Part of the demo video, rendered from [`examples/demo-app/video.yaml`](examples/demo-app/video.yaml). The GIF has
 no sound; the video is narrated.*
@@ -23,9 +23,14 @@ no sound; the video is narrated.*
   cued step: was the action within 0.30 s of its word, does the ring or zoom contain the element, does any caption
   cover the target, the cursor or an open panel, is the zoom cropped, was a spinner or a blank page showing, is the
   loudness right. The result is a table, a contact sheet and an exit code. The included demo passes every cued moment,
-  with a median gap of 0.013 s between word and action and a largest gap of 0.127 s.
-- **Captions that know the UI.** Captions move out of the way of whatever is being clicked, typed into or highlighted,
-  including while the view is zoomed in.
+  with a median gap of about 0.01 s between word and action and a largest gap of 0.030 s, over five cold renders.
+- **Captions that know the UI.** Captions move out of the way of whatever is being clicked, typed into or highlighted
+  (to the top, a corner, or beside the phone on phone scenes), including while the view is zoomed in. They break at
+  the narration's clauses, and the voice pauses briefly there too.
+- **Made for real apps.** Feature flags and slow third parties can be answered with routes, init scripts run before
+  the app does, sign-ins kept in sessionStorage are saved and restored, zooms end on a cue word, the cursor parks out
+  of the way, phone scenes use touch, and the intro and outro cards take a gradient or image background, their own
+  font, an entrance and a "next" line (or an HTML page of your own).
 - **Local and free.** Voice by [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), speech recognition by
   [faster-whisper](https://github.com/SYSTRAN/faster-whisper), recording by [Playwright](https://playwright.dev),
   composition by [Revideo](https://re.video/). Every dependency is under an open-source licence: see
@@ -101,7 +106,8 @@ Recording happens in real time, so a render takes several times the length of th
 
 - composing the video (zoom, rings, captions, cards): about 2× the video length;
 - a whole first render: about 3.5 to 7× the video length, because recording, the voice and speech recognition add
-  to it. The 44-second demo took about 2.5 minutes on a 12-core Linux PC and 4 to 5 minutes on an Apple silicon Mac;
+  to it. The 46-second demo takes about 3 minutes on a 12-core Linux PC; an Apple silicon Mac is slower (the 44-second v1
+  demo took 4 to 5 minutes);
 - a re-run with nothing changed: under a second, as every stage comes from the cache.
 
 ## Use it from Claude Code
