@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { BrowserContext, Page, Request, Route } from 'playwright';
+import type { BrowserContext, Frame, Page, Request, Route } from 'playwright';
 import type { AppConn, RouteDecl } from '../scene/schema.js';
 
 /** Visible elements matching this are open panels (captions keep clear of them). `app.panels` adds to it. */
@@ -45,6 +45,25 @@ export function restoreScript(entries: Record<string, Record<string, string>>): 
 })();`;
 }
 
+/** A frame's sessionStorage. Retries once if a navigation destroys the frame's context mid-read. */
+async function readSessionStorage(frame: Frame): Promise<Record<string, string>> {
+  const read = () =>
+    frame.evaluate(() => {
+      const out: Record<string, string> = {};
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const k = sessionStorage.key(i);
+        if (k !== null) out[k] = sessionStorage.getItem(k) ?? '';
+      }
+      return out;
+    });
+  try {
+    return await read();
+  } catch {
+    await frame.waitForLoadState('domcontentloaded').catch(() => {});
+    return read().catch(() => ({}));
+  }
+}
+
 /**
  * Saves the sessionStorage of the page's frames on `baseUrl`'s origin (the main frame's origin when no
  * `baseUrl` is given) to `sessionStoragePath(stateFile)`, as `{ "<origin>": { key: value } }`. With nothing to
@@ -63,16 +82,7 @@ export async function captureSessionStorage(page: Page, stateFile: string, baseU
   if (want !== 'null') {
     for (const frame of page.frames()) {
       if (originOf(frame.url()) !== want) continue;
-      const items = await frame
-        .evaluate(() => {
-          const out: Record<string, string> = {};
-          for (let i = 0; i < sessionStorage.length; i++) {
-            const k = sessionStorage.key(i);
-            if (k !== null) out[k] = sessionStorage.getItem(k) ?? '';
-          }
-          return out;
-        })
-        .catch(() => ({}));
+      const items = await readSessionStorage(frame);
       if (Object.keys(items).length) entries[want] = { ...entries[want], ...items };
     }
   }
@@ -80,6 +90,7 @@ export async function captureSessionStorage(page: Page, stateFile: string, baseU
   if (Object.keys(entries).length) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify(entries, null, 2) + '\n', { mode: 0o600 });
+    fs.chmodSync(file, 0o600); // `mode` only applies when the file is created
   } else fs.rmSync(file, { force: true });
 }
 
@@ -92,6 +103,11 @@ async function corsHeaders(request: Request, declared: Record<string, string>): 
     : { 'access-control-allow-origin': '*' };
 }
 
+/**
+ * The handler for one declared route. CORS preflights are answered for every route. A `module` route answers
+ * the request itself, so for an API on another origin its `route.fulfill` must set its own
+ * `access-control-allow-origin` header.
+ */
 async function routeHandler(decl: RouteDecl): Promise<RouteHandler> {
   const declared = decl.headers ?? {};
   const mod = decl.module
@@ -122,6 +138,21 @@ async function routeHandler(decl: RouteDecl): Promise<RouteHandler> {
   };
 }
 
+/** The saved sessionStorage file. A bad file's error names only the path: the parser's message quotes the (secret) text. */
+function readSaved(file: string): Record<string, Record<string, string>> {
+  let entries: unknown;
+  try {
+    entries = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    entries = undefined;
+  }
+  const isMap = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+  const valid =
+    isMap(entries) && Object.values(entries).every((m) => isMap(m) && Object.values(m).every((v) => typeof v === 'string'));
+  if (!valid) throw new Error(`${file}: not a valid sessionStorage file (delete it and sign in again)`);
+  return entries as Record<string, Record<string, string>>;
+}
+
 /**
  * Sets up a browser context for the app: `app.routes`, `app.initScript` (before the app's own scripts), and,
  * when `opts.sessionFile` has a saved sessionStorage file next to it, the script that restores it.
@@ -131,8 +162,7 @@ export async function applyAppContext(context: BrowserContext, app: AppConn, opt
   if (opts.sessionFile) {
     const saved = sessionStoragePath(opts.sessionFile);
     if (fs.existsSync(saved)) {
-      const entries = JSON.parse(fs.readFileSync(saved, 'utf8')) as Record<string, Record<string, string>>;
-      await context.addInitScript({ content: restoreScript(entries) });
+      await context.addInitScript({ content: restoreScript(readSaved(saved)) });
     }
   }
   for (const item of initScripts(app))

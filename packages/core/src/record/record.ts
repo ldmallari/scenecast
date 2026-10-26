@@ -262,6 +262,24 @@ async function snapshot(page: Page, panelSel: string): Promise<{ panels: Box[]; 
   return { panels: [], loading: true };
 }
 
+/**
+ * Each `app.panels` item must be a valid CSS selector. They are joined into one list for `snapshot`, where one
+ * bad item would fail every query (and read as a page that is always loading), so name it up front.
+ */
+async function checkPanels(page: Page, app: AppConn): Promise<void> {
+  for (const sel of app.panels ?? []) {
+    const ok = await page.evaluate((s) => {
+      try {
+        document.querySelector(s);
+        return true;
+      } catch {
+        return false;
+      }
+    }, sel);
+    if (!ok) throw new Error(`app.panels: invalid selector "${sel}"`);
+  }
+}
+
 /** Wait for a smooth scroll to come to rest (two equal scroll positions 100 ms apart, at most 1.5 s). */
 async function scrollRest(page: Page): Promise<void> {
   let last = '';
@@ -406,6 +424,7 @@ async function runTake(
   videoStart: number,
 ): Promise<Omit<Take, 'file'>> {
   const url = (p: string) => new URL(p, app.baseUrl).href;
+  await checkPanels(page, app);
   const panelSel = panelSelector(app);
   trackNetwork(page);
   // Per-take settle budget: after one settle runs out its full cap, the rest get a short one.

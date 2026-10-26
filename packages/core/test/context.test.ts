@@ -23,14 +23,21 @@ declare global {
   interface Window {
     __scInit?: number;
     __fromFile?: number;
+    __seenByApp?: number;
   }
 }
 
-/** Every path is the same small page, so navigations stay on one origin. */
+/**
+ * Small pages on one server. `/app` has an inline script that records what the init scripts left; `/framed`
+ * embeds `?frame=<url>` in an iframe; every other path is a plain page.
+ */
 function servePages(): Promise<http.Server> {
-  const server = http.createServer((_req, res) => {
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end('<!doctype html><title>page</title><p>page</p>');
+    if (url.pathname === '/app') res.end('<!doctype html><title>app</title><script>window.__seenByApp = window.__scInit;</script>');
+    else if (url.pathname === '/framed') res.end(`<!doctype html><title>framed</title><iframe src="${url.searchParams.get('frame')}"></iframe>`);
+    else res.end('<!doctype html><title>page</title><p>page</p>');
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
@@ -96,8 +103,9 @@ describe('applyAppContext', () => {
     page = await ctx.newPage();
     await page.goto(`${origin}/login`);
     expect(await page.evaluate(() => window.__scInit)).toBe(1);
-    await page.goto(`${origin}/dashboard`);
+    await page.goto(`${origin}/app`);
     expect(await page.evaluate(() => window.__scInit)).toBe(1);
+    expect(await page.evaluate(() => window.__seenByApp)).toBe(1); // the app's own script ran after it
     expect(await page.evaluate(() => window.__fromFile)).toBe(1);
   });
 
@@ -125,6 +133,18 @@ describe('applyAppContext', () => {
     expect(await page.evaluate(() => sessionStorage.getItem('token'))).toBeNull();
   });
 
+  it("a corrupted sessionStorage file fails with its path, never its contents", async () => {
+    const session = path.join(work, 'corrupt.json');
+    fs.writeFileSync(session, '{"cookies":[],"origins":[]}');
+    fs.writeFileSync(sessionStoragePath(session), '{"http://a":{"token":secret-abc');
+    const err = await applyAppContext(ctx, { baseUrl: origin }, { sessionFile: session }).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe(`${sessionStoragePath(session)}: not a valid sessionStorage file (delete it and sign in again)`);
+    expect(String((err as Error).cause ?? '')).not.toContain('secret');
+    fs.writeFileSync(sessionStoragePath(session), '{"http://a":{"token":42}}'); // valid JSON, wrong shape
+    await expect(applyAppContext(ctx, { baseUrl: origin }, { sessionFile: session })).rejects.toThrow('not a valid sessionStorage file');
+  });
+
   it('a session with no sibling file restores nothing', async () => {
     const session = path.join(work, 'plain.json');
     fs.writeFileSync(session, '{"cookies":[],"origins":[]}');
@@ -141,8 +161,22 @@ describe('captureSessionStorage', () => {
     await page.goto(`${origin}/`);
     await page.evaluate(() => sessionStorage.setItem('token', 'abc'));
     const session = path.join(work, 'cap.json');
+    fs.writeFileSync(sessionStoragePath(session), '{}', { mode: 0o644 }); // a wider file left from before
     await captureSessionStorage(page, session, origin);
     expect(JSON.parse(fs.readFileSync(sessionStoragePath(session), 'utf8'))).toEqual({ [origin]: { token: 'abc' } });
+    expect(fs.statSync(sessionStoragePath(session)).mode & 0o777).toBe(0o600);
+  });
+
+  it('skips frames on another origin', async () => {
+    const other = origin.replace('127.0.0.1', 'localhost'); // same server, a different origin
+    page = await ctx.newPage();
+    await page.goto(`${origin}/framed?frame=${encodeURIComponent(`${other}/inner`)}`);
+    await page.evaluate(() => sessionStorage.setItem('top', '1'));
+    const inner = page.frames().find((f) => f.url().startsWith(other))!;
+    await inner.evaluate(() => sessionStorage.setItem('inner', '2'));
+    const session = path.join(work, 'framed.json');
+    await captureSessionStorage(page, session, origin);
+    expect(JSON.parse(fs.readFileSync(sessionStoragePath(session), 'utf8'))).toEqual({ [origin]: { top: '1' } });
   });
 
   it('writes no file, and removes a stale one, when there is nothing to save', async () => {

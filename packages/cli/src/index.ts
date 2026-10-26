@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
-import { chromium } from 'playwright';
+import { chromium, type BrowserContext, type Page } from 'playwright';
 import { applyAppContext, captureSessionStorage, ensureToolchain, findUv, loadScene, type Toolchain } from '@scenecast/core';
 import { preview } from '@scenecast/compose';
 import { prepare, render } from './render.js';
@@ -71,6 +71,17 @@ export async function doctor(): Promise<number> {
   return checks.every((c) => c.ok) ? 0 : 1;
 }
 
+/**
+ * Saves a hand sign-in: the storageState to `target`, and the sessionStorage of `baseUrl`'s origin next to it,
+ * read from the tab the sign-in ended in (`page`, or the last open tab if it was closed).
+ */
+export async function saveSession(context: BrowserContext, page: Page, target: string, baseUrl: string): Promise<void> {
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await context.storageState({ path: target });
+  const last = page.isClosed() ? context.pages().at(-1) : page;
+  if (last) await captureSessionStorage(last, target, baseUrl);
+}
+
 /** Opens a headed browser on the app; once you have signed in, Enter saves the session to app.storageState. */
 export async function login(file: string): Promise<number> {
   const spec = await loadScene(file);
@@ -87,11 +98,7 @@ export async function login(file: string): Promise<number> {
     const answer = await Promise.race([rl.question('Sign in in the browser window, then press Enter here to save the session. '), closed]);
     rl.close();
     if (answer === 'closed') throw new Error('the browser was closed before the session was saved');
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    await context.storageState({ path: target });
-    // An app that keeps its session in sessionStorage: save that too, from the tab the sign-in ended in.
-    const last = page.isClosed() ? context.pages().at(-1) : page;
-    if (last) await captureSessionStorage(last, target, spec.app.baseUrl);
+    await saveSession(context, page, target, spec.app.baseUrl);
     console.log(`scenecast: saved the session to ${target}`);
     return 0;
   } finally {

@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadScene } from '@scenecast/core';
+import type { BrowserContext, Page } from 'playwright';
+import { loadScene, sessionStoragePath } from '@scenecast/core';
+import { saveSession } from '../src/index.js';
 import { runSeed, timingSummary } from '../src/render.js';
 
 let dir: string;
@@ -94,5 +96,39 @@ describe('timingSummary', () => {
 
   it('says when everything was cached', () => {
     expect(timingSummary({}, 0.1, 40)).toContain('every stage was cached');
+  });
+});
+
+describe('scenecast login: saveSession', () => {
+  /** A page on `url` whose frames hold this sessionStorage, as Playwright's Page/Frame expose it. */
+  const stubPage = (url: string, frames: { url: string; storage: Record<string, string> }[], closed = false) =>
+    ({
+      url: () => url,
+      isClosed: () => closed,
+      frames: () => frames.map((f) => ({ url: () => f.url, evaluate: async () => f.storage, waitForLoadState: async () => {} })),
+    }) as unknown as Page;
+  const stubContext = (pages: Page[] = []) =>
+    ({
+      storageState: async ({ path: p }: { path: string }) => fs.writeFileSync(p, '{"cookies":[],"origins":[]}'),
+      pages: () => pages,
+    }) as unknown as BrowserContext;
+
+  it("saves the storageState and the baseUrl origin's sessionStorage beside it", async () => {
+    const target = path.join(dir, 'auth', 'state.json');
+    const page = stubPage('http://127.0.0.1:9/dashboard', [
+      { url: 'http://127.0.0.1:9/dashboard', storage: { token: 't1' } },
+      { url: 'http://other.example.invalid/frame', storage: { theirs: 'x' } },
+    ]);
+    await saveSession(stubContext(), page, target, 'http://127.0.0.1:9');
+    expect(fs.existsSync(target)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(sessionStoragePath(target), 'utf8'))).toEqual({ 'http://127.0.0.1:9': { token: 't1' } });
+  });
+
+  it('reads the last open tab when the first one was closed', async () => {
+    const target = path.join(dir, 'state.json');
+    const closed = stubPage('about:blank', [], true);
+    const last = stubPage('http://127.0.0.1:9/', [{ url: 'http://127.0.0.1:9/', storage: { token: 't2' } }]);
+    await saveSession(stubContext([closed, last]), closed, target, 'http://127.0.0.1:9');
+    expect(JSON.parse(fs.readFileSync(sessionStoragePath(target), 'utf8'))).toEqual({ 'http://127.0.0.1:9': { token: 't2' } });
   });
 });

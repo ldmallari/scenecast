@@ -277,4 +277,11 @@ describe('recordScene', () => {
     const take = await recordScene(scene('filters', '/dashboard', steps), plan, { ...app, panels: ['.filters-pop'] }, path.join(work, 'takes'));
     expect(take.events[0]!.panels.length).toBe(1);
   }, 60_000);
+
+  it('an invalid app.panels selector is named, not logged as a spinner', async () => {
+    const steps: Step[] = [{ do: 'click', sel: '#filters' }];
+    await expect(
+      recordScene(scene('badpanel', '/dashboard', steps), sched(steps, [0.5]), { ...app, panels: ['.ok', '.pop['] }, path.join(work, 'takes')),
+    ).rejects.toThrow('app.panels: invalid selector ".pop["');
+  }, 60_000);
 });
