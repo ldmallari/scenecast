@@ -45,13 +45,16 @@ export function inkFor(bg: ResolvedBackground): string {
 }
 
 /**
- * Behind the text on an image background: a soft elliptical shade of black at `alpha` over the text block, fading
- * out beyond it. With the lines in white at full opacity this keeps them at 4.5:1 or more over any photo, even pure
- * white with no dim (white over 255 × (1 − 0.55) grey is 4.7:1).
+ * Behind the text on an image background: a soft elliptical shade of black over the text block, fading out beyond
+ * it. `keep` is the most of a white photo the dim and the scrim together let through: white text over 255 × 0.45
+ * grey is 4.74:1, so with the lines in white at full opacity any photo keeps 4.5:1 or more.
  */
-const SCRIM = { alpha: 0.55, halfW: 1250, halfH: 400, plateau: 0.66 };
+const SCRIM = { keep: 0.45, halfW: 1250, halfH: 400, plateau: 0.66 };
 
-function textScrim(centreY: number, width: number, height: number): Node {
+/** The scrim's alpha over an image dimmed by `dim`: (1 − dim)(1 − alpha) = keep (0.55 at dim 0, 0.31 at 0.35, 0 from 0.55). */
+export const scrimAlpha = (dim: number) => (dim >= 1 ? 0 : Math.max(0, 1 - SCRIM.keep / (1 - dim)));
+
+function textScrim(alpha: number, centreY: number, width: number, height: number): Node {
   // A radial gradient is a circle: draw it in a box stretched vertically by 1/k and squash the box by k.
   const k = SCRIM.halfH / SCRIM.halfW;
   const fill = new Gradient({
@@ -61,8 +64,8 @@ function textScrim(centreY: number, width: number, height: number): Node {
     fromRadius: 0,
     toRadius: SCRIM.halfW,
     stops: [
-      { offset: 0, color: `rgba(0,0,0,${SCRIM.alpha})` },
-      { offset: SCRIM.plateau, color: `rgba(0,0,0,${SCRIM.alpha})` },
+      { offset: 0, color: `rgba(0,0,0,${alpha})` },
+      { offset: SCRIM.plateau, color: `rgba(0,0,0,${alpha})` },
       { offset: 1, color: 'rgba(0,0,0,0)' },
     ],
   });
@@ -143,7 +146,9 @@ export function cardScene(scene: Scene, plan: ResolvedPlan, time: () => number):
   return (
     <Node opacity={() => sceneOpacity(scene, time())}>
       {background}
-      {onImage ? textScrim((barY + lastY) / 2, plan.width, plan.height) : null}
+      {plan.background.kind === 'image' && scrimAlpha(plan.background.dim) > 0
+        ? textScrim(scrimAlpha(plan.background.dim), (barY + lastY) / 2, plan.width, plan.height)
+        : null}
       {hasLogo ? (
         <Img src={plan.logoUrl!} height={LAYOUT.logoH} y={() => LAYOUT.logoY + logo().dy} opacity={() => logo().opacity} scale={() => logo().scale} />
       ) : null}

@@ -471,17 +471,20 @@ describe('renderVideo', () => {
     expect(Math.max(pageAt[0]!, pageAt[2]!)).toBeLessThanOrEqual(12);
   }, 180_000);
 
-  it('keeps the subtitle and next line at 4.5:1 or more over a white photo with no dim', async () => {
+  it.each([
+    ['no dim', 0],
+    ['the default dim', undefined],
+  ] as const)('keeps the subtitle and next line at 4.5:1 or more over a white photo with %s', async (_label, dim) => {
     const white = path.join(dir, 'white.png');
     await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=#FFFFFF:s=1600x1200', '-frames:v', '1', white]);
     const plan: ComposePlan = {
-      brand: { ...brand, background: { image: white, dim: 0 } },
+      brand: { ...brand, background: dim === undefined ? { image: white } : { image: white, dim } },
       scenes: [
         { kind: 'card', duration: 2, card: { variant: 'intro' } },
         { kind: 'card', duration: 1.5, card: { variant: 'outro', title: 'Thanks for watching', next: 'Next: approving requests' } },
       ],
     };
-    const out = path.join(dir, 'white-photo.mp4');
+    const out = path.join(dir, `white-photo-${dim ?? 'default'}.mp4`);
     await renderVideo(plan, out);
     /** Relative luminance (WCAG) of the brightest and of the average pixel in a crop. */
     const crop = async (t: number, x: number, y: number, w: number, h: number) => {
@@ -503,7 +506,7 @@ describe('renderVideo', () => {
       const ink = await crop(t, 660, 600, 600, 36);
       const beside = await crop(t, 330, 600, 120, 36); // the same band, clear of the text
       const contrast = ratio(ink.max, beside.mean);
-      console.info(`scenecast: ${what} over a white photo: ${contrast.toFixed(2)}:1`);
+      console.info(`scenecast: ${what} over a white photo, dim ${dim ?? 'default'}: ${contrast.toFixed(2)}:1`);
       expect(contrast, what).toBeGreaterThanOrEqual(4.5);
     }
   }, 180_000);
