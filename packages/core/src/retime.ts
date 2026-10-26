@@ -92,9 +92,10 @@ function cutRanges(p: number, n: number, excess: number, label: string, busy: nu
 
 /**
  * Snaps segment starts to the output frame grid; each length is the gap to the next snapped start. A clip that the
- * rounding would stretch past `last` (the last frame) ends on it instead, starting that sub-frame earlier.
+ * rounding would stretch past `last` (the last frame) ends on it instead, starting that sub-frame earlier, but never
+ * before `first` (the first frame after the flash); held there, it stops short on `last` (the renderer freezes it).
  */
-function quantise(segs: Segment[], total: number, fps: number, last: number): Segment[] {
+function quantise(segs: Segment[], total: number, fps: number, first: number, last: number): Segment[] {
   const q = (t: number) => Math.round(t * fps) / fps;
   const out: Segment[] = [];
   segs.forEach((g, i) => {
@@ -104,8 +105,8 @@ function quantise(segs: Segment[], total: number, fps: number, last: number): Se
     if (len < 0.5 / fps) return;
     if (g.hold !== undefined) out.push({ ...g, outStart: start, hold: len });
     else {
-      const srcIn = g.srcIn + len > last + EPS ? Math.max(0, last - len) : g.srcIn;
-      out.push({ ...g, outStart: start, srcIn, srcOut: srcIn + len });
+      const srcIn = g.srcIn + len > last + EPS ? Math.max(Math.min(g.srcIn, first), last - len) : g.srcIn;
+      out.push({ ...g, outStart: start, srcIn, srcOut: Math.min(srcIn + len, Math.max(last, g.srcOut)) });
     }
   });
   return out;
@@ -212,7 +213,7 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
     srcT = Math.max(srcT, a.src);
   });
   play(srcT, total - outT);
-  return quantise(segs, total, fps, last);
+  return quantise(segs, total, fps, srcStart, last);
 }
 
 /**

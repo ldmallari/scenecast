@@ -167,6 +167,17 @@ describe('retime', () => {
     }
   });
 
+  it('the last-frame clamp never moves a clip back into the flash', () => {
+    // No actions, and the take ends 0.52 s after the flash: the one clip starts on the first frame after the flash,
+    // and rounding its end onto the 30 fps grid (0.533 s) would push it past the last frame.
+    const segs = retime(take([]), [], voice(1), { sceneId: 's', flashTime: 0.5, flashEnd: 0.6, lastFrameSec: 1.12 });
+    for (const g of segs) {
+      expect(g.srcIn).toBeGreaterThanOrEqual(0.6);
+      expect(g.srcOut).toBeLessThanOrEqual(1.12 + 1e-9);
+    }
+    expect(segs.at(-1)!.srcIn).toBe(1.12);
+  });
+
   it('trims inside a long zoom hold', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     // A zoom at 2.0 s held 3 s (the recorder logs no busyUntil for it: the composer draws the zoom), then a click
@@ -189,8 +200,8 @@ describe('retime', () => {
     // trims time while the zoom is still held (before 2.0 + 3.0).
     expect(cuts).toHaveLength(1);
     const [lo, hi] = cuts[0]!;
-    expect(lo).toBeGreaterThanOrEqual(2.8 - 1 / 30);
-    expect(hi).toBeLessThanOrEqual(5.83 + 1 / 30);
+    expect(lo).toBeGreaterThanOrEqual(2.8);
+    expect(hi).toBeLessThanOrEqual(5.83);
     expect(hi - lo).toBeCloseTo(1.5, 1);
     expect(lo).toBeLessThan(5.0);
     expect(warn).not.toHaveBeenCalled();

@@ -125,7 +125,8 @@ export async function frameTimes(file: string): Promise<number[]> {
   const { ffmpeg } = await ensureToolchain({ offline: true }).catch(() => ensureToolchain());
   const { err } = await runFfmpeg(ffmpeg, [
     '-hide_banner', '-nostdin', '-i', file, '-map', '0:v:0',
-    '-vf', 'showinfo', '-fps_mode', 'passthrough', '-f', 'null', '-',
+    // Scaled to 2×2 first: showinfo checksums every frame, and only its time is wanted.
+    '-vf', 'scale=2:2,showinfo', '-fps_mode', 'passthrough', '-f', 'null', '-',
   ]);
   return [...err.matchAll(/pts_time:\s*(-?[\d.]+)/g)].map((m) => Number(m[1]));
 }

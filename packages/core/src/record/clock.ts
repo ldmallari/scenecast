@@ -1,23 +1,44 @@
 /**
  * The take's video runs on the wall clock: Playwright stamps each screencast frame with Chromium's wall-clock swap
- * time and encodes at a constant 25 fps, filling any jump in those stamps with copies of the last frame. The
- * recorder times its steps on the monotonic clock. When the system steps its wall clock (WSL2 does every ~30 s,
- * by 0.6 s idle and over 2 s under load; NTP can too), the video gains (or loses) that much from then on, and
- * monotonic times no longer match the video. `VideoClock` measures that shift so logged times land on the video's clock.
+ * time and encodes at a constant 25 fps, filling any forward jump in those stamps with copies of the last frame and
+ * dropping frames whose stamps went back until they pass the last one written. The recorder times its steps on the
+ * monotonic clock. When the system steps its wall clock (WSL2 does every ~30 s, by 0.6 s idle and over 2 s under
+ * load; NTP can too), the video moves away from the monotonic clock from then on. `VideoClock` tracks where the video
+ * is, so logged times land on the video's clock.
  */
 export class VideoClock {
-  private readonly ref: number;
+  private readonly monoRef: number;
+  private readonly wallRef: number;
+  /** The furthest the video has got (ms after the reference): after a step back it stays here until the wall catches up. */
+  private high = 0;
 
   constructor(
     private readonly mono: () => number = () => performance.timeOrigin + performance.now(),
     private readonly wall: () => number = () => Date.now(),
   ) {
-    this.ref = wall() - mono();
+    this.monoRef = mono();
+    this.wallRef = wall();
   }
 
-  /** Seconds the wall clock (and so the video) has moved ahead of the monotonic clock since this clock was made. */
+  /**
+   * Notes where the video is now. Call it often (every few tens of ms) during the take, so a step back is measured
+   * from where the video had really got to.
+   */
+  sample(): void {
+    const m = this.mono() - this.monoRef;
+    let shift = this.wall() - this.wallRef - m;
+    // Date.now() truncates to whole ms: a shift that small is that noise, not a step.
+    if (Math.abs(shift) < SHIFT_DEAD_BAND_MS) shift = 0;
+    this.high = Math.max(this.high, m + shift);
+  }
+
+  /** Seconds the video's clock is ahead of the monotonic clock now (behind when negative), since this clock was made. */
   shiftSec(): number {
-    // Date.now() has whole milliseconds: round away the sub-millisecond jitter.
-    return Math.round(this.wall() - this.mono() - this.ref) / 1000 + 0; // + 0: never -0
+    this.sample();
+    const ms = Math.round(this.high - (this.mono() - this.monoRef));
+    return Math.abs(ms) < SHIFT_DEAD_BAND_MS ? 0 : ms / 1000;
   }
 }
+
+/** A wall-minus-monotonic difference smaller than this (ms) is treated as none. */
+export const SHIFT_DEAD_BAND_MS = 5;

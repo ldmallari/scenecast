@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
 import { DEFAULTS, type AppConn, type CursorCfg, type Scene, type Step } from '../scene/schema.js';
-import { DEFAULT_TRAVEL_SEC, POINTER, PROTECT_MARGIN_SEC, spotPoint, type Point, type ScheduledStep } from '../schedule.js';
+import { actionAt, DEFAULT_TRAVEL_SEC, POINTER, PROTECT_MARGIN_SEC, spotPoint, type Point, type ScheduledStep } from '../schedule.js';
 import { VideoClock } from './clock.js';
 import { applyAppContext, captureSessionStorage, panelSelector } from './context.js';
 import { LOADING_SELECTOR, settle, trackNetwork } from './settle.js';
@@ -22,6 +22,8 @@ const CURSOR_PX = 28;
 const CURSOR_TIP = { x: 3, y: 2 };
 /** The flash stays up this long: 2 frames of a 25 fps webm plus a vsync. */
 const FLASH_MIN_MS = 100;
+/** How often the recorder notes where the video's clock is (see VideoClock). */
+const CLOCK_SAMPLE_MS = 20;
 /** Re-check the target this long before the action fires. */
 const AIM_CHECK_MS = 40;
 /**
@@ -557,11 +559,20 @@ async function runTake(
   // t = 0 is the flash's first painted frame. The page stamps it on its own epoch clock; we convert it
   // to Node's epoch clock through a measured offset, and from then on Node's monotonic high-resolution
   // clock times every event (the page clock restarts on each navigation; Node's doesn't).
-  const offset = await clockOffset(page);
-  const flashEpoch = (await page.evaluate((ms) => window.__scenecast.flash(ms), FLASH_MIN_MS)) - offset;
+  let offset = await clockOffset(page);
+  // A new document in a new renderer process (a cross-site navigation) takes its clock's offset from the wall clock
+  // anew, so after a wall-clock step the offset above would be off by the step: measure it again after a navigation,
+  // before the next glide is sent (glide ends are in the page's clock).
+  let offsetStale = false;
+  page.on('framenavigated', (f) => void (f === page.mainFrame() && (offsetStale = true)));
   // Steps are timed on the monotonic clock; what they log is on the video's clock (see VideoClock), which a wall-clock
   // step moves away from it. Without this, a step mid-take would put every later action off by its size in the video.
+  // Its reference is taken just before the flash, so a step from the flash on is never missed; sampled every 20 ms so a
+  // step back is measured from where the video had got to. (The sampling stops with the page.)
   const clock = new VideoClock(epoch, timing.wallClock);
+  const sampler = setInterval(() => (page.isClosed() ? clearInterval(sampler) : clock.sample()), CLOCK_SAMPLE_MS);
+  sampler.unref();
+  const flashEpoch = (await page.evaluate((ms) => window.__scenecast.flash(ms), FLASH_MIN_MS)) - offset;
   const sinceFlash = () => Math.round((epoch() - flashEpoch) * 10) / 10000; // seconds, 0.1 ms resolution
   /** Now, in seconds after the flash on the video's clock: the time logged for an action. */
   const videoNow = () => Math.round((epoch() - flashEpoch + clock.shiftSec() * 1000) * 10) / 10000;
@@ -587,6 +598,10 @@ async function runTake(
    * compresses the glide, down to half its travel, so the action still lands on its cue.
    */
   const glideTo = async (p: Point, due: number, travel: number): Promise<number> => {
+    if (offsetStale) {
+      offsetStale = false;
+      offset = await clockOffset(page);
+    }
     await sleepUntil(due);
     const arrive = Math.max(due + travel * 1000, epoch() + travel * 500);
     cursor = { ...p };
@@ -751,9 +766,11 @@ async function runTake(
       // would still be running as the next pointer step sets off (two glides would fight over the cursor).
       // The park delay counts from the action as it happened, so a late action still rests before the cursor leaves.
       const delaySec = park.at - (startAt + travel);
-      // ev.at and busyUntil are on the video's clock: back to the monotonic one, which times the glide.
+      // ev.at and busyUntil are on the video's clock: back to the monotonic one, which times the glide (each with the
+      // shift it was logged with: `at` its own, busyUntil the current one, close enough for a cosmetic glide).
       const shift = clock.shiftSec();
-      const setOff = flashEpoch + 1000 * Math.max(park.at, ev.at - shift + delaySec, (ev.busyUntil ?? ev.at) - shift, sinceFlash());
+      const firedAt = ev.at - (ev.clockShift ?? 0);
+      const setOff = flashEpoch + 1000 * Math.max(park.at, firedAt + delaySec, (ev.busyUntil ?? ev.at) - shift, sinceFlash());
       const next = steps.slice(k + 1).find((s) => POINTER.has(s.step.do));
       // The margin keeps retime's protected stretch before the next action (its travel + 0.15 s) clear of the
       // park glide, so an early-arrival hold never freezes the cursor mid-park.
@@ -778,8 +795,12 @@ async function runTake(
   await Promise.all(parks);
   await sleepUntil(Math.max(holdUntil, epoch()));
   if (ringGoneAt) await ringsGone(page);
-  // Never shorter than the narration needs: retime would have nothing to show past the last frame.
-  await sleepUntil(Math.max(epoch(), flashEpoch + (timing.minTakeSec - clock.shiftSec()) * 1000));
+  // Never shorter than the narration needs: retime would have nothing to show past the last frame. Retime lines the
+  // take up on the actions, so past the last one it reads as far beyond `minTakeSec` as that action was late (on the
+  // video's clock, so a wall-clock step counts too): keep recording that much longer.
+  const lateBy = Math.max(0, ...events.map((e) => e.at - actionAt(scheduled.find((s) => s.index === e.index)!)));
+  await sleepUntil(Math.max(epoch(), flashEpoch + (timing.minTakeSec + lateBy - clock.shiftSec()) * 1000));
+  clearInterval(sampler);
   await sleepUntil(epoch() + TAIL_SEC * 1000);
   await Promise.all(peakMeasures);
   return {
