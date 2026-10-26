@@ -585,3 +585,126 @@ def test_allow_listed_cue_the_recogniser_dropped_is_placed_by_position():
     assert SceneSpeech(scene, heard, ["Kwiksign"]).cue_time("Kwiksign", 1, 1) == pytest.approx(0.9)
     # A word that was heard still maps to its own transcript time.
     assert SceneSpeech(scene, heard, ["Kwiksign"]).cue_time("now", 1, 2) == pytest.approx(1.8)
+
+
+# ---------------------------------------------------------------- v1.1: frame-edge crops, unzoom rows,
+# full-frame targets, scenes that start zoomed
+
+
+def _zoom_row(tmp_path, zbox, target, screen=None):
+    zoom = {"box": zbox, "start": 1.0, "end": 3.0, "hold": 1.7}
+    data = fixture(tmp_path, moments=[moment(kind="zoom", target=target, zoom=zoom)],
+                   events=[event(boxes=[{"kind": "target", "box": target}])],
+                   zooms=[{"start": 1.0, "end": 3.0, "box": zbox}])
+    if screen is not None:
+        data["scenes"][0]["screen"] = screen
+    return only_row(run(data))
+
+
+def _crop_check(row):
+    return next(c for c in row["checks"] if c["name"] == "crop")
+
+
+def test_crop_exempts_sides_on_the_frame_edge(tmp_path):
+    target = {"x": 12, "y": 400, "w": 200, "h": 60}
+    on_edge = _zoom_row(tmp_path, {"x": 0, "y": 270, "w": 960, "h": 540}, target)
+    assert _crop_check(on_edge)["verdict"] == "PASS"
+    off_edge = _zoom_row(tmp_path, {"x": 4, "y": 270, "w": 960, "h": 540}, target)
+    crop = _crop_check(off_edge)
+    assert crop["verdict"] == "FAIL"
+    assert crop["detail"] == "target is 8 px from the zoom edge (needs 24)"
+    # Within 0.5 px of the frame edge still counts as on it; the far sides are checked as before.
+    assert _crop_check(_zoom_row(tmp_path, {"x": 0.4, "y": 270, "w": 960, "h": 540}, target))["verdict"] == "PASS"
+    bottom_right = {"x": 1700, "y": 1010, "w": 210, "h": 60}
+    assert _crop_check(_zoom_row(tmp_path, {"x": 960, "y": 540, "w": 960, "h": 540}, bottom_right))["verdict"] == "PASS"
+    assert _crop_check(_zoom_row(tmp_path, {"x": 950, "y": 530, "w": 960, "h": 540}, bottom_right))["verdict"] == "FAIL"
+
+
+def test_crop_exempts_sides_at_or_beyond_the_phone_screen_edge(tmp_path):
+    screen = {"x": 760.4, "y": 108, "w": 399.2, "h": 864}  # a phone screen in the frame
+    target = {"x": 770, "y": 500, "w": 200, "h": 60}  # 9.6 px inside the screen's left edge
+    beyond = _zoom_row(tmp_path, {"x": 700, "y": 300, "w": 768, "h": 432}, target, screen)
+    assert _crop_check(beyond)["verdict"] == "PASS"
+    at = _zoom_row(tmp_path, {"x": 760.4, "y": 300, "w": 768, "h": 432}, target, screen)
+    assert _crop_check(at)["verdict"] == "PASS"
+    inside = _zoom_row(tmp_path, {"x": 765, "y": 300, "w": 768, "h": 432}, target, screen)
+    assert _crop_check(inside)["verdict"] == "FAIL"
+
+
+def _unzoom(**kw):
+    m = moment(index=1, cue="Open", kind="unzoom", label="", target=None, unzoom={"end": 4.31})
+    m.update(kw)
+    return m
+
+
+def test_unzoom_is_checked_for_sync(tmp_path):
+    words = [{"w": " Open", "start": 4.0, "end": 4.3}]
+    late = only_row(run(fixture(tmp_path, words=words, moments=[_unzoom(actionTime=4.31)])))
+    sync = next(c for c in late["checks"] if c["name"] == "sync")
+    assert sync["verdict"] == "FAIL"
+    assert sync["detail"] == "gap +0.310 s is over 0.30 s"
+    ok = only_row(run(fixture(tmp_path, words=words, moments=[_unzoom(actionTime=4.30, unzoom={"end": 4.30})])))
+    assert ok["verdict"] == "PASS"
+    assert ok["kind"] == "unzoom"
+    names = [c["name"] for c in ok["checks"]]
+    assert "target" not in names and "crop" not in names
+    assert "sync" in names and "captions" in names
+    # Even with a target and a zoom in the input, an unzoom row checks neither.
+    odd = only_row(run(fixture(tmp_path, words=words, moments=[
+        _unzoom(actionTime=4.30, target=TARGET, zoom={"box": {"x": 0, "y": 0, "w": 100, "h": 100}, "start": 1, "end": 4.3, "hold": 1.7})])))
+    assert [c["name"] for c in odd["checks"] if c["name"] in ("target", "crop")] == []
+
+
+def test_full_frame_target_does_not_fail_captions(tmp_path):
+    full = {"x": 0, "y": 0, "w": 1920, "h": 1000}
+    bottom = {"x": 600, "y": 900, "w": 720, "h": 100}
+    cue = [{"start": 0.5, "end": 2.5, "side": "bottom", "box": bottom, "text": "Open it"}]
+    row = only_row(run(fixture(tmp_path, cues=cue, events=[event(boxes=[{"kind": "target", "box": full}])])))
+    assert next(c for c in row["checks"] if c["name"] == "captions")["verdict"] == "PASS"
+    # A box just under 90% of the screen is still protected.
+    big = {"x": 0, "y": 0, "w": 1920, "h": 971}
+    row = only_row(run(fixture(tmp_path, cues=[{**cue[0], "box": {"x": 600, "y": 900, "w": 720, "h": 100}}],
+                               events=[event(boxes=[{"kind": "target", "box": big}])])))
+    assert next(c for c in row["checks"] if c["name"] == "captions")["verdict"] == "FAIL"
+
+
+def test_full_frame_target_on_a_phone_screen_does_not_fail_captions(tmp_path):
+    screen = {"x": 760.4, "y": 108, "w": 399.2, "h": 864}
+    cue = [{"start": 0.5, "end": 2.5, "side": "bottom", "box": {"x": 600, "y": 900, "w": 720, "h": 100}, "text": "Open it"}]
+    data = fixture(tmp_path, cues=cue, events=[event(boxes=[{"kind": "target", "box": dict(screen)}])])
+    data["scenes"][0]["screen"] = screen
+    assert only_row(run(data))["verdict"] == "PASS"
+
+
+def test_initial_zoom_gets_a_target_and_crop_row(tmp_path):
+    head = {"x": 100, "y": 80, "w": 400, "h": 60}
+
+    def scene_row(initial, moments=None):
+        data = fixture(tmp_path, moments=moments)
+        if moments == []:
+            data["scenes"][0]["moments"] = []
+        data["scenes"][0]["initialZoom"] = initial
+        v = run(data)
+        rows = [r for r in v["scenes"] if r["scene"] == "s1"]
+        assert len(rows) == 1
+        return rows[0], v
+
+    good, _ = scene_row({"box": {"x": 0, "y": 0, "w": 768, "h": 432}, "target": head})
+    assert good["verdict"] == "PASS"
+    assert [c["name"] for c in good["checks"]] == ["target", "crop"]
+    missed, v = scene_row({"box": {"x": 600, "y": 0, "w": 768, "h": 432}, "target": head})
+    target = next(c for c in missed["checks"] if c["name"] == "target")
+    assert target["verdict"] == "FAIL"
+    assert "does not contain target" in target["detail"]
+    assert v["pass"] is False
+    tight, _ = scene_row({"box": {"x": 90, "y": 0, "w": 768, "h": 432}, "target": head})
+    assert next(c for c in tight["checks"] if c["name"] == "crop")["verdict"] == "FAIL"
+    no_box, _ = scene_row({"box": None, "target": head})
+    assert no_box["verdict"] == "FAIL"
+    assert any(c["name"] == "plan" and "no initial zoom in the plan" in c["detail"] for c in no_box["checks"])
+    # A scene with no cued steps keeps its captions check in the same scene row.
+    both, _ = scene_row({"box": {"x": 0, "y": 0, "w": 768, "h": 432}, "target": head}, moments=[])
+    assert [c["name"] for c in both["checks"]] == ["target", "crop", "captions"]
+    # No initial zoom, cued steps: no scene row.
+    v = run(fixture(tmp_path))
+    assert v["scenes"] == []

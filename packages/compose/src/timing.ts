@@ -37,14 +37,14 @@ const lerpBox = (a: Box, b: Box, k: number): Box => ({
 
 /**
  * The visible region at scene time `t`: each zoom eases in from whatever was showing over
- * `easeSec`, holds until its end, then eases back to the full frame (unless the next zoom
- * has already started).
+ * `easeSec` (an `instant` zoom shows its box at once), holds until its end, then eases back to
+ * the full frame (unless the next zoom has already started).
  */
 export function zoomBoxAt(zooms: Timed[], t: number, full: Box, easeSec: number): Box {
   const sorted = [...zooms].sort((a, b) => a.start - b.start);
-  const moves: { at: number; to: Box }[] = [];
+  const moves: { at: number; to: Box; instant?: boolean }[] = [];
   sorted.forEach((z, i) => {
-    moves.push({ at: z.start, to: z.box });
+    moves.push({ at: z.start, to: z.box, ...(z.instant ? { instant: true } : {}) });
     const next = sorted[i + 1];
     if (!next || next.start > z.end) moves.push({ at: z.end, to: full });
   });
@@ -53,7 +53,7 @@ export function zoomBoxAt(zooms: Timed[], t: number, full: Box, easeSec: number)
     while (i >= 0 && moves[i]!.at > time) i--;
     if (i < 0) return full;
     const m = moves[i]!;
-    const k = easeSec > 0 ? easeInOutCubic((time - m.at) / easeSec) : 1;
+    const k = easeSec > 0 && !m.instant ? easeInOutCubic((time - m.at) / easeSec) : 1;
     if (k >= 1) return m.to;
     return lerpBox(valueAt(m.at, i - 1), m.to, k);
   };

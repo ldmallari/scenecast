@@ -87,6 +87,35 @@ export function eventTimes(rec: Recorded, scheduled: ScheduledStep[], segments: 
   return out;
 }
 
+/**
+ * The plan's zooms for a take, in scene seconds. A scene that starts zoomed (`take.initialZoom`) shows that
+ * box from the first frame (`instant`) until its first zoom or unzoom step, else to the scene end. A zoom
+ * step ends at the unzoom that closes it (the next unzoom with no zoom between), else `ms` (default 2 s)
+ * after it has eased in. No zoom ends after the next zoom starts or after the scene (`duration`).
+ */
+export function planZooms(take: Take, scheduled: ScheduledStep[], times: Map<number, number>, duration: number): Timed[] {
+  const stepOf = (index: number) => scheduled.find((s) => s.index === index)!.step;
+  const marks = take.events
+    .filter((e) => e.kind === 'unzoom' || (e.kind === 'zoom' && e.target))
+    .sort((a, b) => a.index - b.index)
+    .map((e) => ({ e, t: times.get(e.index)! }));
+  const zooms: Timed[] = [];
+  if (take.initialZoom) zooms.push({ start: 0, end: Math.min(duration, marks[0]?.t ?? duration), box: take.initialZoom, instant: true });
+  marks.forEach(({ e, t }, i) => {
+    if (e.kind !== 'zoom') return;
+    const next = marks[i + 1];
+    let end: number;
+    if (next?.e.kind === 'unzoom') end = next.t;
+    else {
+      end = t + DEFAULTS.video.zoomEaseSec + (stepOf(e.index).ms ?? ZOOM_HOLD_MS) / 1000;
+      const nextZoom = marks.slice(i + 1).find((m) => m.e.kind === 'zoom');
+      if (nextZoom) end = Math.min(end, nextZoom.t);
+    }
+    zooms.push({ start: t, end: Math.min(duration, end), box: e.target! });
+  });
+  return zooms;
+}
+
 /** One app scene of the plan: the retimed take with its zooms, composer rings and captions. */
 export function appPlanScene(scene: Scene, voice: SceneVoice, scheduled: ScheduledStep[], rec: Recorded): { plan: PlanScene; segments: Segment[] } {
   const segments = retime(rec.take, scheduled, voice, {
@@ -100,18 +129,14 @@ export function appPlanScene(scene: Scene, voice: SceneVoice, scheduled: Schedul
   const duration = toFrames(voice.duration + DEFAULTS.video.breathSec);
   const times = eventTimes(rec, scheduled, segments);
   const stepOf = (index: number) => scheduled.find((s) => s.index === index)!.step;
-  const zooms: Timed[] = [];
+  const zooms = planZooms(rec.take, scheduled, times, duration);
   const rings: Timed[] = [];
   for (const e of rec.take.events) {
     const step = stepOf(e.index);
     const t = times.get(e.index)!;
-    if (e.kind === 'zoom' && e.target) {
-      const hold = (step.ms ?? ZOOM_HOLD_MS) / 1000;
-      zooms.push({ start: t, end: Math.min(duration, t + DEFAULTS.video.zoomEaseSec + hold), box: e.target });
-    }
-    // `ring: true` on a non-ring step: the composer draws it. The recorder draws `do: ring` and `ringSel` rings itself.
+    // `ring: true` on a non-ring step: the composer draws it, held for `ringMs`. The recorder draws `do: ring` and `ringSel` rings itself.
     if (step.ring && step.ringSel === undefined && e.kind !== 'ring' && e.target) {
-      const end = t + (RING_HOLD_MS + 2 * RING_FADE_MS) / 1000;
+      const end = t + ((step.ringMs ?? RING_HOLD_MS) + 2 * RING_FADE_MS) / 1000;
       rings.push({ start: t, end: Math.min(duration, end), box: padBox(e.target, step.pad ?? 0) });
     }
   }

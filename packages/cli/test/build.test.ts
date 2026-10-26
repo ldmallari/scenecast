@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { clampZoom, DEFAULTS, parseSrt, phoneToFrame, travelSecFor, type Box, type Scene, type SceneVoice, type ScheduledStep, type Take, type VideoSpec } from '@scenecast/core';
 import { buildVoiceTrack, readWav, writeWav } from '../src/audio.js';
-import { appPlanScene, buildVideo, captionEvents, chaptersTxt, eventTimes, finalSrt, INTRO_SEC, OUTRO_SEC, onScreen, toFrames, type Recorded } from '../src/build.js';
+import { appPlanScene, buildVideo, captionEvents, chaptersTxt, eventTimes, finalSrt, INTRO_SEC, OUTRO_SEC, onScreen, planZooms, toFrames, type Recorded } from '../src/build.js';
 
 const brand = { primary: '#1F3A5F', accent: '#F5C518', font: 'Inter', introTitle: 'Intro' };
 const spec = { id: 'v', title: 'The video', output: 'v', brand, app: { baseUrl: 'http://x' }, voice: DEFAULTS.voice, scenes: [] } as unknown as VideoSpec;
@@ -88,6 +88,9 @@ describe('buildVideo', () => {
       { start: expect.closeTo(1.5, 1), end: expect.any(Number), box: { x: 96, y: 496, w: 208, h: 48 } },
     ]);
     expect(rings({ ring: true, ringSel: '#other' })).toBeUndefined();
+    // ringMs sets the composer ring's hold: 150 ms fade in, the hold, 150 ms fade out.
+    const [held] = rings({ ring: true, ringMs: 2000 })!;
+    expect(held!.end - held!.start).toBeCloseTo(2.3, 6);
     expect(rings({ ringSel: '#other' })).toBeUndefined();
   });
 
@@ -106,6 +109,74 @@ describe('buildVideo', () => {
     expect(z[0]!.start).toBeCloseTo(2.0, 1);
     expect(z[0]!.end - z[0]!.start).toBeCloseTo(DEFAULTS.video.zoomEaseSec + 1, 6);
     expect(z[0]!.box).toEqual({ x: 860, y: 780, w: 200, h: 60 });
+  });
+});
+
+describe('planZooms', () => {
+  const B: Box = { x: 860, y: 780, w: 200, h: 60 };
+  const B0: Box = { x: 400, y: 200, w: 300, h: 100 };
+  const EASE = DEFAULTS.video.zoomEaseSec;
+  type Act = { do: 'zoom' | 'unzoom'; at: number; ms?: number; box?: Box };
+  /** A take of zoom/unzoom steps at the given output times (times map straight to `at`). */
+  const zoomArgs = (acts: Act[], opts: { initial?: Box; duration?: number } = {}): Parameters<typeof planZooms> => {
+    const scheduled: ScheduledStep[] = acts.map((a, index) => ({
+      index,
+      step: { do: a.do, ...(a.do === 'zoom' ? { sel: '#z' } : {}), cue: `w${index}`, ...(a.ms !== undefined ? { ms: a.ms } : {}) },
+      cueTime: a.at,
+      startAt: a.at,
+      travel: 0,
+    }));
+    const take: Take = {
+      file: 't.webm',
+      flashAt: 0,
+      ...(opts.initial ? { initialZoom: opts.initial } : {}),
+      events: acts.map((a, index) => ({ index, kind: a.do, at: a.at, ...(a.do === 'zoom' ? { target: a.box ?? B } : {}), panels: [], loading: false })),
+    };
+    return [take, scheduled, new Map(acts.map((a, i) => [i, a.at])), opts.duration ?? 10];
+  };
+  const zoomThenUnzoom = (zoomAt: number, unzoomAt: number) => zoomArgs([{ do: 'zoom', at: zoomAt }, { do: 'unzoom', at: unzoomAt }]);
+  const initialThenUnzoom = (unzoomAt: number) => zoomArgs([{ do: 'unzoom', at: unzoomAt }], { initial: B0 });
+  const zoomAt = (at: number, opts: { duration?: number } = {}) => zoomArgs([{ do: 'zoom', at }], opts);
+
+  it('an unzoom step ends the zoom on its cue', () => {
+    expect(planZooms(...zoomThenUnzoom(1.0, 4.0))).toEqual([{ start: 1.0, end: 4.0, box: B }]);
+  });
+
+  it('a scene zoom starts zoomed and holds until the first unzoom', () => {
+    expect(planZooms(...initialThenUnzoom(3.0))[0]).toEqual({ start: 0, end: 3.0, box: B0, instant: true });
+  });
+
+  it('a scene zoom with no unzoom holds until the first zoom step, or else the scene end', () => {
+    expect(planZooms(...zoomArgs([], { initial: B0, duration: 6.0 }))).toEqual([{ start: 0, end: 6.0, box: B0, instant: true }]);
+    expect(planZooms(...zoomArgs([{ do: 'zoom', at: 2.5 }], { initial: B0 }))).toEqual([
+      { start: 0, end: 2.5, box: B0, instant: true },
+      { start: 2.5, end: 2.5 + EASE + 2, box: B },
+    ]);
+  });
+
+  it('a zoom still held at the scene end ends with the scene', () => {
+    const zooms = planZooms(...zoomAt(5.5, { duration: 6.0 }));
+    expect(zooms).toHaveLength(1);
+    expect(zooms[0]!.end).toBe(6.0);
+    // An unzoom cued past the scene end (in the breath) still ends the zoom with the scene.
+    expect(planZooms(...zoomArgs([{ do: 'zoom', at: 4.0 }, { do: 'unzoom', at: 6.2 }], { duration: 6.0 }))).toEqual([{ start: 4.0, end: 6.0, box: B }]);
+  });
+
+  it('a zoom without an unzoom holds for ms after the ease, and never past the next zoom', () => {
+    expect(planZooms(...zoomArgs([{ do: 'zoom', at: 1.0, ms: 500 }]))).toEqual([{ start: 1.0, end: 1.0 + EASE + 0.5, box: B }]);
+    const B2: Box = { x: 100, y: 100, w: 300, h: 80 };
+    // Zoom, zoom, unzoom: the unzoom closes the second zoom only; the first ends where the second starts.
+    expect(planZooms(...zoomArgs([{ do: 'zoom', at: 1.0 }, { do: 'zoom', at: 2.0, box: B2 }, { do: 'unzoom', at: 5.0 }]))).toEqual([
+      { start: 1.0, end: 2.0, box: B },
+      { start: 2.0, end: 5.0, box: B2 },
+    ]);
+  });
+
+  it('appPlanScene starts a scene zoomed on its initial zoom', () => {
+    const app = appInput('a');
+    app.recorded.take.initialZoom = B0;
+    const z = buildVideo(spec, [app], { cards: false }).plan.scenes[0]!.zooms!;
+    expect(z).toEqual([{ start: 0, end: toFrames(4 + DEFAULTS.video.breathSec), box: B0, instant: true }]);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { eventsForCaptions, layoutCaptions, parseSrt, toSrt, zoomedCaptionEvents, type CaptionEvent } from '../src/captions.js';
-import { phoneToFrame } from '../src/frame.js';
+import { eventsForCaptions, fillsScreen, layoutCaptions, parseSrt, toSrt, zoomedCaptionEvents, type CaptionEvent } from '../src/captions.js';
+import { phoneFrame, phoneToFrame } from '../src/frame.js';
 import type { Take } from '../src/record/record.js';
 import { travelSecFor, type ScheduledStep } from '../src/schedule.js';
 import type { SceneVoice } from '../src/voice.js';
@@ -236,5 +236,61 @@ describe('captions during a zoom (on-screen geometry)', () => {
     const easing = events.find((e) => e.start >= 1 - 1e-6 && e.end <= 1.7 + 1e-6)!;
     expect(easing.boxes).toHaveLength(2);
     expect(easing.boxes[0]).toEqual(target);
+  });
+});
+
+describe('targets that fill the screen', () => {
+  const FULL = { x: 0, y: 0, w: 1920, h: 1080 };
+  const take = (target: { x: number; y: number; w: number; h: number }, phone = false): Take => ({
+    file: 'f.webm',
+    flashAt: 0,
+    ...(phone ? { viewport: 'phone' as const } : {}),
+    events: [{ index: 0, kind: 'click', at: 0, target, panels: [], loading: false }],
+  });
+  const times = new Map([[0, 0]]);
+
+  it('fillsScreen is true from 90% of the screen area', () => {
+    expect(fillsScreen({ x: 0, y: 0, w: 1920, h: 972 }, FULL)).toBe(true); // exactly 90%
+    expect(fillsScreen({ x: 0, y: 0, w: 1920, h: 971 }, FULL)).toBe(false);
+    expect(fillsScreen({ x: -500, y: -500, w: 5000, h: 5000 }, FULL)).toBe(true); // only the part on the screen counts
+    expect(fillsScreen(FULL, { x: 0, y: 0, w: 0, h: 0 })).toBe(false);
+  });
+
+  it('a box covering 90% of the screen is not protected', () => {
+    const voice = { duration: 9, phrases: [{ text: 'Here is the whole page.', start: 0, end: 9 }], words: [] };
+    const events = zoomedCaptionEvents(take({ x: 0, y: 0, w: 1920, h: 1000 }), times, [], 9);
+    const [cue] = layoutCaptions({ id: 's' }, voice, events);
+    expect(cue).toMatchObject({ side: 'bottom' });
+    expect(cue!.reason).toBeUndefined();
+  });
+
+  it('on a phone scene the screen is the phone screen', () => {
+    // The whole 390x844 take fills the phone screen: not protected. Half of it is.
+    const whole = zoomedCaptionEvents(take({ x: 0, y: 0, w: 390, h: 844 }, true), times, [], 5);
+    expect(whole[0]!.boxes).toEqual([]);
+    const half = zoomedCaptionEvents(take({ x: 0, y: 0, w: 390, h: 422 }, true), times, [], 5);
+    expect(half[0]!.boxes).toEqual([phoneToFrame({ x: 0, y: 0, w: 390, h: 422 })]);
+    const pf = phoneFrame();
+    expect(fillsScreen(phoneToFrame({ x: 0, y: 0, w: 390, h: 844 }), { x: pf.x, y: pf.y, w: pf.w, h: pf.h })).toBe(true);
+  });
+
+  it('a box that fills the zoomed view is dropped only while the zoom shows it that way', () => {
+    // Unzoomed the 1700x956 target covers 78% of the frame; zoomed on it (region 1785x1004), 91%.
+    const target = { x: 100, y: 60, w: 1700, h: 956 };
+    const events = zoomedCaptionEvents(take(target), times, [{ start: 1, end: 4, box: target }], 5);
+    const before = events.find((e) => e.end <= 1 + 1e-6)!;
+    expect(before.boxes).toEqual([target]);
+    const held = events.find((e) => e.start >= 1.7 - 1e-6 && e.end <= 4 + 1e-6)!;
+    expect(held.boxes).toEqual([]);
+    const easing = events.find((e) => e.start >= 1 - 1e-6 && e.end <= 1.7 + 1e-6)!;
+    expect(easing.boxes).toEqual([target]); // the unzoomed end of the ease still counts
+  });
+
+  it('an instant zoom is held from its start: no unzoomed view while it would ease in', () => {
+    const target = box(900, 1010, 120, 30);
+    const events = zoomedCaptionEvents(take(target), new Map([[0, 0.2]]), [{ start: 0, end: 4, box: target, instant: true }], 5);
+    const first = events.find((e) => e.start >= 0.2 - 1e-6 && e.end <= 0.7 + 1e-6)!;
+    expect(first.boxes).toHaveLength(1);
+    expect(first.boxes[0]).not.toEqual(target);
   });
 });

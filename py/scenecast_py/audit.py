@@ -9,8 +9,10 @@ clock, all boxes are {x, y, w, h} in 1920x1080 frame pixels):
    "outDir": str, "rules": {...}, "loudness": {"lufs", "truePeak"}, "music": {"licence"} | null,
    "allowList": [str],
    "scenes": [{"id", "start", "end", "narration",
+               "screen": box?,                               # the app's screen: the frame, or the phone screen
                "cues": [{"start", "end", "side", "box", "text", "reason"?}],
-               "zooms": [{"start", "end", "box"}],          # the region the composer shows
+               "zooms": [{"start", "end", "box", "instant"?}],  # the region the composer shows; instant: no ease-in
+               "initialZoom": {"box": box | null, "target"} | null,  # the zoom the scene starts with
                "navBox": box | null,
                "navs": [{"edge": "left" | "top", "box"}],     # declared navs: shown whole or not at all
                "phrases": [{"start", "end", "words"}],        # phrase windows; a heard word is clamped into its own
@@ -19,6 +21,7 @@ clock, all boxes are {x, y, w, h} in 1920x1080 frame pixels):
                             "planWordTime", "target" | null, "loading", "settleTimedOut",
                             "ring": {"box", "peak", "by"} | null,
                             "zoom": {"box", "start", "end", "hold"} | null,
+                            "unzoom": {"end"} | null,         # kind "unzoom": the plan zoom end it cues
                             "cueWord": int | null,           # the cue's first word in the narration (scheduler's count)
                             "problems": [str]}]}]}           # each one is a FAIL (e.g. no zoom in the plan)
 
@@ -76,7 +79,7 @@ def _views(lo, hi, zooms, ease):
     views = []
     rest = [(lo, hi)]
     for z in zooms:
-        held_lo, held_hi = z["start"] + ease, z["end"]
+        held_lo, held_hi = z["start"] + (0 if z.get("instant") else ease), z["end"]
         nxt = []
         for a, b in rest:
             if held_hi <= a or held_lo >= b or held_lo >= held_hi:
@@ -96,6 +99,25 @@ def _views(lo, hi, zooms, ease):
 
 
 # ---------------------------------------------------------------- checks
+
+
+def _intersect(a, b):
+    x, y = max(a["x"], b["x"]), max(a["y"], b["y"])
+    return {"x": x, "y": y, "w": max(0.0, min(a["x"] + a["w"], b["x"] + b["w"]) - x),
+            "h": max(0.0, min(a["y"] + a["h"], b["y"] + b["h"]) - y)}
+
+
+def _fills_screen(box, screen, share):
+    """The box covers at least `share` (90%) of the screen; mirrors captions.ts fillsScreen."""
+    area = screen["w"] * screen["h"]
+    if not area > 0:
+        return False
+    i = _intersect(box, screen)
+    return i["w"] * i["h"] >= share * area - EPS
+
+
+def _frame(rules):
+    return {"x": 0.0, "y": 0.0, "w": rules["width"], "h": rules["height"]}
 
 
 def _check(name, verdict, detail=""):
@@ -139,20 +161,31 @@ def _cuts_declared(b, nav):
     return overlap and not _contains(b, n)
 
 
-def _crop(m, nav, rules, navs=()):
+def _crop(m, nav, rules, navs=(), screen=None):
+    """A zoom side within 0.5 px of the frame edge, or at or beyond the app screen's edge (the phone screen),
+    shows everything there is on that side, so it is exempt from the inset rule."""
     z = m["zoom"]
     if z is None:
         return None
     W, H, pad = rules["width"], rules["height"], rules["zoomPadPx"]
     b = z["box"]
+    sc = screen or _frame(rules)
     problems = []
     if b["x"] < -PX_TOL or b["y"] < -PX_TOL or b["x"] + b["w"] > W + PX_TOL or b["y"] + b["h"] > H + PX_TOL:
         problems.append(f"zoom {_fmt_box(b)} is outside the frame")
     full = b["w"] >= W - PX_TOL and b["h"] >= H - PX_TOL
     t = m["target"]
     if t is not None and not full:
-        inset = min(t["x"] - b["x"], t["y"] - b["y"], b["x"] + b["w"] - t["x"] - t["w"], b["y"] + b["h"] - t["y"] - t["h"])
-        if inset < pad - PX_TOL:
+        right, bottom = b["x"] + b["w"], b["y"] + b["h"]
+        sides = [  # (inset, the side shows all there is)
+            (t["x"] - b["x"], b["x"] <= PX_TOL or b["x"] <= sc["x"] + PX_TOL),
+            (t["y"] - b["y"], b["y"] <= PX_TOL or b["y"] <= sc["y"] + PX_TOL),
+            (right - t["x"] - t["w"], right >= W - PX_TOL or right >= sc["x"] + sc["w"] - PX_TOL),
+            (bottom - t["y"] - t["h"], bottom >= H - PX_TOL or bottom >= sc["y"] + sc["h"] - PX_TOL),
+        ]
+        insets = [inset for inset, exempt in sides if not exempt]
+        inset = min(insets) if insets else None
+        if inset is not None and inset < pad - PX_TOL:
             problems.append(f"target is {inset:.0f} px from the zoom edge (needs {pad})")
     if nav is not None:
         nl, nr = max(nav["x"], 0.0), nav["x"] + nav["w"]  # only the on-screen part of the nav counts
@@ -173,8 +206,13 @@ def _loading(m):
     return _check("loading", PASS)
 
 
-def _captions(windows, cues, zooms, rules):
-    """Each window is (lo, hi, boxes): no cue shown in it may overlap those boxes on screen."""
+def _captions(windows, cues, zooms, rules, screen=None):
+    """Each window is (lo, hi, boxes): no cue shown in it may overlap those boxes on screen. A box that fills
+    the app's screen as shown in a view (the screen seen through the view, clipped to the frame) is not
+    protected there: no caption could clear it."""
+    frame = _frame(rules)
+    sc = screen or frame
+    share = rules.get("fullFrameShare", 0.9)
     problems = []
     for cue in cues:
         hit = False
@@ -184,8 +222,12 @@ def _captions(windows, cues, zooms, rules):
                 continue
             hit = True
             for view in _views(a, b, zooms, rules["zoomEaseSec"]):
+                visible = _intersect(_to_screen(sc, view, rules["width"]), frame)
                 for item in boxes:
-                    area = _overlap(cue["box"], _to_screen(item["box"], view, rules["width"]))
+                    shown = _to_screen(item["box"], view, rules["width"])
+                    if _fills_screen(shown, visible, share):
+                        continue
+                    area = _overlap(cue["box"], shown)
                     if area > 0:
                         where = "zoomed" if view is not None else "unzoomed"
                         problems.append(
@@ -228,13 +270,16 @@ def audit_scene(scene, speech, rules):
         checks += [_check("plan", FAIL, p) for p in m.get("problems") or []]
         sync, gap = _sync(m, word_time, rules)
         checks.append(sync)
-        for c in (_target(m), _crop(m, scene.get("navBox"), rules, scene.get("navs") or [])):
+        # An unzoom has nothing to aim at: its row checks sync and captions only.
+        shape_checks = () if m["kind"] == "unzoom" else (
+            _target(m), _crop(m, scene.get("navBox"), rules, scene.get("navs") or [], scene.get("screen")))
+        for c in shape_checks:
             if c is not None:
                 checks.append(c)
         # This row owns the events from its step up to the next cued step (the first row also owns earlier ones).
         nxt = moments[k + 1]["index"] if k + 1 < len(moments) else float("inf")
         mine = [(lo, hi, boxes) for idx, lo, hi, boxes in windows if (k == 0 or idx >= m["index"]) and idx < nxt]
-        checks.append(_captions(mine, scene["cues"], scene["zooms"], rules))
+        checks.append(_captions(mine, scene["cues"], scene["zooms"], rules, scene.get("screen")))
         checks.append(_loading(m))
         t = m["actionTime"]
         side = next((c["side"] for c in scene["cues"] if t is not None and c["start"] <= t < c["end"]), "none")
@@ -255,10 +300,26 @@ def audit_scene(scene, speech, rules):
     return rows
 
 
-def audit_scene_captions(scene, rules):
-    """Captions of a scene with no cued step: no row owns its events, so they are checked here."""
-    windows = [(lo, hi, boxes) for _idx, lo, hi, boxes in _event_windows(scene)]
-    checks = [_captions(windows, scene["cues"], scene["zooms"], rules)]
+def audit_initial_zoom(scene, rules):
+    """Target and crop checks for the zoom a scene starts with (none when it starts unzoomed)."""
+    iz = scene.get("initialZoom")
+    if not iz:
+        return []
+    if iz.get("box") is None:
+        return [_check("plan", FAIL, "no initial zoom in the plan for a scene that starts zoomed")]
+    m = {"zoom": {"box": iz["box"]}, "ring": None, "target": iz["target"]}
+    return [_target(m), _crop(m, scene.get("navBox"), rules, scene.get("navs") or [], scene.get("screen"))]
+
+
+def audit_scene_row(scene, rules):
+    """The scene row: the initial zoom's target and crop, and the captions of a scene with no cued step (no
+    row owns its events, so they are checked here). None when there is nothing to check."""
+    checks = audit_initial_zoom(scene, rules)
+    if not scene["moments"]:
+        windows = [(lo, hi, boxes) for _idx, lo, hi, boxes in _event_windows(scene)]
+        checks.append(_captions(windows, scene["cues"], scene["zooms"], rules, scene.get("screen")))
+    if not checks:
+        return None
     return {"scene": scene["id"], "checks": checks, "verdict": _worst(checks)}
 
 
@@ -475,7 +536,8 @@ def write_table(path, verdict):
             f'| {r["captionSide"]} | {_cell(_checks_cell(r["checks"]))} | {r["verdict"]} |'
         )
     if verdict["scenes"]:
-        lines += ["", "## Scenes without cued steps", "", "| scene | checks | verdict |", "|---|---|---|"]
+        lines += ["", "## Scene checks", "", "Initial zooms, and the captions of scenes without cued steps.", "",
+                  "| scene | checks | verdict |", "|---|---|---|"]
         lines += [f'| {_cell(r["scene"])} | {_cell(_checks_cell(r["checks"]))} | {r["verdict"]} |' for r in verdict["scenes"]]
     lines += ["", "## Narration", "", "| scene | verdict | diff |", "|---|---|---|"]
     for n in verdict["narration"]:
@@ -500,8 +562,9 @@ def run(data, transcriber=transcribe):
     for scene in data["scenes"]:
         speech = SceneSpeech(scene, words, data.get("allowList") or [])
         rows += audit_scene(scene, speech, rules)
-        if not scene["moments"]:
-            scene_rows.append(audit_scene_captions(scene, rules))
+        scene_row = audit_scene_row(scene, rules)
+        if scene_row is not None:
+            scene_rows.append(scene_row)
         diff = speech.diff()
         narration.append({"scene": scene["id"], "verdict": WARN if diff else PASS, "diff": "; ".join(diff)})
     loudness = audit_loudness(data["loudness"], rules)

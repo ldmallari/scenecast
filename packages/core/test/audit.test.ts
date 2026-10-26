@@ -235,6 +235,88 @@ describe('buildAuditInput', () => {
   });
 });
 
+describe('buildAuditInput: unzoom steps and scenes that start zoomed', () => {
+  const zspec = VideoSpecSchema.parse({
+    ...spec,
+    scenes: [{
+      id: 'zz', kind: 'app', narration: 'Here are the totals, and now back out.', zoom: { sel: '#head' },
+      steps: [{ do: 'zoom', sel: '#totals', cue: 'totals' }, { do: 'unzoom', cue: 'back' }],
+    }],
+  });
+  const zz = zspec.scenes[0]!;
+  const HEAD = box(100, 80, 400, 60);
+  // The unzoom is logged at 4.05 s after the flash (scene 3.95): the plan zoom it closes ends at 4.0.
+  const take = (over: Partial<Take> = {}): Take => ({
+    file: 'zz.webm',
+    flashAt: 0,
+    initialZoom: HEAD,
+    events: [
+      { index: 0, kind: 'zoom', at: 2.1, target: TOTALS, panels: [], loading: false },
+      { index: 1, kind: 'unzoom', at: 4.05, panels: [], loading: false },
+    ],
+    ...over,
+  });
+  const zplan = (zooms: AuditPlan['scenes'][number]['zooms'], rings?: AuditPlan['scenes'][number]['rings']): AuditPlan => ({
+    brand: spec.brand,
+    scenes: [
+      { kind: 'card', duration: 3 },
+      { kind: 'app', duration: 6, segments: [{ src: 'zz.webm', srcIn: 0.1, srcOut: 6.1, outStart: 0 }], zooms, ...(rings ? { rings } : {}) },
+    ],
+  });
+  const PLAN_ZOOMS = [{ start: 0, end: 2.0, box: HEAD, instant: true }, { start: 2.0, end: 4.0, box: TOTALS }];
+  const zbuild = (p: AuditPlan, t: Take = take()) =>
+    build(opts({ plan: p, scenes: [{ scene: zz, planIndex: 1, scheduled: sched(zz, [2.0, 4.0], [2.0, 4.0]), take: t, flashTime: 0.1 }] }))
+      .scenes[0] as unknown as Record<string, any>;
+
+  it('an unzoom step takes its time from the zoom end in the plan', () => {
+    const s = zbuild(zplan(PLAN_ZOOMS, [{ start: 3.9, end: 4.5, box: box(0, 0, 10, 10) }]));
+    const m = s.moments[1]!;
+    expect(m.kind).toBe('unzoom');
+    expect(m.actionTime).toBe(3 + 4.0);
+    expect(m.unzoom).toEqual({ end: 7.0 });
+    expect(m.problems).toEqual([]);
+    // No target, ring or zoom: the row checks sync and captions only.
+    expect(m.target).toBeNull();
+    expect(m.zoom).toBeNull();
+    expect(m.ring).toBeNull();
+    // Other moments say they are no unzoom.
+    expect(s.moments[0]!.unzoom).toBeNull();
+  });
+
+  it('an unzoom with no zoom ending near it is a problem', () => {
+    const m = zbuild(zplan([{ start: 0, end: 2.0, box: HEAD, instant: true }, { start: 2.0, end: 3.2, box: TOTALS }])).moments[1]!;
+    expect(m.unzoom).toBeNull();
+    expect(m.problems).toEqual(['no zoom ends within 0.5 s of the unzoom']);
+  });
+
+  it('a scene that starts zoomed gets its initial zoom: the take box as target, the clamped plan zoom as box', () => {
+    const s = zbuild(zplan(PLAN_ZOOMS));
+    expect(s.initialZoom).toEqual({ box: clampZoom(HEAD, FRAME, 24), target: HEAD });
+    // The instant zoom reaches the Python audit marked as such; a zoom step never takes it as its own.
+    expect(s.zooms[0]).toMatchObject({ start: 3, end: 5, instant: true });
+    expect(s.zooms[1]!.instant).toBeUndefined();
+    expect(s.moments[0]!.zoom.start).toBe(5);
+    // No instant zoom in the plan for a take that starts zoomed: the scene row has no box to check.
+    expect(zbuild(zplan([PLAN_ZOOMS[1]!])).initialZoom).toEqual({ box: null, target: HEAD });
+    // A scene that does not start zoomed has none.
+    expect(zbuild(zplan([PLAN_ZOOMS[1]!]), take({ initialZoom: undefined })).initialZoom).toBeNull();
+    expect(build().scenes[0] as unknown as Record<string, unknown>).toMatchObject({ initialZoom: null });
+  });
+
+  it('phone scenes map the initial zoom into the frame', () => {
+    const s = build(opts({
+      plan: { ...zplan([{ start: 0, end: 2.0, box: HEAD, instant: true }]), scenes: [{ kind: 'card', duration: 3 }, { ...zplan([{ start: 0, end: 2.0, box: HEAD, instant: true }]).scenes[1]!, phone: true }] },
+      scenes: [{ scene: zz, planIndex: 1, scheduled: sched(zz, [2.0, 4.0], [2.0, 4.0]), take: take({ viewport: 'phone' }), flashTime: 0.1 }],
+    })).scenes[0] as unknown as Record<string, any>;
+    expect(s.initialZoom.target).toEqual(phoneToFrame(HEAD));
+    expect(s.initialZoom.box).toEqual(clampZoom(phoneToFrame(HEAD), FRAME, 24, undefined, phoneFrame().x));
+  });
+
+  it('the rules carry the full-frame share', () => {
+    expect((buildAuditInput(opts(), { outDir: '/x', ffmpeg: null, whisperModel: null }) as { rules: Record<string, unknown> }).rules.fullFrameShare).toBe(0.9);
+  });
+});
+
 const word = (w: string, start: number): HeardWord => ({ w: ` ${w}`, start, end: start + 0.25 });
 const HEARD = [
   word('Open', 3.9), word('the', 4.2), word('report,', 4.4), word('then', 4.8), word('look', 5.0), word('at', 5.2), word('the', 5.3), word('totals.', 5.45),

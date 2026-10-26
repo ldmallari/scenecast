@@ -14,6 +14,8 @@ export interface AuditTimed {
   start: number;
   end: number;
   box: Box;
+  /** Shown from `start` with no ease-in: the zoom a scene starts with. */
+  instant?: boolean;
 }
 
 /** The parts of a compose plan scene the audit reads (a `PlanScene` from @scenecast/compose fits). */
@@ -95,9 +97,9 @@ const RING_FADE_SEC = RING_FADE_MS / 1000;
 
 const selectors = (s: ScheduledStep) => (s.step.sel === undefined ? [] : Array.isArray(s.step.sel) ? s.step.sel : [s.step.sel]);
 
-function nearest(items: AuditTimed[], t: number): AuditTimed | undefined {
+function nearest(items: AuditTimed[], t: number, at: (it: AuditTimed) => number = (it) => it.start): AuditTimed | undefined {
   let best: AuditTimed | undefined;
-  for (const it of items) if (Math.abs(it.start - t) <= MATCH_SEC && (!best || Math.abs(it.start - t) < Math.abs(best.start - t))) best = it;
+  for (const it of items) if (Math.abs(at(it) - t) <= MATCH_SEC && (!best || Math.abs(at(it) - t) < Math.abs(at(best) - t))) best = it;
   return best;
 }
 
@@ -132,7 +134,7 @@ export function buildAuditInput(
     if (scene.kind === 'title') {
       if (!ps || ps.kind !== 'card') throw new Error(`audit: title scene "${scene.id}" has no card at plan index ${planIndex}`);
       const base = { id: scene.id, kind: 'title', start: round(start), end: round(start + ps.duration), narration: scene.narration, cues, phrases };
-      return { ...base, zooms: [], navBox: null, navs: [], events: [], moments: [] };
+      return { ...base, zooms: [], navBox: null, navs: [], initialZoom: null, events: [], moments: [] };
     }
     if (!ps || ps.kind !== 'app') throw new Error(`audit: scene "${scene.id}" has no app scene at plan index ${planIndex}`);
     if (!scheduled || !take || flashTime === undefined) throw new Error(`audit: app scene "${scene.id}" needs scheduled, take and flashTime`);
@@ -147,7 +149,10 @@ export function buildAuditInput(
       start: z.start,
       end: z.end,
       box: clampZoom(toFrame(z.box), frame, DEFAULTS.audit.zoomPadPx, navBox, phone ? phoneFrame().x : 0, navs),
+      ...(z.instant ? { instant: true } : {}),
     }));
+    // Zoom steps ease in; the scene's own starting zoom is never theirs.
+    const stepZooms = zooms.filter((z) => !z.instant);
     const rings = (ps.rings ?? []).map((r) => ({ ...r, box: toFrame(r.box) }));
     const sceneTimeOf = (at: number) => outputTimeOf(segments, flashTime + at);
     const global = (t: number | null) => (t === null ? null : round(start + t));
@@ -176,10 +181,11 @@ export function buildAuditInput(
         let actionTime = mapped;
         let zoom = null;
         let ring = null;
+        let unzoom = null;
         let target = ev.target;
         if (s.step.do === 'zoom') {
           // The zoom is the composer's: it starts when the plan says.
-          const z = nearest(zooms, ref);
+          const z = nearest(stepZooms, ref);
           if (z) {
             actionTime = z.start;
             // Held once eased in; a zoom shorter than the ease is caught at its end, before it eases out.
@@ -190,7 +196,15 @@ export function buildAuditInput(
         // A `ringSel` ring is the recorder's too: drawn at the action, its target is the ringed element, not the pointer's.
         const ringSel = s.step.do !== 'ring' && s.step.ringSel !== undefined;
         if (ringSel) target = ev.ringTarget;
-        if (s.step.do === 'ring' || ringSel) {
+        if (s.step.do === 'unzoom') {
+          // The composer eases the zoom out when the plan zoom it closes ends. No target, ring or crop to check.
+          const z = nearest(zooms, ref, (it) => it.end);
+          if (z) {
+            actionTime = z.end;
+            unzoom = { end: round(start + z.end) };
+          } else problems.push(`no zoom ends within ${MATCH_SEC} s of the unzoom`);
+          target = undefined;
+        } else if (s.step.do === 'ring' || ringSel) {
           // The ring drawn at the cue, checked against the element as it was at the ring's peak.
           const hold = (ringSel ? s.step.ringMs : s.step.ms) ?? RING_HOLD_MS;
           if (!ev.ringBox) problems.push(`no ring box was logged for this ${ringSel ? 'ringSel ring' : 'ring step'}`);
@@ -215,6 +229,7 @@ export function buildAuditInput(
           settleTimedOut: !!ev.settleTimedOut,
           ring,
           zoom,
+          unzoom,
           problems,
         };
       });
@@ -222,6 +237,10 @@ export function buildAuditInput(
     // The app's screen in the frame: the whole frame, or the phone screen (the blank-frame check looks only here).
     const pf = phoneFrame();
     const screen = phone ? { x: pf.x, y: pf.y, w: pf.w, h: pf.h } : frame;
+    // A scene that starts zoomed: the box the recorder measured is the target; the box is the plan's
+    // instant zoom, clamped like the composer (null when the plan has none: a FAIL in the audit).
+    const initial = zooms.find((z) => z.instant);
+    const initialZoom = take.initialZoom ? { box: initial?.box ?? null, target: toFrame(take.initialZoom) } : null;
     return {
       id: scene.id,
       kind: 'app',
@@ -234,6 +253,7 @@ export function buildAuditInput(
       zooms: zooms.map((z) => ({ ...z, start: round(start + z.start), end: round(start + z.end) })),
       navBox: navBox ?? null,
       navs,
+      initialZoom,
       events,
       moments,
     };
@@ -251,6 +271,7 @@ export function buildAuditInput(
       height,
       syncMaxSec: DEFAULTS.audit.syncMaxSec,
       zoomPadPx: DEFAULTS.audit.zoomPadPx,
+      fullFrameShare: DEFAULTS.captions.fullFrameShare,
       voiceLufs: L.voiceLufs,
       toleranceLu: L.toleranceLu,
       truePeakDb: L.truePeakDb,

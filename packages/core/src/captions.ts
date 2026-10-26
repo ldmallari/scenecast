@@ -43,6 +43,23 @@ export function eventsForCaptions(take: Take, scheduled: ScheduledStep[], opts: 
 
 const EPS = 1e-6;
 
+const intersect = (a: Box, b: Box): Box => {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  return { x, y, w: Math.max(0, Math.min(a.x + a.w, b.x + b.w) - x), h: Math.max(0, Math.min(a.y + a.h, b.y + b.h) - y) };
+};
+
+/**
+ * The box covers at least `fullFrameShare` (90%) of the screen: area(box ∩ screen) ≥ 0.9 · area(screen).
+ * Such a box can't be kept clear of a caption, so caption layout and the audit don't protect it.
+ */
+export function fillsScreen(box: Box, screen: Box): boolean {
+  const area = screen.w * screen.h;
+  if (!(area > 0)) return false;
+  const i = intersect(box, screen);
+  return i.w * i.h >= DEFAULTS.captions.fullFrameShare * area - EPS;
+}
+
 /** Where `box` (frame px) shows on screen while the composer shows the region `zoom`. */
 export function onScreen(box: Box, zoom: Box | null): Box {
   if (!zoom) return box;
@@ -57,7 +74,7 @@ export function onScreen(box: Box, zoom: Box | null): Box {
 function views(lo: number, hi: number, zooms: TimedBox[], ease: number): (Box | null)[] {
   let rest: [number, number][] = [[lo, hi]];
   for (const z of zooms) {
-    const [hl, hh] = [z.start + ease, z.end];
+    const [hl, hh] = [z.start + (z.instant ? 0 : ease), z.end];
     rest = rest.flatMap(([a, b]): [number, number][] => {
       if (hh <= a || hl >= b || hl >= hh) return [[a, b]];
       const out: [number, number][] = [];
@@ -76,6 +93,8 @@ export interface TimedBox {
   start: number;
   end: number;
   box: Box;
+  /** Shown from `start` with no ease-in (a scene that starts zoomed). */
+  instant?: boolean;
 }
 
 /**
@@ -85,16 +104,26 @@ export interface TimedBox {
  * next event. Every window is split where a zoom starts,
  * finishes easing, ends or finishes easing out, and each piece carries the boxes as they look on
  * screen in every view of that piece, so a caption clear of these is clear of what the audit checks.
+ * A box that fills the app's screen as shown in a view (the frame, or the phone screen, seen through
+ * that view and clipped to the frame; see `fillsScreen`) is left out of that view.
  */
 export function zoomedCaptionEvents(take: Take, times: Map<number, number>, zooms: TimedBox[], sceneEnd: number): CaptionEvent[] {
   const phone = take.viewport === 'phone';
   const toFrame = (b: Box) => (phone ? phoneToFrame(b) : b);
   const navs = (take.navs ?? []).map((n) => ({ ...n, box: toFrame(n.box) }));
   const ease = DEFAULTS.video.zoomEaseSec;
+  const frame: Box = { x: 0, y: 0, w: DEFAULTS.video.width, h: DEFAULTS.video.height };
+  const pf = phoneFrame();
+  const screen: Box = phone ? { x: pf.x, y: pf.y, w: pf.w, h: pf.h } : frame;
   const regions: TimedBox[] = zooms.map((z) => ({
     ...z,
-    box: clampZoom(toFrame(z.box), { x: 0, y: 0, w: DEFAULTS.video.width, h: DEFAULTS.video.height }, DEFAULTS.audit.zoomPadPx, undefined, phone ? phoneFrame().x : 0, navs),
+    box: clampZoom(toFrame(z.box), frame, DEFAULTS.audit.zoomPadPx, undefined, phone ? pf.x : 0, navs),
   }));
+  /** The boxes as they look in view `v`, without those that fill the screen shown there. */
+  const shown = (boxes: Box[], v: Box | null): Box[] => {
+    const visible = intersect(onScreen(screen, v), frame);
+    return boxes.map((b) => onScreen(b, v)).filter((b) => !fillsScreen(b, visible));
+  };
   const timed = take.events
     .map((e) => ({ e, t: times.get(e.index)! }))
     .sort((a, b) => a.t - b.t);
@@ -108,7 +137,7 @@ export function zoomedCaptionEvents(take: Take, times: Map<number, number>, zoom
     for (let k = 0; k + 1 < cuts.length; k++) {
       const [lo, hi] = [cuts[k]!, cuts[k + 1]!];
       if (hi - lo <= EPS) continue;
-      out.push({ start: lo, end: hi, boxes: views(lo, hi, regions, ease).flatMap((v) => boxes.map((b) => onScreen(b, v))) });
+      out.push({ start: lo, end: hi, boxes: views(lo, hi, regions, ease).flatMap((v) => shown(boxes, v)) });
     }
   });
   return out;

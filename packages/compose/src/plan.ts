@@ -9,6 +9,8 @@ export interface Timed {
   start: number;
   end: number;
   box: Box;
+  /** The box is shown from `start` with no ease-in (a scene that starts zoomed). */
+  instant?: boolean;
 }
 
 export interface CardSpec {

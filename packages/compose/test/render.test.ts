@@ -274,6 +274,17 @@ describe('scene helpers', () => {
     expect(zoomBoxAt(zooms, 3.7, FRAME, 0.7)).toEqual(FRAME);
   });
 
+  it('an instant zoom shows its box from the first frame', () => {
+    const B = { x: 480, y: 270, w: 960, h: 540 };
+    expect(zoomBoxAt([{ start: 0, end: 3, box: B, instant: true }], 0, FRAME, 0.7)).toEqual(B);
+    expect(zoomBoxAt([{ start: 0, end: 3, box: B, instant: true }], 2.9, FRAME, 0.7)).toEqual(B);
+    // It still eases out at its end, and a zoom after it eases in from it.
+    expect(zoomBoxAt([{ start: 0, end: 3, box: B, instant: true }], 3.35, FRAME, 0.7).w).toBeCloseTo((1920 + 960) / 2, 6);
+    const next = { x: 0, y: 0, w: 768, h: 432 };
+    const both = [{ start: 0, end: 2, box: B, instant: true }, { start: 2, end: 4, box: next }];
+    expect(zoomBoxAt(both, 2.35, FRAME, 0.7).w).toBeCloseTo((960 + 768) / 2, 6);
+  });
+
   it('fades rings in and out over 150 ms at 90%', () => {
     const ring = { start: 1, end: 2, box: FRAME };
     expect(ringAlpha(ring, 0.99)).toBe(0);
