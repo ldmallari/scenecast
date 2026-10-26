@@ -6,6 +6,7 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { lastFrameTime } from '../src/ffmpeg.js';
 import { findUv, uvEnv } from '../src/toolchain.js';
 import { DEFAULT_TRAVEL_SEC, recordScene, travelSecFor, type TakeEvent } from '../src/record/record.js';
 import { DEFAULTS, type AppConn, type Scene, type Step } from '../src/scene/schema.js';
@@ -99,6 +100,9 @@ function pixelTrack(file: string, x: number, y: number): [number, number, number
   return px;
 }
 
+/** When the action fired on the recorder's own clock: its logged (video-clock) time less any wall-clock step. */
+const fired = (e: TakeEvent) => e.at - (e.clockShift ?? 0);
+
 const inFrame = (b: { x: number; y: number; w: number; h: number }) =>
   b.w > 0 && b.h > 0 && b.x >= 0 && b.y >= 0 && b.x + b.w <= DEFAULTS.video.width && b.y + b.h <= DEFAULTS.video.height;
 
@@ -134,13 +138,13 @@ describe('recordScene', () => {
       // Never early. Late only by the final checks (aim, loading snapshot, pointer move), which start 40 ms before
       // arrival and measured 13-28 ms on the loaded test PC. The bound is the glide lead (0.15 s): a late action
       // at most doubles the designed rest of the cursor on the target, and retime anchors on the logged time.
-      const late = e.at - (plan[i]!.startAt + DEFAULT_TRAVEL_SEC);
+      const late = fired(e) - (plan[i]!.startAt + DEFAULT_TRAVEL_SEC);
       expect(late, `event ${i} late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
       expect(late, `event ${i} late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
     }
     // ring fires on its own time (no travel); it logs the box it drew (padded) and the element at its peak
     const ringEv = take.events[3]!;
-    expect(Math.abs(ringEv.at - 4.4)).toBeLessThanOrEqual(0.15);
+    expect(Math.abs(fired(ringEv) - 4.4)).toBeLessThanOrEqual(0.15);
     expect(inFrame(ringEv.target!)).toBe(true);
     const el = ringEv.target!;
     for (const [k, v] of Object.entries({ x: el.x - 8, y: el.y - 8, w: el.w + 16, h: el.h + 16 }))
@@ -167,6 +171,36 @@ describe('recordScene', () => {
     expect(Math.abs(videoGap - take.events[2]!.at)).toBeLessThanOrEqual(2 / VIDEO_FPS);
   }, 60_000);
 
+  it('records at least minTakeSec after the flash', async () => {
+    const steps: Step[] = [{ do: 'click', sel: '#agree' }];
+    const take = await recordScene(scene('long', '/form', steps), sched(steps, [0.5]), app, path.join(work, 'long'), { minTakeSec: 4 });
+    expect((await lastFrameTime(take.file)) - take.flashAt).toBeGreaterThanOrEqual(4 - 0.05);
+  }, 60_000);
+
+  it('a wall-clock step mid-take moves the logged times with the video, not the steps themselves', async () => {
+    // The browser stamps frames with the wall clock; a step of it (WSL2 does this every ~30 s) stretches the video
+    // from then on. Here the recorder's view of the wall clock jumps 2 s ahead 1.5 s after the flash. It is built on
+    // the monotonic clock, so a real step of the system clock during the test cannot add to it.
+    let since: number | undefined;
+    const wallClock = () => {
+      since ??= performance.now();
+      return performance.timeOrigin + performance.now() + (performance.now() - since > 1500 ? 2000 : 0);
+    };
+    const steps: Step[] = [{ do: 'click', sel: '#agree' }, { do: 'click', sel: '#name' }];
+    const plan = sched(steps, [0.5, 2.0]);
+    const take = await recordScene(scene('stepped', '/form', steps), plan, app, path.join(work, 'stepped'), { wallClock });
+    const [first, second] = take.events as [TakeEvent, TakeEvent];
+    // Before the step: logged as it happened. After it: logged 2 s later, where the video shows it.
+    expect(first.clockShift).toBeUndefined();
+    expect(second.clockShift).toBe(2);
+    // Both still fired on their cues: the steps keep the recorder's own clock.
+    for (const [i, e] of [first, second].entries()) {
+      const late = fired(e) - (plan[i]!.startAt + DEFAULT_TRAVEL_SEC);
+      expect(late).toBeGreaterThanOrEqual(-0.005);
+      expect(late).toBeLessThanOrEqual(0.15);
+    }
+  }, 60_000);
+
   it('pre-positioned click on the first word lands within 0.10 s of its cue', async () => {
     const steps: Step[] = [{ do: 'click', sel: '#menu-button', cue: 'Open' }];
     const voice = { duration: 3, phrases: [], words: [{ w: 'Open', start: 0.15, end: 0.4 }, { w: 'it.', start: 0.45, end: 0.7 }] };
@@ -174,7 +208,7 @@ describe('recordScene', () => {
     expect(plan[0]).toMatchObject({ startAt: 0.15, travel: 0, prePosition: true });
     const take = await recordScene(scene('prepos', '/dashboard', steps), plan, app, path.join(work, 'takes'));
     const e = take.events[0]!;
-    expect(Math.abs(e.at - 0.15)).toBeLessThanOrEqual(0.1);
+    expect(Math.abs(fired(e) - 0.15)).toBeLessThanOrEqual(0.1);
     expect(e.cursorTo).toBeDefined();
   }, 60_000);
 
@@ -189,7 +223,7 @@ describe('recordScene', () => {
     expect(plan[1]!.prePosition).toBeUndefined();
     const take = await recordScene(scene('twoearly', '/dashboard', steps), plan, app, path.join(work, 'takes'));
     for (const [i, cue] of [0.15, 0.55].entries()) {
-      const late = take.events[i]!.at - cue;
+      const late = fired(take.events[i]!) - cue;
       expect(late, `event ${i} late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
       expect(late, `event ${i} late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
     }
@@ -200,7 +234,7 @@ describe('recordScene', () => {
     const plan = sched(steps, [0.6]);
     expect(plan[0]!.travel).toBe(0.9);
     const take = await recordScene(scene('glide900', '/dashboard', steps), plan, app, path.join(work, 'takes'));
-    const late = take.events[0]!.at - (0.6 + 0.9);
+    const late = fired(take.events[0]!) - (0.6 + 0.9);
     expect(late, `late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
     expect(late, `late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
   }, 60_000);
@@ -240,7 +274,7 @@ describe('recordScene', () => {
     expect(click.loading).toBe(false);
     expect(inFrame(click.target!)).toBe(true);
     // the content only appears 2.5 s after the goto, so the click is late, not skipped
-    expect(click.at).toBeGreaterThan(0.5 + 2.5);
+    expect(fired(click)).toBeGreaterThan(0.5 + 2.5);
   }, 60_000);
 
   it('missing selector fails with scene and step', async () => {
@@ -259,7 +293,7 @@ describe('recordScene', () => {
     const e = take.events[0]!;
     expect(e.settleTimedOut).toBeUndefined();
     expect(e.loading).toBe(false);
-    expect(Math.abs(e.at - (0.8 + DEFAULT_TRAVEL_SEC))).toBeLessThanOrEqual(0.15);
+    expect(Math.abs(fired(e) - (0.8 + DEFAULT_TRAVEL_SEC))).toBeLessThanOrEqual(0.15);
   }, 60_000);
 
   it('pointer step without sel fails like ring and zoom', async () => {
@@ -386,7 +420,7 @@ describe('recordScene', () => {
     expect(take.events[2]!.clicked).toBeUndefined();
     // A check glides like a click and lands on its time.
     for (const i of [0, 1]) {
-      const late = take.events[i]!.at - (plan[i]!.startAt + DEFAULT_TRAVEL_SEC);
+      const late = fired(take.events[i]!) - (plan[i]!.startAt + DEFAULT_TRAVEL_SEC);
       expect(late, `event ${i} late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
       expect(late, `event ${i} late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
     }
@@ -438,7 +472,7 @@ describe('recordScene', () => {
     const [zoom, unzoom] = take.events as [TakeEvent, TakeEvent];
     expect(zoom.busyUntil).toBeUndefined();
     expect(unzoom.kind).toBe('unzoom');
-    expect(Math.abs(unzoom.at - 1.2)).toBeLessThanOrEqual(0.15);
+    expect(Math.abs(fired(unzoom) - 1.2)).toBeLessThanOrEqual(0.15);
     expect(unzoom.target).toBeUndefined();
     expect(unzoom.busyUntil).toBeUndefined();
   }, 60_000);
@@ -505,7 +539,7 @@ describe('recordScene', () => {
     for (const [i, spot] of [[1, 'left'], [2, 'right']] as const) {
       const e = take.events[i]!;
       expect(e.kind).toBe('park');
-      const late = e.at - actionAt(plan[i]!);
+      const late = fired(e) - actionAt(plan[i]!);
       expect(late, `park ${i} late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
       expect(late, `park ${i} late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
       const p = spotPoint(spot, vp);
@@ -523,7 +557,7 @@ describe('recordScene', () => {
     expect(plan[0]).toMatchObject({ startAt: 0.15, travel: 0, prePosition: true });
     const take = await recordScene(s, plan, app, path.join(work, 'takes'), { cursor: { start: 'center', park: 'left', parkAfterSec: 2.5 } });
     const e = take.events[0]!;
-    expect(Math.abs(e.at - 0.15)).toBeLessThanOrEqual(0.1);
+    expect(Math.abs(fired(e) - 0.15)).toBeLessThanOrEqual(0.1);
     const p = spotPoint('left', { width: DEFAULTS.video.width, height: DEFAULTS.video.height });
     expect(Math.abs(e.cursorTo!.x + 3 - p.x)).toBeLessThanOrEqual(1);
     expect(Math.abs(e.cursorTo!.y + 2 - p.y)).toBeLessThanOrEqual(1);

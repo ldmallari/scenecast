@@ -30,6 +30,12 @@ export interface RetimeOpts {
   flashEnd: number;
   /** Length of the source file in seconds; past it the last decodable frame is held. Default: unbounded. */
   srcDuration?: number;
+  /**
+   * Time of the take's last decodable frame (from `lastFrameTime`), in source seconds. No clip reads past it and no
+   * hold freezes a later time: a clip that would run on becomes a clip up to it plus a hold of it. Default:
+   * `srcDuration` less one source frame.
+   */
+  lastFrameSec?: number;
   breathSec?: number;
   fps?: number;
   /** Runs of near-uniform frames in the take (from scanBlank): the last good frame is frozen over each. */
@@ -84,8 +90,11 @@ function cutRanges(p: number, n: number, excess: number, label: string, busy: nu
   return cuts.sort((x, y) => x[0] - y[0]);
 }
 
-/** Snaps segment starts to the output frame grid; each length is the gap to the next snapped start. */
-function quantise(segs: Segment[], total: number, fps: number): Segment[] {
+/**
+ * Snaps segment starts to the output frame grid; each length is the gap to the next snapped start. A clip that the
+ * rounding would stretch past `last` (the last frame) ends on it instead, starting that sub-frame earlier.
+ */
+function quantise(segs: Segment[], total: number, fps: number, last: number): Segment[] {
   const q = (t: number) => Math.round(t * fps) / fps;
   const out: Segment[] = [];
   segs.forEach((g, i) => {
@@ -93,7 +102,11 @@ function quantise(segs: Segment[], total: number, fps: number): Segment[] {
     const end = i + 1 < segs.length ? q(segs[i + 1]!.outStart) : q(total);
     const len = end - start;
     if (len < 0.5 / fps) return;
-    out.push(g.hold !== undefined ? { ...g, outStart: start, hold: len } : { ...g, outStart: start, srcOut: g.srcIn + len });
+    if (g.hold !== undefined) out.push({ ...g, outStart: start, hold: len });
+    else {
+      const srcIn = g.srcIn + len > last + EPS ? Math.max(0, last - len) : g.srcIn;
+      out.push({ ...g, outStart: start, srcIn, srcOut: srcIn + len });
+    }
   });
   return out;
 }
@@ -106,7 +119,8 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
   const { flashTime: flash, flashEnd: srcStart, sceneId } = opts;
   const fps = opts.fps ?? DEFAULTS.video.fps;
   const total = voice.duration + (opts.breathSec ?? DEFAULTS.video.breathSec);
-  const srcEnd = opts.srcDuration ?? Infinity;
+  /** The last frame there is to show: never read past it. */
+  const last = opts.lastFrameSec ?? (opts.srcDuration !== undefined ? opts.srcDuration - SRC_FRAME : Infinity);
   const byIndex = new Map(scheduled.map((s) => [s.index, s]));
 
   const anchors = take.events.map((e) => {
@@ -164,14 +178,13 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
   };
   const play = (from: number, len: number) => {
     if (len <= EPS) return;
-    const end = Math.min(from + len, srcEnd);
-    const got = Math.max(0, end - from);
+    const got = Math.max(0, Math.min(from + len, last) - from);
     if (got > EPS) clip(from, from + got);
-    else outT += got;
-    if (len - got > EPS) hold(srcEnd - SRC_FRAME, len - got);
+    if (len - got > EPS) hold(last, len - got);
   };
   const hold = (at: number, len: number) => {
     if (len <= EPS) return;
+    at = Math.min(at, last);
     // Never hold a blank frame: inside a blank run, hold that run's last good frame instead.
     const blank = blanks.find((b) => at >= b.start - EPS && at < b.end - EPS);
     if (blank) at = blank.holdAt;
@@ -199,7 +212,7 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
     srcT = Math.max(srcT, a.src);
   });
   play(srcT, total - outT);
-  return quantise(segs, total, fps);
+  return quantise(segs, total, fps, last);
 }
 
 /**

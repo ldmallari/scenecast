@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { blankRanges, detectFlash, scanBlank } from '../src/ffmpeg.js';
+import { blankRanges, detectFlash, lastFrameTime, scanBlank } from '../src/ffmpeg.js';
 import { DEFAULT_TRAVEL_SEC, type Take, type TakeEvent } from '../src/record/record.js';
 import { outputTimeOf, retime, type Segment } from '../src/retime.js';
 import { travelSecFor, type ScheduledStep } from '../src/schedule.js';
@@ -136,6 +136,67 @@ describe('retime', () => {
     expect(Math.abs(sceneLen(segs) - 6.45)).toBeLessThanOrEqual(0.5 / 30 + 1e-9);
   });
 
+  it('never reads past the last frame', () => {
+    const segs = retime(take([{ index: 0, kind: 'click', at: 1.0 }]), sched([{ index: 0, do: 'click', startAt: 0.5, travel: 0.5 }]), voice(14.6), {
+      sceneId: 's',
+      flashTime: 0.5,
+      flashEnd: 0.6,
+      srcDuration: 14.84,
+      lastFrameSec: 14.8,
+    });
+    for (const g of segs) {
+      expect(g.srcOut).toBeLessThanOrEqual(14.8 + 1e-9);
+      expect(g.srcIn).toBeLessThanOrEqual(14.8 + 1e-9);
+    }
+    // 15.05 s (voice + breath), give or take the half output frame the scene end rounds to.
+    expect(Math.abs(segs.reduce((t, g) => t + (g.hold ?? g.srcOut - g.srcIn), 0) - 15.05)).toBeLessThanOrEqual(0.5 / 30 + 1e-9);
+    // The clip runs up to the last frame, which is then held to the end.
+    const end = segs.at(-1)!;
+    expect(end.hold).toBeGreaterThan(0);
+    expect(end.srcIn).toBe(14.8);
+  });
+
+  it('a clip that output-frame rounding would stretch past the last frame ends on it', () => {
+    // Clip [0.6, 14.83) then a hold: rounding the hold's start onto the 30 fps grid lengthens the clip.
+    for (const lastFrameSec of [14.79, 14.81, 14.83, 14.85]) {
+      const segs = retime(take([{ index: 0, kind: 'click', at: 1.0 }]), sched([{ index: 0, do: 'click', startAt: 0.5, travel: 0.5 }]), voice(14.6), {
+        sceneId: 's', flashTime: 0.5, flashEnd: 0.6, lastFrameSec,
+      });
+      for (const g of segs) expect(g.srcOut).toBeLessThanOrEqual(lastFrameSec + 1e-9);
+      expect(Math.abs(sceneLen(segs) - 15.05)).toBeLessThanOrEqual(0.5 / 30 + 1e-9);
+    }
+  });
+
+  it('trims inside a long zoom hold', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // A zoom at 2.0 s held 3 s (the recorder logs no busyUntil for it: the composer draws the zoom), then a click
+    // logged 1.5 s late at 6.5 s that must show at 5.0 s. Source time = take time here (flash at 0).
+    const s = sched([
+      { index: 0, do: 'zoom', startAt: 2.0, travel: 0 },
+      { index: 1, do: 'click', startAt: 5.0 - DEFAULT_TRAVEL_SEC },
+    ]);
+    (s[0]!.step as { ms?: number }).ms = 3000;
+    const segs = retime(take([{ index: 0, kind: 'zoom', at: 2.0 }, { index: 1, kind: 'click', at: 6.5 }]), s, voice(7), {
+      sceneId: 's',
+      flashTime: 0,
+      flashEnd: 0.1,
+    });
+    const clips = segs.filter((g) => g.hold === undefined).sort((a, b) => a.outStart - b.outStart);
+    const cuts: [number, number][] = [];
+    // A gap of a frame or less between clips is output-frame rounding, not a cut.
+    for (let i = 1; i < clips.length; i++) if (clips[i]!.srcIn > clips[i - 1]!.srcOut + 0.1) cuts.push([clips[i - 1]!.srcOut, clips[i]!.srcIn]);
+    // One cut, inside the quiet window [zoom + 0.8, click - (travel + 0.15)] = [2.8, 5.83] of source time, and it
+    // trims time while the zoom is still held (before 2.0 + 3.0).
+    expect(cuts).toHaveLength(1);
+    const [lo, hi] = cuts[0]!;
+    expect(lo).toBeGreaterThanOrEqual(2.8 - 1 / 30);
+    expect(hi).toBeLessThanOrEqual(5.83 + 1 / 30);
+    expect(hi - lo).toBeCloseTo(1.5, 1);
+    expect(lo).toBeLessThan(5.0);
+    expect(warn).not.toHaveBeenCalled();
+    expect(Math.abs(outTimeOf(segs, 6.5) - 5.0)).toBeLessThanOrEqual(FRAME);
+  });
+
   it('every event lands within 1/30 s for random late/early patterns', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     let seed = 12345;
@@ -201,6 +262,16 @@ describe('detectFlash', () => {
     const none = path.join(dir, 'none.mp4');
     execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=160x90:r=25:d=1', '-pix_fmt', 'yuv420p', none]);
     await expect(detectFlash(none)).rejects.toThrow(`no flash marker found in ${none}`);
+  }, 30_000);
+});
+
+describe('lastFrameTime', () => {
+  it('lastFrameTime returns the last frame, not the container length', async () => {
+    const { ffmpeg } = await ensureToolchain();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-last-'));
+    const file = path.join(dir, 'take.webm');
+    execFileSync(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=s=160x90:r=25:d=3', '-c:v', 'libvpx', '-b:v', '200k', file]);
+    expect(Math.abs((await lastFrameTime(file)) - 2.96)).toBeLessThanOrEqual(0.001);
   }, 30_000);
 });
 

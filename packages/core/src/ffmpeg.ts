@@ -119,3 +119,23 @@ export async function scanBlank(file: string, from: number): Promise<BlankRange[
   for (let i = 0; i < frames; i++) stds.push(lumaStd(out.subarray(i * size, (i + 1) * size)));
   return blankRanges(times.slice(0, frames), stds, from);
 }
+
+/** Presentation time of every decodable video frame of `file`, in order (the showinfo filter, no frame-rate change). */
+export async function frameTimes(file: string): Promise<number[]> {
+  const { ffmpeg } = await ensureToolchain({ offline: true }).catch(() => ensureToolchain());
+  const { err } = await runFfmpeg(ffmpeg, [
+    '-hide_banner', '-nostdin', '-i', file, '-map', '0:v:0',
+    '-vf', 'showinfo', '-fps_mode', 'passthrough', '-f', 'null', '-',
+  ]);
+  return [...err.matchAll(/pts_time:\s*(-?[\d.]+)/g)].map((m) => Number(m[1]));
+}
+
+/**
+ * Presentation time of the last decodable video frame of `file`: the last moment a take can show. Measured by
+ * decoding the frames, not read from the container's duration (which runs a frame or more past it).
+ */
+export async function lastFrameTime(file: string): Promise<number> {
+  const times = await frameTimes(file);
+  if (!times.length) throw new Error(`no video frames in ${file}`);
+  return times.reduce((a, b) => Math.max(a, b));
+}

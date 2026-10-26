@@ -9,6 +9,7 @@ import {
   buildVoice,
   DEFAULTS,
   ensureToolchain,
+  lastFrameTime,
   loadScene,
   mix,
   recordScene,
@@ -199,9 +200,11 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
     });
     const app = spec.app;
     const seedFile = app.seed && path.isAbsolute(app.seed) && fs.existsSync(app.seed) ? app.seed : undefined;
+    // The take runs at least as long as the scene it fills (voice, breath) plus a tail, so retime never runs out of frames.
+    const minTakeSec = voice.duration + DEFAULTS.video.breathSec + DEFAULTS.video.takeTailSec;
     const { result: recorded } = await cache.run<Recorded>({
       name: `record/${scene.id}`,
-      input: { scene, scheduled, app, cursor: spec.cursor },
+      input: { scene, scheduled, app, cursor: spec.cursor, minTakeSec },
       files: [...appFiles(app), ...(seedFile ? [seedFile] : [])],
       run: async (dir) => {
         if (app.seed && !seeded) {
@@ -220,7 +223,7 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
         };
         process.once('exit', removeSession);
         try {
-          take = await recordScene(scene, scheduled, app, dir, { cursor: spec.cursor });
+          take = await recordScene(scene, scheduled, app, dir, { minTakeSec, cursor: spec.cursor });
         } finally {
           removeSession();
           process.removeListener('exit', removeSession);
@@ -228,12 +231,21 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
         const flash = await scanFlash(take.file);
         const blanks = await scanBlank(take.file, flash.end);
         if (blanks.length) log(`record/${scene.id}: ${blanks.length} blank frame run(s) in the take; holding the last good frame over them`);
-        return { take, flashTime: flash.start, flashEnd: flash.end, srcDuration: await mediaDuration(take.file), blanks };
+        return {
+          take,
+          flashTime: flash.start,
+          flashEnd: flash.end,
+          srcDuration: await mediaDuration(take.file),
+          lastFrameSec: await lastFrameTime(take.file),
+          blanks,
+        };
       },
       outputs: (r) => [r.take.file],
     });
     // A take recorded before blank-frame scanning existed: scan it now.
     recorded.blanks ??= await scanBlank(recorded.take.file, recorded.flashEnd);
+    // A take recorded before the last frame was measured: measure it now.
+    recorded.lastFrameSec ??= await lastFrameTime(recorded.take.file);
     inputs.push({ scene, voice, scheduled, recorded });
   }
 

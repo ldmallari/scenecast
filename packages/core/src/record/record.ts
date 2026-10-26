@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
 import { DEFAULTS, type AppConn, type CursorCfg, type Scene, type Step } from '../scene/schema.js';
 import { DEFAULT_TRAVEL_SEC, POINTER, PROTECT_MARGIN_SEC, spotPoint, type Point, type ScheduledStep } from '../schedule.js';
+import { VideoClock } from './clock.js';
 import { applyAppContext, captureSessionStorage, panelSelector } from './context.js';
 import { LOADING_SELECTOR, settle, trackNetwork } from './settle.js';
 
@@ -74,7 +75,10 @@ export interface Box {
 export interface TakeEvent {
   index: number;
   kind: Step['do'];
-  /** Seconds after the flash marker when the action fired (pointer steps: when the cursor arrived). */
+  /**
+   * Seconds after the flash marker when the action fired (pointer steps: when the cursor arrived), on the video's
+   * clock: where the action shows in the take.
+   */
   at: number;
   /**
    * Box of the step's `sel` (union of all selectors). Zoom: `pad` added. Ring: the element's own box
@@ -106,6 +110,11 @@ export interface TakeEvent {
   loadingBefore?: boolean;
   /** The settle before this step gave up (its cap ran out); the step ran anyway. */
   settleTimedOut?: boolean;
+  /**
+   * Seconds the video's clock had moved from the recorder's by `at` (the system stepped its wall clock, which the
+   * video runs on, during the take): the action fired on its schedule at `at - clockShift`. Absent when none.
+   */
+  clockShift?: number;
   /**
    * Seconds after the flash until the action itself is over: typing finished, the recorder's ring faded out,
    * or the step's `ms` hold ended. Absent when the action is instant. Retime never cuts inside it. Zoom and
@@ -417,14 +426,20 @@ async function loginStep(page: Page, app: AppConn, step: Step, i: number): Promi
  * Record one scene as one take: open the route, settle, place the cursor, flash, then run each
  * scheduled step at its time (relative to the flash), logging where everything was. Writes
  * `<out>/<scene>.webm` and `<out>/<scene>.boxes.json`. `opts.cursor.start` is where the cursor starts when the
- * scene sets no `cursor` and no step is pre-positioned.
+ * scene sets no `cursor` and no step is pre-positioned. `opts.minTakeSec` keeps the take recording until at least
+ * that long after the flash (the scene's voice plus its breath and a tail), so it never runs out before the narration.
  */
 export async function recordScene(
   scene: Scene,
   scheduled: ScheduledStep[],
   app: AppConn,
   out: string,
-  opts: { cursor?: CursorCfg } = {},
+  opts: {
+    minTakeSec?: number;
+    cursor?: CursorCfg;
+    /** The wall clock the browser stamps video frames with (default `Date.now`); tests replace it to step it. */
+    wallClock?: () => number;
+  } = {},
 ): Promise<Take> {
   for (const { index, step } of scheduled)
     if ((onTarget(step.do) || step.do === 'ring' || step.do === 'zoom') && selectors(step).length === 0)
@@ -455,7 +470,10 @@ export async function recordScene(
       const videoStart = epoch();
       const start = spotPoint(scene.cursor ?? opts.cursor?.start ?? DEFAULTS.cursor.start, viewport);
       const parkSpot = opts.cursor?.park ?? DEFAULTS.cursor.park;
-      take = await runTake(page, scene, scheduled, app, videoStart, start, { viewport, parkSpot });
+      take = await runTake(page, scene, scheduled, app, videoStart, start, { viewport, parkSpot }, {
+        minTakeSec: opts.minTakeSec ?? 0,
+        ...(opts.wallClock ? { wallClock: opts.wallClock } : {}),
+      });
     } finally {
       await context.close(); // finishes the video file
     }
@@ -485,6 +503,7 @@ async function runTake(
   videoStart: number,
   start: Point,
   where: { viewport: { width: number; height: number }; parkSpot: CursorCfg['park'] },
+  timing: { minTakeSec: number; wallClock?: () => number },
 ): Promise<Omit<Take, 'file'>> {
   const url = (p: string) => new URL(p, app.baseUrl).href;
   await checkPanels(page, app);
@@ -540,7 +559,18 @@ async function runTake(
   // clock times every event (the page clock restarts on each navigation; Node's doesn't).
   const offset = await clockOffset(page);
   const flashEpoch = (await page.evaluate((ms) => window.__scenecast.flash(ms), FLASH_MIN_MS)) - offset;
+  // Steps are timed on the monotonic clock; what they log is on the video's clock (see VideoClock), which a wall-clock
+  // step moves away from it. Without this, a step mid-take would put every later action off by its size in the video.
+  const clock = new VideoClock(epoch, timing.wallClock);
   const sinceFlash = () => Math.round((epoch() - flashEpoch) * 10) / 10000; // seconds, 0.1 ms resolution
+  /** Now, in seconds after the flash on the video's clock: the time logged for an action. */
+  const videoNow = () => Math.round((epoch() - flashEpoch + clock.shiftSec() * 1000) * 10) / 10000;
+  /** The action's time to log as `at` (on the video's clock); notes how far that clock had moved by then. */
+  const stamp = (ev: Partial<TakeEvent>): number => {
+    const shift = clock.shiftSec();
+    if (shift !== 0) ev.clockShift = shift;
+    return Math.round((epoch() - flashEpoch + shift * 1000) * 10) / 10000;
+  };
   const events: TakeEvent[] = [];
   const quiet = (p: Promise<unknown>) => void p.catch(() => {});
 
@@ -627,7 +657,7 @@ async function runTake(
       const aimed = centre(m.first);
       await page.mouse.move(aimed.x, aimed.y); // the real pointer moves ahead so the action itself is one press
       await sleepUntil(arrive);
-      ev.at = sinceFlash();
+      ev.at = stamp(ev);
       if (Math.abs(aimed.x - cursor.x) > 1 || Math.abs(aimed.y - cursor.y) > 1) {
         cursor = aimed; // the target moved during travel: snap onto it
         quiet(page.evaluate(([x, y]) => window.__scenecast.cursor(x, y), [cursor.x, cursor.y] as const));
@@ -645,7 +675,7 @@ async function runTake(
         await page.mouse.up();
         if (step.do === 'type' && step.text) {
           await page.keyboard.type(step.text, { delay: TYPE_DELAY_MS });
-          ev.busyUntil = Math.max(ev.busyUntil ?? at, sinceFlash());
+          ev.busyUntil = Math.max(ev.busyUntil ?? at, videoNow());
         }
       }
       if (step.do === 'check') {
@@ -660,7 +690,7 @@ async function runTake(
       ev.loadingBefore = (await snapshot(page, panelSel)).loading;
       const arrive = travel > 0 ? await glideTo(to, due, travel) : due;
       await sleepUntil(arrive);
-      ev.at = sinceFlash();
+      ev.at = stamp(ev);
       if (travel === 0 && (Math.abs(to.x - cursor.x) > 1 || Math.abs(to.y - cursor.y) > 1)) {
         cursor = { ...to }; // no time to glide: the cursor is placed on the spot
         quiet(page.evaluate(([x, y]) => window.__scenecast.cursor(x, y), [to.x, to.y] as const));
@@ -671,7 +701,7 @@ async function runTake(
       const box = padBox(m.union, step.pad);
       ev.loadingBefore = (await snapshot(page, panelSel)).loading;
       await sleepUntil(due);
-      ev.at = sinceFlash();
+      ev.at = stamp(ev);
       if (step.do === 'ring') {
         // The element as it is when the ring peaks; gone by then, the audit fails the ring for it.
         const atPeak = (b: Box | undefined) => void (b ? (ev.target = b) : delete ev.target);
@@ -681,7 +711,7 @@ async function runTake(
       const el = sels.length ? await findVisible(page, scene.id, index, sels[0]!) : undefined;
       ev.loadingBefore = (await snapshot(page, panelSel)).loading;
       await sleepUntil(due);
-      ev.at = sinceFlash();
+      ev.at = stamp(ev);
       switch (step.do) {
         case 'scroll': {
           const before = await page.evaluate(() => scrollY).catch(() => undefined);
@@ -721,13 +751,15 @@ async function runTake(
       // would still be running as the next pointer step sets off (two glides would fight over the cursor).
       // The park delay counts from the action as it happened, so a late action still rests before the cursor leaves.
       const delaySec = park.at - (startAt + travel);
-      const setOff = flashEpoch + 1000 * Math.max(park.at, ev.at + delaySec, ev.busyUntil ?? ev.at, sinceFlash());
+      // ev.at and busyUntil are on the video's clock: back to the monotonic one, which times the glide.
+      const shift = clock.shiftSec();
+      const setOff = flashEpoch + 1000 * Math.max(park.at, ev.at - shift + delaySec, (ev.busyUntil ?? ev.at) - shift, sinceFlash());
       const next = steps.slice(k + 1).find((s) => POINTER.has(s.step.do));
       // The margin keeps retime's protected stretch before the next action (its travel + 0.15 s) clear of the
       // park glide, so an early-arrival hold never freezes the cursor mid-park.
       if (!next || setOff + PARK_GLIDE_MS + PROTECT_MARGIN_SEC * 1000 <= flashEpoch + next.startAt * 1000) {
         ev.parkTo = cursorBox(park.to);
-        ev.parkedAt = Math.round((setOff - flashEpoch) * 10) / 10000;
+        ev.parkedAt = Math.round((setOff - flashEpoch + shift * 1000) * 10) / 10000;
         ev.busyUntil = ev.parkedAt + PARK_GLIDE_MS / 1000;
         holdUntil = Math.max(holdUntil, setOff + PARK_GLIDE_MS);
         const to = park.to;
@@ -746,6 +778,8 @@ async function runTake(
   await Promise.all(parks);
   await sleepUntil(Math.max(holdUntil, epoch()));
   if (ringGoneAt) await ringsGone(page);
+  // Never shorter than the narration needs: retime would have nothing to show past the last frame.
+  await sleepUntil(Math.max(epoch(), flashEpoch + (timing.minTakeSec - clock.shiftSec()) * 1000));
   await sleepUntil(epoch() + TAIL_SEC * 1000);
   await Promise.all(peakMeasures);
   return {

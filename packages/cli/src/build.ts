@@ -46,6 +46,8 @@ export interface Recorded {
   flashEnd: number;
   /** Length of the take file in seconds. */
   srcDuration: number;
+  /** Time of the take's last decodable frame (lastFrameTime): retime never reads past it. */
+  lastFrameSec?: number;
   /** Runs of near-uniform frames after the flash (scanBlank), frozen over by retime. */
   blanks?: BlankRange[];
 }
@@ -93,6 +95,7 @@ export function appPlanScene(scene: Scene, voice: SceneVoice, scheduled: Schedul
     flashEnd: rec.flashEnd,
     blanks: rec.blanks ?? [],
     srcDuration: rec.srcDuration,
+    ...(rec.lastFrameSec !== undefined ? { lastFrameSec: rec.lastFrameSec } : {}),
   });
   const duration = toFrames(voice.duration + DEFAULTS.video.breathSec);
   const times = eventTimes(rec, scheduled, segments);

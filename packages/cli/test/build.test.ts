@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { clampZoom, DEFAULTS, parseSrt, phoneToFrame, travelSecFor, type Box, type Scene, type SceneVoice, type ScheduledStep, type Take, type VideoSpec } from '@scenecast/core';
 import { buildVoiceTrack, readWav, writeWav } from '../src/audio.js';
-import { buildVideo, captionEvents, chaptersTxt, eventTimes, finalSrt, INTRO_SEC, OUTRO_SEC, onScreen, toFrames, type Recorded } from '../src/build.js';
+import { appPlanScene, buildVideo, captionEvents, chaptersTxt, eventTimes, finalSrt, INTRO_SEC, OUTRO_SEC, onScreen, toFrames, type Recorded } from '../src/build.js';
 
 const brand = { primary: '#1F3A5F', accent: '#F5C518', font: 'Inter', introTitle: 'Intro' };
 const spec = { id: 'v', title: 'The video', output: 'v', brand, app: { baseUrl: 'http://x' }, voice: DEFAULTS.voice, scenes: [] } as unknown as VideoSpec;
@@ -53,6 +53,21 @@ describe('buildVideo', () => {
     const segs = v.plan.scenes[1]!.segments!;
     const last = segs.at(-1)!;
     expect(last.outStart + (last.hold ?? last.srcOut - last.srcIn)).toBeCloseTo(appDur, 6);
+  });
+
+  it('a take shorter than its voice composes', () => {
+    // 14.5: the container says 14.84 s but the frames stop well before (the last frame comes from the frames).
+    for (const lastFrameSec of [14.8, 14.5]) {
+      const app = appInput('a');
+      const recorded: Recorded = { ...app.recorded, srcDuration: 14.84, lastFrameSec };
+      const { plan, segments } = appPlanScene(app.scene, voice(14.6), app.scheduled, recorded);
+      expect(segments.length).toBeGreaterThan(0);
+      for (const g of segments) expect(g.srcOut).toBeLessThanOrEqual(lastFrameSec + 1e-9);
+      // The last frame is held to the end of the scene.
+      const last = segments.at(-1)!;
+      expect(last.hold).toBeGreaterThan(0);
+      expect(last.outStart + last.hold!).toBeCloseTo(plan.duration, 6);
+    }
   });
 
   it('a title card lasts at least its seconds', () => {
