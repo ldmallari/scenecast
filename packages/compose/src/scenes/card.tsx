@@ -4,28 +4,15 @@
 // in the card font, each brought in by the card entrance (see entranceAt).
 import { Gradient, Img, Node, Rect, Txt } from '@revideo/2d';
 import type { ResolvedBackground, ResolvedPlan } from '../plan.js';
-import { entranceAt, gradientLine, sceneOpacity, type CardPart } from '../timing.js';
+import { channels, DARK_INK, entranceAt, gradientLine, LIGHT_INK, luminanceOf, sceneOpacity, type CardPart } from '../timing.js';
 import { caption, fontStack } from './app.js';
 
 type Scene = ResolvedPlan['scenes'][number];
 
-/** The 0–1 sRGB channels of a #rgb / #rrggbb colour. */
-function channels(hex: string): [number, number, number] {
-  const h = hex.replace('#', '');
-  const full = h.length === 3 ? [...h].map((c) => c + c).join('') : h.slice(0, 6);
-  return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255) as [number, number, number];
-}
 
-/** Relative luminance of sRGB channels (WCAG). */
-function luminanceOf([r, g, b]: [number, number, number]): number {
-  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-}
 
 const luminance = (hex: string) => luminanceOf(channels(hex));
 
-const DARK_INK = '#14161B';
-const LIGHT_INK = '#FFFFFF';
 
 /** White text on dark brand colours, near-black on light ones. */
 export const inkOn = (bg: string) => (luminance(bg) > 0.4 ? DARK_INK : LIGHT_INK);
@@ -43,6 +30,7 @@ export function inkFor(bg: ResolvedBackground): string {
   }
   return LIGHT_INK;
 }
+
 
 /**
  * Behind the text on an image background: a soft elliptical shade of black over the text block, fading out beyond

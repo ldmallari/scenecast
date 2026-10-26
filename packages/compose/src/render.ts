@@ -7,7 +7,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { DEFAULTS, ensureToolchain, phoneFrame } from '@scenecast/core';
+import { DEFAULTS, ensureToolchain, phoneScreen } from '@scenecast/core';
 import { clampZoom, inFramePixels, resolveLook, timeline, type ComposePlan, type ResolvedPlan } from './plan.js';
 import { runRevideo } from './supervise.js';
 export { runRevideo, STALL_SEC } from './supervise.js';
@@ -109,15 +109,17 @@ async function resolvePlan(plan: ComposePlan, publicDir: string, ffmpeg: string,
     cardImages.set(img, url);
   }
 
-  const pf = phoneFrame();
+  // The phone where the plan places it; its boxes are mapped with the same alignment (captions and the audit agree).
+  const align = plan.phoneAlign ?? 'center';
+  const phoneRect = phoneScreen(align);
   return {
     width, height, fps, zoomEaseSec,
     total: tl.total,
     brand: plan.brand,
     logoUrl,
     ...resolveLook(plan, { logoUrl, backgroundUrl }),
-    phoneRect: { x: pf.x, y: pf.y, w: pf.w, h: pf.h },
-    scenes: plan.scenes.map(inFramePixels).map((s, i) => {
+    phoneRect,
+    scenes: plan.scenes.map((s) => inFramePixels(s, align)).map((s, i) => {
       if (s.kind === 'card' && !s.card) throw new Error(`scene ${i}: card scene needs \`card\``);
       if (s.kind === 'card' && s.card!.variant !== 'intro' && !s.card!.title) throw new Error(`scene ${i}: ${s.card!.variant} card needs a title`);
       return {
@@ -125,7 +127,7 @@ async function resolvePlan(plan: ComposePlan, publicDir: string, ffmpeg: string,
         ...tl.scenes[i]!,
         segments: s.segments?.map((g) => ({ ...g, src: media.get(g.src)! })),
         ...(s.card?.image ? { card: { ...s.card, image: cardImages.get(s.card.image)! } } : {}),
-        zooms: s.zooms?.map((z) => ({ ...z, box: clampZoom(z.box, frame, DEFAULTS.audit.zoomPadPx, s.navBox, s.phone ? pf.x : 0, s.navs) })),
+        zooms: s.zooms?.map((z) => ({ ...z, box: clampZoom(z.box, frame, DEFAULTS.audit.zoomPadPx, s.navBox, s.phone ? phoneRect.x : 0, s.navs) })),
       };
     }),
   };

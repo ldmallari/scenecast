@@ -359,6 +359,39 @@ describe('recordScene', () => {
     expect(b.x + b.w).toBeLessThanOrEqual(DEFAULTS.phone.width + 4);
   }, 60_000);
 
+  it('phone takes tap with a touch indicator', async () => {
+    const steps: Step[] = [
+      { do: 'click', sel: ".nav a[href='/requests']" },
+      { do: 'ring', sel: 'table', ms: 300 },
+    ];
+    const s = { ...scene('tap', '/dashboard', steps), viewport: 'phone' } as Scene;
+    const plan = steps.map((step, index) => ({ index, step, cueTime: null, startAt: [0.5, 2.0][index]!, travel: travelSecFor(step, { touch: true }) }));
+    expect(plan[0]!.travel).toBe(0.25);
+    const take = await recordScene(s, plan, app, path.join(work, 'takes'));
+    const tap = take.events[0]!;
+    expect(tap.cursorTo!.w).toBe(34);
+    expect(tap.cursorTo!.h).toBe(34);
+    const c = { x: tap.cursorTo!.x + 17, y: tap.cursorTo!.y + 17 };
+    const t = { x: tap.target!.x + tap.target!.w / 2, y: tap.target!.y + tap.target!.h / 2 };
+    expect(Math.abs(c.x - t.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(c.y - t.y)).toBeLessThanOrEqual(1);
+    // The tap lands after its touch lead, like a glide's arrival.
+    const late = fired(tap) - (0.5 + 0.25);
+    expect(late, `tap late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
+    expect(late, `tap late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
+    // The tap navigated: the ring finds the requests table.
+    expect(take.events[1]!.target!.w).toBeGreaterThan(0);
+  }, 60_000);
+
+  it('a phone check taps the box', async () => {
+    const steps: Step[] = [{ do: 'check', sel: '#agree' }];
+    const s = { ...scene('tapcheck', '/form', steps), viewport: 'phone' } as Scene;
+    const plan = steps.map((step, index) => ({ index, step, cueTime: null, startAt: 0.5, travel: travelSecFor(step, { touch: true }) }));
+    const take = await recordScene(s, plan, app, path.join(work, 'takes'));
+    expect(take.events[0]!.clicked).toBe(true);
+    expect(take.events[0]!.cursorTo!.w).toBe(34);
+  }, 60_000);
+
   it('a sign-in kept in sessionStorage survives into the recorded scene', async () => {
     const sessionApp: AppConn = { ...app, routes: [{ url: '**/api/flags', json: { sso: false, sessionToken: true } }] };
     const steps: Step[] = [{ do: 'ring', sel: '.worklist', ms: 300 }];

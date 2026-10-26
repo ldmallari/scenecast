@@ -1,6 +1,6 @@
-import { clampZoom, phoneFrame, phoneToFrame } from './frame.js';
+import { clampZoom, phoneScreen, phoneToFrame } from './frame.js';
 import type { Box, Take } from './record/record.js';
-import { DEFAULTS, type Scene } from './scene/schema.js';
+import { DEFAULTS, type PhoneAlign, type Scene } from './scene/schema.js';
 import { actionAt, type ScheduledStep } from './schedule.js';
 import type { SceneVoice } from './voice.js';
 
@@ -21,6 +21,24 @@ export const DESKTOP_CAPTIONS: CaptionLayout = {
   maxLines: DEFAULTS.captions.maxLines,
   sides: ['bottom', 'top', 'bottom-left', 'bottom-right', 'top-left', 'top-right'],
 };
+
+/**
+ * Captions for a phone scene. A phone placed `left` or `right` has a column beside it: from
+ * `captions.beside.gapPx` (120 px) past the phone screen to that far from the frame edge, as tall as the phone,
+ * with shorter lines (30 characters, 3 lines). A cue tries that column first, then the bottom and the top.
+ * A centred phone has no room beside it and uses the desktop layout.
+ */
+export function phoneCaptions(align: PhoneAlign): CaptionLayout {
+  if (align === 'center') return DESKTOP_CAPTIONS;
+  const W = DEFAULTS.video.width;
+  const { charsPerLine, maxLines, gapPx } = DEFAULTS.captions.beside;
+  const s = phoneScreen(align);
+  const [x0, x1] = align === 'left' ? [s.x + s.w + gapPx, W - gapPx] : [gapPx, s.x - gapPx];
+  return { charsPerLine, maxLines, sides: ['beside', 'bottom', 'top'], beside: { x: x0, y: s.y, w: x1 - x0, h: s.h } };
+}
+
+/** The column beside the phone lies right of the frame's centre (the phone is on the left). */
+export const besideOnRight = (beside: Box) => beside.x + beside.w / 2 > DEFAULTS.video.width / 2;
 
 /** Words a cue or a line never ends on (compared lower-cased, letters only). */
 export const FUNCTION_WORDS: ReadonlySet<string> = new Set(
@@ -54,14 +72,14 @@ const EDGE = 72;
  * Caption events from a take timed by the schedule alone (no zooms): a thin wrapper over `zoomedCaptionEvents`,
  * which is what the pipeline uses, so there is one caption-event builder.
  */
-export function eventsForCaptions(take: Take, scheduled: ScheduledStep[], opts: { sceneEnd: number }): CaptionEvent[] {
+export function eventsForCaptions(take: Take, scheduled: ScheduledStep[], opts: { sceneEnd: number; align: PhoneAlign }): CaptionEvent[] {
   const times = new Map<number, number>();
   for (const e of take.events) {
     const sch = scheduled.find((s) => s.index === e.index);
     if (!sch) throw new Error(`captions: no scheduled step for take event ${e.index}`);
     times.set(e.index, actionAt(sch));
   }
-  return zoomedCaptionEvents(take, times, [], opts.sceneEnd);
+  return zoomedCaptionEvents(take, times, [], opts.sceneEnd, opts.align);
 }
 
 const EPS = 1e-6;
@@ -128,19 +146,25 @@ export interface TimedBox {
  * finishes easing, ends or finishes easing out, and each piece carries the boxes as they look on
  * screen in every view of that piece, so a caption clear of these is clear of what the audit checks.
  * A box that fills the app's screen as shown in a view (the frame, or the phone screen, seen through
- * that view and clipped to the frame; see `fillsScreen`) is left out of that view.
+ * that view and clipped to the frame; see `fillsScreen`) is left out of that view. `align` is where the
+ * phone sits (the scene file's `phone.align`); desktop takes ignore it.
  */
-export function zoomedCaptionEvents(take: Take, times: Map<number, number>, zooms: TimedBox[], sceneEnd: number): CaptionEvent[] {
+export function zoomedCaptionEvents(
+  take: Take,
+  times: Map<number, number>,
+  zooms: TimedBox[],
+  sceneEnd: number,
+  align: PhoneAlign,
+): CaptionEvent[] {
   const phone = take.viewport === 'phone';
-  const toFrame = (b: Box) => (phone ? phoneToFrame(b) : b);
+  const toFrame = (b: Box) => (phone ? phoneToFrame(b, align) : b);
   const navs = (take.navs ?? []).map((n) => ({ ...n, box: toFrame(n.box) }));
   const ease = DEFAULTS.video.zoomEaseSec;
   const frame: Box = { x: 0, y: 0, w: DEFAULTS.video.width, h: DEFAULTS.video.height };
-  const pf = phoneFrame();
-  const screen: Box = phone ? { x: pf.x, y: pf.y, w: pf.w, h: pf.h } : frame;
+  const screen: Box = phone ? phoneScreen(align) : frame;
   const regions: TimedBox[] = zooms.map((z) => ({
     ...z,
-    box: clampZoom(toFrame(z.box), frame, DEFAULTS.audit.zoomPadPx, undefined, phone ? pf.x : 0, navs),
+    box: clampZoom(toFrame(z.box), frame, DEFAULTS.audit.zoomPadPx, undefined, phone ? screen.x : 0, navs),
   }));
   /** The boxes as they look in view `v`, without those that fill the screen shown there. */
   const shown = (boxes: Box[], v: Box | null): Box[] => {
@@ -181,10 +205,16 @@ const FUNCTION_WORD_BREAK = 1e6;
 /** A break that does not follow clause punctuation (`, : ; — .`). */
 const MID_CLAUSE_BREAK = 1;
 const CLAUSE_END = /[,:;—.]["'”’)\]]*$/u;
+/** A possessive ("Demo Co's", "users'"): it belongs with the word after it, so a break after it costs like a function word's. */
+const POSSESSIVE = /(?:['’]s|s['’])$/iu;
+/** Abbreviations whose full stop ends no clause ("e.g.", "i.e.", "etc."), with any comma after them. */
+const ABBREVIATION = /^(?:e\.g|i\.e|etc|vs|cf|approx|incl|mr|mrs|ms|dr)\.,?$/iu;
 
 /** The cost of breaking after `word`. */
 function breakCost(word: string): number {
   if (FUNCTION_WORDS.has(word.toLowerCase().replace(/[^a-z]/g, ''))) return FUNCTION_WORD_BREAK;
+  if (POSSESSIVE.test(word)) return FUNCTION_WORD_BREAK;
+  if (ABBREVIATION.test(word)) return MID_CLAUSE_BREAK;
   return CLAUSE_END.test(word) ? 0 : MID_CLAUSE_BREAK;
 }
 
@@ -319,7 +349,10 @@ function unionArea(boxes: Box[], clip: Box): number {
   return area;
 }
 
-/** The cue's box on `side`. Every side but `beside` has the same size, so where a cue lands never changes its lines. */
+/**
+ * The cue's box on `side`. Every side has the same size, so where a cue lands never changes its lines. A `beside`
+ * cue sits in the layout's column, centred on it vertically and against its side facing the phone.
+ */
 function captionBox(lines: string[], side: CaptionSide, layout: CaptionLayout): Box {
   const { width: W, height: H } = DEFAULTS.video;
   const widest = Math.max(...lines.map((l) => l.length));
@@ -341,9 +374,12 @@ function captionBox(lines: string[], side: CaptionSide, layout: CaptionLayout): 
       return { x: left, y: top, w, h };
     case 'top-right':
       return { x: right, y: top, w, h };
-    case 'beside':
-      // The phone layouts (and how a cue sits in their column) arrive with phone captions.
-      throw new Error(`captions: no 'beside' placement for this layout${layout.beside ? ' yet' : ' (it has no beside column)'}`);
+    case 'beside': {
+      const col = layout.beside;
+      if (!col) throw new Error("captions: 'beside' needs a layout with a beside column (phoneCaptions)");
+      const bw = Math.min(w, col.w);
+      return { x: besideOnRight(col) ? col.x : col.x + col.w - bw, y: col.y + (col.h - h) / 2, w: bw, h };
+    }
   }
 }
 
@@ -380,15 +416,16 @@ export function layoutCaptions(
       for (const side of layout.sides) {
         const box = captionBox(lines, side, layout);
         const hit = boxes.some((b) => overlap(b, box) > 0) ? unionArea(boxes, box) : 0;
-        if (!best || hit < best.hit) [best, tie] = [{ side, box, hit }, false];
-        else if (hit === best.hit) tie = true;
+        // Areas within a rounding error of each other are a tie (box edges are fractional px).
+        if (!best || hit < best.hit - EPS) [best, tie] = [{ side, box, hit }, false];
+        else if (Math.abs(hit - best.hit) <= EPS) tie = true;
         if (hit === 0) break;
       }
       if (!best) throw new Error('captions: the layout has no sides');
       const cue: Cue = { start, end, lines, side: best.side, box: best.box };
       if (best.hit > 0) {
         const first = layout.sides[0]!;
-        cue.reason = `both sides overlap the target; ${best.side === first && tie ? `equal, ${first} kept` : `${best.side} overlaps less`}`;
+        cue.reason = `no free position; ${best.side === first && tie ? `all equal, ${first} kept` : `${best.side} overlaps least`}`;
       }
       cues.push(cue);
     });

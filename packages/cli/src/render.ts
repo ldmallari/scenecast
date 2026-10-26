@@ -215,7 +215,8 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
     // Desktop scenes park the cursor between distant pointer steps; phone scenes never do (the touch indicator fades).
     const parkSpot = scene.viewport === 'phone' || spec.cursor.park === 'off' ? undefined : spec.cursor.park;
     const scheduled: ScheduledStep[] = schedule(scene, voice, {
-      travelSec: (step) => travelSecFor(step),
+      // A phone taps: no glide, the touch indicator fades in for the touch lead.
+      travelSec: (step) => travelSecFor(step, { touch: scene.viewport === 'phone' }),
       park: parkSpot && {
         to: spotPoint(parkSpot, { width: DEFAULTS.video.width, height: DEFAULTS.video.height }),
         afterSec: spec.cursor.parkAfterSec,

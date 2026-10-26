@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Cue } from './captions.js';
-import { clampZoom, phoneFrame, phoneToFrame, type NavBox } from './frame.js';
+import { clampZoom, phoneScreen, phoneToFrame, type NavBox } from './frame.js';
 import { RING_FADE_MS, RING_HOLD_MS, ringPeakSec, type Box, type Take } from './record/record.js';
 import { outputTimeOf, type Segment } from './retime.js';
-import { DEFAULTS, type Brand, type Scene } from './scene/schema.js';
+import { DEFAULTS, type Brand, type PhoneAlign, type Scene } from './scene/schema.js';
 import { actionAt, cueWordIndex, type ScheduledStep } from './schedule.js';
 import { ensureToolchain, runPy } from './toolchain.js';
 import type { SceneVoice } from './voice.js';
@@ -35,6 +35,8 @@ export interface AuditPlanScene {
 export interface AuditPlan {
   brand: Brand;
   scenes: AuditPlanScene[];
+  /** Where phone scenes place the phone (`phone.align`); default `'center'`, the v1 placement. */
+  phoneAlign?: PhoneAlign;
 }
 
 /**
@@ -113,6 +115,9 @@ export function buildAuditInput(
   const starts: number[] = [];
   opts.plan.scenes.reduce((t, s) => (starts.push(t), t + s.duration), 0); // compose timeline(): scene k starts at the sum before it
   const round = (t: number) => Math.round(t * 1000) / 1000;
+  // Phone boxes map into the frame where the composer draws the phone (as the plan says, like captions.ts and compose).
+  const align: PhoneAlign = opts.plan.phoneAlign ?? 'center';
+  const phoneRect = phoneScreen(align);
 
   const scenes = opts.scenes.map(({ scene, planIndex, scheduled, take, flashTime, voice }) => {
     const ps = opts.plan.scenes[planIndex];
@@ -141,14 +146,14 @@ export function buildAuditInput(
     const phone = take.viewport === 'phone';
     if (phone !== !!ps.phone) throw new Error(`audit: scene "${scene.id}": the take and the plan disagree on the phone viewport`);
     // Take and plan boxes are in take px on phone scenes; map them once, as captions.ts and the composer do.
-    const toFrame = (b: Box): Box => (phone ? phoneToFrame(b) : b);
+    const toFrame = (b: Box): Box => (phone ? phoneToFrame(b, align) : b);
     const segments = ps.segments ?? [];
     const navBox = ps.navBox && toFrame(ps.navBox);
     const navs = (ps.navs ?? []).map((n) => ({ ...n, box: toFrame(n.box) }));
     const zooms = (ps.zooms ?? []).map((z) => ({
       start: z.start,
       end: z.end,
-      box: clampZoom(toFrame(z.box), frame, DEFAULTS.audit.zoomPadPx, navBox, phone ? phoneFrame().x : 0, navs),
+      box: clampZoom(toFrame(z.box), frame, DEFAULTS.audit.zoomPadPx, navBox, phone ? phoneRect.x : 0, navs),
       ...(z.instant ? { instant: true } : {}),
     }));
     // Zoom steps ease in; the scene's own starting zoom is never theirs.
@@ -235,8 +240,7 @@ export function buildAuditInput(
       });
 
     // The app's screen in the frame: the whole frame, or the phone screen (the blank-frame check looks only here).
-    const pf = phoneFrame();
-    const screen = phone ? { x: pf.x, y: pf.y, w: pf.w, h: pf.h } : frame;
+    const screen = phone ? phoneRect : frame;
     // A scene that starts zoomed: the box the recorder measured is the target; the box is the plan's
     // instant zoom, clamped like the composer (null when the plan has none: a FAIL in the audit).
     const initial = zooms.find((z) => z.instant);

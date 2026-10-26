@@ -1,6 +1,6 @@
 // Per-frame timing helpers. Pure and free of Node imports: the Revideo page runs them every frame.
 import type { Box, CardsCfg, Segment } from '@scenecast/core';
-import type { SceneTiming, Timed } from './plan.js';
+import type { ResolvedBackground, SceneTiming, Timed } from './plan.js';
 
 const RING_FADE = 0.15;
 const RING_OPACITY = 0.9;
@@ -127,4 +127,52 @@ export function gradientLine(angle: number, w: number, h: number): { from: { x: 
   const dy = -Math.cos(rad);
   const half = (Math.abs(w * dx) + Math.abs(h * dy)) / 2;
   return { from: { x: -dx * half, y: -dy * half }, to: { x: dx * half, y: dy * half } };
+}
+
+// Colour: which ink (text colour) reads on a background.
+
+export const DARK_INK = '#14161B';
+export const LIGHT_INK = '#FFFFFF';
+
+/** The 0–1 sRGB channels of a #rgb / #rrggbb colour. */
+export function channels(hex: string): [number, number, number] {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? [...h].map((c) => c + c).join('') : h.slice(0, 6);
+  return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255) as [number, number, number];
+}
+
+/** Relative luminance of sRGB channels (WCAG). */
+export function luminanceOf([r, g, b]: [number, number, number]): number {
+  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** WCAG contrast ratio of two relative luminances. */
+const contrast = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+
+/** The background's colour at a frame-px point (Revideo's centred coordinates), as 0–1 sRGB channels. */
+function colourAt(bg: Exclude<ResolvedBackground, { kind: 'image' }>, x: number, y: number, width: number, height: number): [number, number, number] {
+  if (bg.kind === 'color') return channels(bg.color);
+  const { from, to } = gradientLine(bg.angle, width, height);
+  const [dx, dy] = [to.x - from.x, to.y - from.y];
+  const t = Math.min(1, Math.max(0, ((x - from.x) * dx + (y - from.y) * dy) / (dx * dx + dy * dy)));
+  const [a, b] = [channels(bg.from), channels(bg.to)];
+  return a.map((c, i) => c + (b[i]! - c) * t) as [number, number, number];
+}
+
+/**
+ * Ink for text set straight on the background over `box` (frame px, top-left), or null when neither ink keeps 4.5:1
+ * everywhere under it (or the background is a photo): such text needs a backing plate.
+ */
+export function inkOver(bg: ResolvedBackground, box: { x: number; y: number; w: number; h: number }, width: number, height: number): string | null {
+  if (bg.kind === 'image') return null;
+  const corners = [
+    [box.x, box.y],
+    [box.x + box.w, box.y],
+    [box.x, box.y + box.h],
+    [box.x + box.w, box.y + box.h],
+  ].map(([x, y]) => luminanceOf(colourAt(bg, x! - width / 2, y! - height / 2, width, height)));
+  const worst = (ink: string) => Math.min(...corners.map((l) => contrast(l, luminanceOf(channels(ink)))));
+  const ink = worst(LIGHT_INK) >= worst(DARK_INK) ? LIGHT_INK : DARK_INK;
+  return worst(ink) >= 4.5 ? ink : null;
 }

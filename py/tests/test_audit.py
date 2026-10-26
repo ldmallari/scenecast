@@ -252,10 +252,10 @@ def test_corner_caption_is_checked_by_its_box_and_named_in_the_table(tmp_path):
 
 def test_caption_with_layout_reason_fails_and_zoom_moves_the_target(tmp_path):
     bottom = {"x": 600, "y": 900, "w": 720, "h": 100}
-    reason = [{"start": 0.5, "end": 2.5, "side": "bottom", "box": bottom, "text": "x", "reason": "both sides overlap the target; bottom overlaps less"}]
+    reason = [{"start": 0.5, "end": 2.5, "side": "bottom", "box": bottom, "text": "x", "reason": "no free position; bottom overlaps least"}]
     row = only_row(run(fixture(tmp_path, cues=reason)))
     assert row["verdict"] == "FAIL"
-    assert any("both sides overlap" in c["detail"] for c in row["checks"])
+    assert any("no free position" in c["detail"] for c in row["checks"])
     # Unzoomed the target (y 300-360) is clear of a bottom caption; zoomed 2x on the lower half it lands under it.
     zbox = {"x": 480, "y": 0, "w": 960, "h": 540}
     cue = [{"start": 0.5, "end": 2.5, "side": "bottom", "box": {"x": 600, "y": 600, "w": 720, "h": 100}, "text": "x"}]
@@ -493,7 +493,7 @@ def test_captions_checked_in_scenes_without_cued_steps(tmp_path):
 
 def test_caption_reason_before_the_first_event_fails(tmp_path):
     bottom = {"x": 600, "y": 900, "w": 720, "h": 100}
-    cue = [{"start": 0.1, "end": 0.6, "side": "bottom", "box": bottom, "text": "x", "reason": "both sides overlap the target; bottom overlaps less"}]
+    cue = [{"start": 0.1, "end": 0.6, "side": "bottom", "box": bottom, "text": "x", "reason": "no free position; bottom overlaps least"}]
     row = only_row(run(fixture(tmp_path, cues=cue)))  # the only event is at 1.0 s
     assert row["verdict"] == "FAIL"
 
@@ -722,3 +722,20 @@ def test_initial_zoom_gets_a_target_and_crop_row(tmp_path):
     # No initial zoom, cued steps: no scene row.
     v = run(fixture(tmp_path))
     assert v["scenes"] == []
+
+
+def test_a_left_phone_screen_and_a_beside_caption(tmp_path):
+    # The phone placed left (centre at 30% of 1920): the input carries its screen, as buildAuditInput writes it.
+    screen = {"x": 376.379, "y": 108, "w": 399.242, "h": 864}
+    target = {"x": 386, "y": 500, "w": 200, "h": 60}  # 9.6 px inside the screen's left edge
+    # The crop rule exempts the zoom side at that screen's edge, wherever the phone sits.
+    assert _crop_check(_zoom_row(tmp_path, {"x": 376.379, "y": 300, "w": 768, "h": 432}, target, screen))["verdict"] == "PASS"
+    assert _crop_check(_zoom_row(tmp_path, {"x": 381, "y": 300, "w": 768, "h": 432}, target, screen))["verdict"] == "FAIL"
+    # A cue beside the phone covers nothing on its screen; the row reports its side.
+    beside = {"x": 895.6, "y": 482.8, "w": 750, "h": 114.4}
+    cue = [{"start": 0.5, "end": 2.5, "side": "beside", "box": beside, "text": "Tap Requests"}]
+    data = fixture(tmp_path, cues=cue, events=[event(boxes=[{"kind": "target", "box": target}])])
+    data["scenes"][0]["screen"] = screen
+    row = only_row(run(data))
+    assert next(c for c in row["checks"] if c["name"] == "captions")["verdict"] == "PASS"
+    assert row["captionSide"] == "beside"

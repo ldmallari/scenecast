@@ -1,22 +1,33 @@
-import { DEFAULTS } from './scene/schema.js';
+import { DEFAULTS, type PhoneAlign } from './scene/schema.js';
 import type { Box } from './record/record.js';
 
 /** Share of the frame height a phone take fills in the composed frame. */
 export const PHONE_HEIGHT_SHARE = 0.8;
 
-/** Where the phone take sits in the frame: scaled to 80% of frame height, centred both ways. */
-export function phoneFrame(): { x: number; y: number; w: number; h: number; scale: number } {
+/**
+ * Where the phone take sits in the frame: scaled to 80% of the frame height and centred vertically. `center`
+ * centres it across too; `left` and `right` put its centre at `phone.centreShare` (30%) or 1 − that (70%) of
+ * the width, leaving room for captions beside it. Every caller passes the scene file's `phone.align`.
+ */
+export function phoneFrame(align: PhoneAlign): { x: number; y: number; w: number; h: number; scale: number } {
   const { width: fw, height: fh } = DEFAULTS.video;
-  const { width: pw, height: ph } = DEFAULTS.phone;
+  const { width: pw, height: ph, centreShare } = DEFAULTS.phone;
   const h = fh * PHONE_HEIGHT_SHARE;
   const scale = h / ph;
   const w = pw * scale;
-  return { x: (fw - w) / 2, y: (fh - h) / 2, w, h, scale };
+  const cx = align === 'left' ? fw * centreShare : align === 'right' ? fw * (1 - centreShare) : fw / 2;
+  return { x: cx - w / 2, y: (fh - h) / 2, w, h, scale };
 }
 
-/** Maps a box in the 390×844 phone take's pixels into 1920×1080 frame pixels. */
-export function phoneToFrame(box: Box): Box {
-  const f = phoneFrame();
+/** The phone screen's rectangle in frame px (`phoneFrame` without its scale). */
+export function phoneScreen(align: PhoneAlign): Box {
+  const { x, y, w, h } = phoneFrame(align);
+  return { x, y, w, h };
+}
+
+/** Maps a box in the 390×844 phone take's pixels into 1920×1080 frame pixels, for a phone placed at `align`. */
+export function phoneToFrame(box: Box, align: PhoneAlign): Box {
+  const f = phoneFrame(align);
   return { x: f.x + box.x * f.scale, y: f.y + box.y * f.scale, w: box.w * f.scale, h: box.h * f.scale };
 }
 

@@ -12,7 +12,14 @@ export const DEFAULTS = {
     zoomEaseSec: 0.7,
     takeTailSec: 0.5,
   },
-  captions: { maxLines: 2, charsPerLine: 42, bottomZone: 0.25, fullFrameShare: 0.9 },
+  captions: {
+    maxLines: 2,
+    charsPerLine: 42,
+    bottomZone: 0.25,
+    fullFrameShare: 0.9,
+    /** The column beside an off-centre phone: shorter lines, and `gapPx` clear of the phone and of the frame edge. */
+    beside: { charsPerLine: 30, maxLines: 3, gapPx: 120 },
+  },
   loudness: {
     voiceLufs: -16,
     toleranceLu: 1,

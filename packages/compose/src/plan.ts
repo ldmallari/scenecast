@@ -1,8 +1,8 @@
 // Plan types, the scene timeline and zoom clamping (Node side). Per-frame helpers the Revideo
 // page uses live in timing.ts, which stays free of Node imports.
-import { DEFAULTS, phoneToFrame, type Box, type Brand, type CardsCfg, type Cue, type NavBox, type Segment } from '@scenecast/core';
+import { DEFAULTS, phoneToFrame, type Box, type Brand, type CardsCfg, type Cue, type NavBox, type PhoneAlign, type Segment } from '@scenecast/core';
 export { clampZoom } from '@scenecast/core';
-export { CARD_BAR_W, easeInOutCubic, entranceAt, gradientLine, ringAlpha, sceneOpacity, srcTimeAt, zoomBoxAt, type CardPart, type PartLook } from './timing.js';
+export { CARD_BAR_W, easeInOutCubic, entranceAt, gradientLine, inkOver, ringAlpha, sceneOpacity, srcTimeAt, zoomBoxAt, type CardPart, type PartLook } from './timing.js';
 
 /** Something shown from `start` to `end` (scene seconds) around `box` (frame px; take px on phone scenes). */
 export interface Timed {
@@ -38,9 +38,9 @@ export interface PlanScene {
   rings?: Timed[];
   card?: CardSpec;
   /**
-   * A 390×844 phone take, shown inside a CSS-drawn outline at 80% of the frame height. Its zoom,
-   * ring and nav boxes are in the take's own pixels (as the recorder logs them); the renderer maps
-   * them into the frame with core's `phoneToFrame`. Cue boxes are already in frame px (captions.ts).
+   * A 390×844 phone take, shown inside a drawn phone body at 80% of the frame height, placed by the plan's
+   * `phoneAlign`. Its zoom, ring and nav boxes are in the take's own pixels (as the recorder logs them); the
+   * renderer maps them into the frame with core's `phoneToFrame`. Cue boxes are already in frame px (captions.ts).
    */
   phone?: boolean;
   /** The app's left nav (same pixel space as zooms), so a zoom never cuts it partly. */
@@ -56,6 +56,8 @@ export interface ComposePlan {
   dissolveSec?: number;
   /** Card settings the composer needs; without it the entrance is `DEFAULTS.cards.entrance`. */
   cards?: Pick<CardsCfg, 'entrance'>;
+  /** Where phone scenes place the phone (the scene file's `phone.align`); default `'center'`, the v1 placement. */
+  phoneAlign?: PhoneAlign;
 }
 
 /** The background of the cards (and the phone stage), with any image as a URL the Revideo page can load. */
@@ -93,7 +95,7 @@ export interface ResolvedPlan {
   background: ResolvedBackground;
   cardFont: string;
   entrance: CardsCfg['entrance'];
-  /** Phone take rectangle in frame px. */
+  /** Phone take rectangle in frame px (where `phoneAlign` puts it). */
   phoneRect: Box;
   scenes: (PlanScene & SceneTiming)[];
 }
@@ -142,15 +144,19 @@ export function timeline(plan: ComposePlan): { scenes: SceneTiming[]; total: num
   return { scenes, total: t };
 }
 
-/** The scene with its zoom, ring and nav boxes in frame px: phone-take boxes go through `phoneToFrame`. */
-export function inFramePixels(scene: PlanScene): PlanScene {
+/**
+ * The scene with its zoom, ring and nav boxes in frame px: phone-take boxes go through `phoneToFrame` for a phone
+ * placed at `align` (the plan's `phoneAlign`).
+ */
+export function inFramePixels(scene: PlanScene, align: PhoneAlign): PlanScene {
   if (!scene.phone) return scene;
-  const map = (t: Timed): Timed => ({ ...t, box: phoneToFrame(t.box) });
+  const toFrame = (b: Box) => phoneToFrame(b, align);
+  const map = (t: Timed): Timed => ({ ...t, box: toFrame(t.box) });
   return {
     ...scene,
     zooms: scene.zooms?.map(map),
     rings: scene.rings?.map(map),
-    navBox: scene.navBox && phoneToFrame(scene.navBox),
-    navs: scene.navs?.map((n) => ({ ...n, box: phoneToFrame(n.box) })),
+    navBox: scene.navBox && toFrame(scene.navBox),
+    navs: scene.navs?.map((n) => ({ ...n, box: toFrame(n.box) })),
   };
 }

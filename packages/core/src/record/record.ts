@@ -20,6 +20,8 @@ const PARK_GLIDE_MS = DEFAULT_TRAVEL_SEC * 1000;
 const CURSOR_PX = 28;
 /** Where the arrow's tip sits inside its 28 px box (see overlay.js). */
 const CURSOR_TIP = { x: 3, y: 2 };
+/** Phone takes show taps with a touch indicator of this size (see overlay.js), centred on the tap. */
+const TOUCH_PX = DEFAULTS.phone.touchPx;
 /** The flash stays up this long: 2 frames of a 25 fps webm plus a vsync. */
 const FLASH_MIN_MS = 100;
 /** How often the recorder notes where the video's clock is (see VideoClock). */
@@ -139,6 +141,8 @@ export interface Take {
 }
 
 interface OverlayApi {
+  mode(m: 'mouse' | 'touch'): void;
+  touch(x: number, y: number, endAt: number): void;
   cursor(x: number, y: number): void;
   moveTo(x: number, y: number, endAt: number): void;
   ripple(x: number, y: number): void;
@@ -149,6 +153,8 @@ interface OverlayApi {
 declare global {
   interface Window {
     __scenecast: OverlayApi;
+    /** Set by an init script before the overlay runs: phone takes start in touch mode. */
+    __scenecastInitMode?: 'touch';
   }
 }
 
@@ -221,6 +227,8 @@ async function measure(page: Page, sceneId: string, index: SelOwner, sels: strin
 const centre = (b: Box) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
 /** The box the cursor graphic covers with its tip at `p`. */
 const cursorBox = (p: Point): Box => ({ x: round(p.x - CURSOR_TIP.x), y: round(p.y - CURSOR_TIP.y), w: CURSOR_PX, h: CURSOR_PX });
+/** The box the touch indicator covers, centred on the tap at `p`. */
+const touchBox = (p: Point): Box => ({ x: round(p.x - TOUCH_PX / 2), y: round(p.y - TOUCH_PX / 2), w: TOUCH_PX, h: TOUCH_PX });
 
 /**
  * Re-measure the target just before the pointer lands and check the element at its centre is the
@@ -460,10 +468,13 @@ export async function recordScene(
       viewport,
       deviceScaleFactor: phone ? 2 : 1,
       isMobile: phone,
+      hasTouch: phone,
       storageState,
       recordVideo: { dir: videoDir, size: viewport },
     });
     await applyAppContext(context, app, { sessionFile: storageState });
+    // Phone takes tap: the overlay starts every document in touch mode (no arrow; a touch indicator per tap).
+    if (phone) await context.addInitScript({ content: "window.__scenecastInitMode = 'touch';" });
     await context.addInitScript({ content: OVERLAY_JS });
     let take: Omit<Take, 'file'>;
     let page: Page | undefined;
@@ -472,7 +483,7 @@ export async function recordScene(
       const videoStart = epoch();
       const start = spotPoint(scene.cursor ?? opts.cursor?.start ?? DEFAULTS.cursor.start, viewport);
       const parkSpot = opts.cursor?.park ?? DEFAULTS.cursor.park;
-      take = await runTake(page, scene, scheduled, app, videoStart, start, { viewport, parkSpot }, {
+      take = await runTake(page, scene, scheduled, app, videoStart, start, { viewport, parkSpot, touch: phone }, {
         minTakeSec: opts.minTakeSec ?? 0,
         ...(opts.wallClock ? { wallClock: opts.wallClock } : {}),
       });
@@ -504,9 +515,10 @@ async function runTake(
   app: AppConn,
   videoStart: number,
   start: Point,
-  where: { viewport: { width: number; height: number }; parkSpot: CursorCfg['park'] },
+  where: { viewport: { width: number; height: number }; parkSpot: CursorCfg['park']; touch: boolean },
   timing: { minTakeSec: number; wallClock?: () => number },
 ): Promise<Omit<Take, 'file'>> {
+  const touch = where.touch;
   const url = (p: string) => new URL(p, app.baseUrl).href;
   await checkPanels(page, app);
   const panelSel = panelSelector(app);
@@ -597,11 +609,14 @@ async function runTake(
    * Setting off late (the step's prep ran past `due`, e.g. a shortened glide right after the previous action)
    * compresses the glide, down to half its travel, so the action still lands on its cue.
    */
-  const glideTo = async (p: Point, due: number, travel: number): Promise<number> => {
+  const freshOffset = async () => {
     if (offsetStale) {
       offsetStale = false;
       offset = await clockOffset(page);
     }
+  };
+  const glideTo = async (p: Point, due: number, travel: number): Promise<number> => {
+    await freshOffset();
     await sleepUntil(due);
     const arrive = Math.max(due + travel * 1000, epoch() + travel * 500);
     cursor = { ...p };
@@ -610,6 +625,19 @@ async function runTake(
     const lead = Math.min(GLIDE_LEAD_MS, (arrive - epoch()) * 0.3);
     const glide = [p.x, p.y, arrive - lead + offset] as const;
     quiet(page.evaluate(([x, y, end]) => window.__scenecast.moveTo(x, y, end), glide));
+    return arrive;
+  };
+
+  /**
+   * Touch: no glide. The indicator fades in at `p` from `due` (Node epoch ms) and is full when the tap comes, `travel` s
+   * later (the touch lead). Set off late, the fade is compressed the same way a glide is. Returns the tap time.
+   */
+  const touchAt = async (p: Point, due: number, travel: number): Promise<number> => {
+    await freshOffset();
+    await sleepUntil(due);
+    const arrive = Math.max(due + travel * 1000, epoch() + travel * 500);
+    cursor = { ...p };
+    quiet(page.evaluate(([x, y, end]) => window.__scenecast.touch(x, y, end), [p.x, p.y, arrive + offset] as const));
     return arrive;
   };
 
@@ -662,7 +690,8 @@ async function runTake(
       let ringM = readyRingM && index === ready?.index ? readyRingM : ringSels.length ? await findRing(page, scene.id, index, ringSels) : undefined;
       // Each step glides for its own travel. With none (pre-positioned) the cursor is already on the
       // target: no glide and no lead, and the action fires at `due`.
-      const arrive = travel > 0 ? await glideTo(centre(m.first), due, travel) : due;
+      // On a phone the indicator fades in on the target instead (with no lead, a pre-positioned tap shows it at the tap).
+      const arrive = travel > 0 ? await (touch ? touchAt : glideTo)(centre(m.first), due, travel) : due;
       await sleepUntil(arrive - AIM_CHECK_MS);
       m = await aim(m, sels, scene.id, index);
       if (ringM) ringM = await boxesOf(ringM.els, ringSels, scene.id, index);
@@ -670,24 +699,34 @@ async function runTake(
       const wasChecked = step.do === 'check' ? await isChecked(m.els[0]!) : undefined;
       ev.loadingBefore = (await snapshot(page, panelSel)).loading;
       const aimed = centre(m.first);
-      await page.mouse.move(aimed.x, aimed.y); // the real pointer moves ahead so the action itself is one press
+      // The real pointer moves ahead so the action itself is one press. A tap needs none (a hover still moves it).
+      if (!touch || step.do === 'hover') await page.mouse.move(aimed.x, aimed.y);
+      if (touch && (travel === 0 || Math.abs(aimed.x - cursor.x) > 1 || Math.abs(aimed.y - cursor.y) > 1)) {
+        // The indicator on the target as it is now: moved there if the target moved, shown now if there was no lead.
+        cursor = aimed;
+        quiet(page.evaluate(([x, y, end]) => window.__scenecast.touch(x, y, end), [aimed.x, aimed.y, arrive + offset] as const));
+      }
       await sleepUntil(arrive);
       ev.at = stamp(ev);
-      if (Math.abs(aimed.x - cursor.x) > 1 || Math.abs(aimed.y - cursor.y) > 1) {
+      if (!touch && (Math.abs(aimed.x - cursor.x) > 1 || Math.abs(aimed.y - cursor.y) > 1)) {
         cursor = aimed; // the target moved during travel: snap onto it
         quiet(page.evaluate(([x, y]) => window.__scenecast.cursor(x, y), [cursor.x, cursor.y] as const));
       }
       ev.target = m.union;
-      ev.cursorTo = cursorBox(cursor);
+      ev.cursorTo = touch ? touchBox(cursor) : cursorBox(cursor);
       const at = ev.at;
       if (ringM) {
         const hold = step.ringMs ?? RING_HOLD_MS;
         drawRing(ev, { at, box: padBox(ringM.union, step.pad), hold, m: ringM, sels: ringSels, index, atPeak: (b) => void (b && (ev.ringTarget = b)) });
       }
       if (step.do === 'click' || step.do === 'type' || (step.do === 'check' && !wasChecked)) {
-        quiet(page.evaluate(([x, y]) => window.__scenecast.ripple(x, y), [cursor.x, cursor.y] as const));
-        await page.mouse.down();
-        await page.mouse.up();
+        // A phone taps (a check too, like any other press there); the indicator's press is its feedback.
+        if (touch) await page.touchscreen.tap(cursor.x, cursor.y);
+        else {
+          quiet(page.evaluate(([x, y]) => window.__scenecast.ripple(x, y), [cursor.x, cursor.y] as const));
+          await page.mouse.down();
+          await page.mouse.up();
+        }
         if (step.do === 'type' && step.text) {
           await page.keyboard.type(step.text, { delay: TYPE_DELAY_MS });
           ev.busyUntil = Math.max(ev.busyUntil ?? at, videoNow());
@@ -698,6 +737,11 @@ async function runTake(
         if (!(await becomesChecked(m.els[0]!)))
           throw new Error(`scene "${scene.id}" step ${index}: ${sels[0]} is not checked after the click`);
       }
+    } else if (step.do === 'park' && touch) {
+      // A phone has no cursor to park (the touch indicator fades out by itself): the step only logs its time.
+      ev.loadingBefore = (await snapshot(page, panelSel)).loading;
+      await sleepUntil(due + travel * 1000);
+      ev.at = stamp(ev);
     } else if (step.do === 'park') {
       // Glides the drawn cursor to its spot, landing on the cue like any pointer step. (The real mouse stays,
       // as with the automatic park, so a hover menu stays open.)
@@ -761,7 +805,7 @@ async function runTake(
     Object.assign(ev, await snapshot(page, panelSel));
     // A step held with `ms` is busy until the hold ends. Not a zoom: the composer draws it, and retime may trim its hold.
     if (step.ms && ev.at !== undefined && step.do !== 'zoom' && step.do !== 'unzoom') ev.busyUntil = Math.max(ev.busyUntil ?? ev.at, ev.at + step.ms / 1000);
-    if (park && onTarget(step.do) && ev.at !== undefined) {
+    if (park && !touch && onTarget(step.do) && ev.at !== undefined) {
       // Glide off to the park spot once the action is over and the park time has come. Skipped when the glide
       // would still be running as the next pointer step sets off (two glides would fight over the cursor).
       // The park delay counts from the action as it happened, so a late action still rests before the cursor leaves.

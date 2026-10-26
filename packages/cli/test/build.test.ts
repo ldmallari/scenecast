@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { clampZoom, DEFAULTS, parseSrt, phoneToFrame, travelSecFor, type Box, type Scene, type SceneVoice, type ScheduledStep, type Take, type VideoSpec } from '@scenecast/core';
+import { clampZoom, DEFAULTS, parseSrt, phoneScreen, phoneToFrame, travelSecFor, type Box, type Scene, type SceneVoice, type ScheduledStep, type Take, type VideoSpec } from '@scenecast/core';
 import { buildVoiceTrack, readWav, writeWav } from '../src/audio.js';
 import { appPlanScene, buildVideo, captionEvents, chaptersTxt, eventTimes, finalSrt, INTRO_SEC, OUTRO_SEC, onScreen, planZooms, toFrames, type Recorded } from '../src/build.js';
 
@@ -60,7 +60,7 @@ describe('buildVideo', () => {
     for (const lastFrameSec of [14.8, 14.5]) {
       const app = appInput('a');
       const recorded: Recorded = { ...app.recorded, srcDuration: 14.84, lastFrameSec };
-      const { plan, segments } = appPlanScene(app.scene, voice(14.6), app.scheduled, recorded);
+      const { plan, segments } = appPlanScene(app.scene, voice(14.6), app.scheduled, recorded, 'center');
       expect(segments.length).toBeGreaterThan(0);
       for (const g of segments) expect(g.srcOut).toBeLessThanOrEqual(lastFrameSec + 1e-9);
       // The last frame is held to the end of the scene.
@@ -186,7 +186,7 @@ describe('captionEvents', () => {
     const v = buildVideo(spec, [app], { cards: false });
     const times = eventTimes(app.recorded, app.scheduled, v.scenes[0]!.segments!);
     const zooms = v.plan.scenes[0]!.zooms!;
-    const events = captionEvents(app.recorded.take, times, zooms, v.plan.scenes[0]!.duration);
+    const events = captionEvents(app.recorded.take, times, zooms, v.plan.scenes[0]!.duration, 'center');
     const z = zooms[0]!;
     const region = clampZoom(z.box, FRAME, DEFAULTS.audit.zoomPadPx);
     const held = events.find((e) => e.start >= z.start + DEFAULTS.video.zoomEaseSec - 1e-6 && e.end <= z.end + 1e-6)!;
@@ -203,8 +203,28 @@ describe('captionEvents', () => {
     const v = buildVideo(spec, [app], { cards: false });
     expect(v.plan.scenes[0]!.phone).toBe(true);
     const times = eventTimes(app.recorded, app.scheduled, v.scenes[0]!.segments!);
-    const [e] = captionEvents(app.recorded.take, times, [], v.plan.scenes[0]!.duration);
-    expect(e!.boxes[0]).toEqual(phoneToFrame(app.recorded.take.events[0]!.target!));
+    // The scene file sets no phone.align: the default (left) places the phone, and the plan says so.
+    expect(v.plan.phoneAlign).toBe('left');
+    const [e] = captionEvents(app.recorded.take, times, [], v.plan.scenes[0]!.duration, 'left');
+    expect(e!.boxes[0]).toEqual(phoneToFrame(app.recorded.take.events[0]!.target!, 'left'));
+  });
+
+  it('phone scenes get captions beside the phone, placed by phone.align', () => {
+    for (const align of ['left', 'right'] as const) {
+      const v = buildVideo({ ...spec, phone: { align } }, [appInput('p', { phone: true })], { cards: false });
+      expect(v.plan.phoneAlign).toBe(align);
+      const cues = v.plan.scenes[0]!.cues!;
+      expect(cues.length).toBeGreaterThan(0);
+      for (const c of cues) {
+        expect(c.side).toBe('beside');
+        const screen = phoneScreen(align);
+        if (align === 'left') expect(c.box.x).toBeGreaterThanOrEqual(screen.x + screen.w + 120 - 1e-6);
+        else expect(c.box.x + c.box.w).toBeLessThanOrEqual(screen.x - 120 + 1e-6);
+      }
+    }
+    // A centred phone keeps the desktop captions; desktop scenes never go beside.
+    const centred = buildVideo({ ...spec, phone: { align: 'center' } }, [appInput('p', { phone: true }), appInput('d')], { cards: false });
+    for (const sc of centred.plan.scenes) for (const c of sc.cues!) expect(c.side).not.toBe('beside');
   });
 });
 
@@ -297,7 +317,7 @@ describe('declared navs', () => {
     const v = buildVideo(spec, [app], { cards: false });
     expect(v.plan.scenes[0]!.navs).toEqual([top]);
     const times = eventTimes(app.recorded, app.scheduled, v.scenes[0]!.segments!);
-    const events = captionEvents(app.recorded.take, times, v.plan.scenes[0]!.zooms!, v.plan.scenes[0]!.duration);
+    const events = captionEvents(app.recorded.take, times, v.plan.scenes[0]!.zooms!, v.plan.scenes[0]!.duration, 'center');
     const region = clampZoom(app.recorded.take.events[1]!.target!, FRAME, DEFAULTS.audit.zoomPadPx, undefined, 0, [top]);
     expect(region.y).toBeCloseTo(64, 6);
     expect(events.some((e) => e.boxes.some((b) => JSON.stringify(b) === JSON.stringify(onScreen(app.recorded.take.events[1]!.target!, region))))).toBe(true);

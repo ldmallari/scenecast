@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { audit, buildAuditInput, type AuditOpts, type AuditPlan, type HeardWord } from '../src/audit.js';
-import { clampZoom, phoneFrame, phoneToFrame } from '../src/frame.js';
+import { clampZoom, phoneFrame, phoneScreen, phoneToFrame } from '../src/frame.js';
 import { runFfmpeg } from '../src/ffmpeg.js';
 import { ringPeakSec, type Box, type Take } from '../src/record/record.js';
 import { VideoSpecSchema, type Scene } from '../src/scene/schema.js';
@@ -143,18 +143,18 @@ describe('buildAuditInput', () => {
   it('phone scene boxes are mapped into the frame exactly once', () => {
     const m = build().scenes[1]!;
     const tap = m.moments[0]!;
-    expect(tap.target).toEqual(phoneToFrame(MENU));
-    const pf = phoneFrame();
+    expect(tap.target).toEqual(phoneToFrame(MENU, 'center'));
+    const pf = phoneFrame('center');
     expect(tap.target.x).toBeGreaterThanOrEqual(pf.x);
     expect(tap.target.y).toBeGreaterThanOrEqual(pf.y);
     expect(m.events[0]!.boxes.map((b) => b.kind)).toEqual(['target', 'cursor', 'panel']);
-    expect(m.events[0]!.boxes[2]!.box).toEqual(phoneToFrame(box(0, 400, 390, 444)));
-    expect(m.zooms[0]!.box).toEqual(clampZoom(phoneToFrame(MENU), FRAME, 24, undefined, pf.x));
+    expect(m.events[0]!.boxes[2]!.box).toEqual(phoneToFrame(box(0, 400, 390, 444), 'center'));
+    expect(m.zooms[0]!.box).toEqual(clampZoom(phoneToFrame(MENU, 'center'), FRAME, 24, undefined, pf.x));
     // The recorder's ring is the padded box it drew; the target is the element at the peak (150 ms fade + 0.1 s).
     const ring = m.moments[1]!.ring;
     expect(ring.by).toBe('recorder');
-    expect(ring.box).toEqual(phoneToFrame(box(5, 95, 110, 50)));
-    expect(m.moments[1]!.target).toEqual(phoneToFrame(MENU));
+    expect(ring.box).toEqual(phoneToFrame(box(5, 95, 110, 50), 'center'));
+    expect(m.moments[1]!.target).toEqual(phoneToFrame(MENU, 'center'));
     expect(m.moments[1]!.actionTime).toBeCloseTo(9 + 1.9, 9);
     expect(ring.peak).toBeCloseTo(9 + 1.9 + 0.25, 9);
   });
@@ -303,13 +303,26 @@ describe('buildAuditInput: unzoom steps and scenes that start zoomed', () => {
     expect(build().scenes[0] as unknown as Record<string, unknown>).toMatchObject({ initialZoom: null });
   });
 
+  it('phone boxes are mapped with the plan alignment', () => {
+    // The plan places the phone left (30% of the width): every phone box, zoom and the screen follow it.
+    const left = build(opts({ plan: { ...plan, phoneAlign: 'left' } })).scenes[1]! as unknown as Record<string, any>;
+    const tap = left.moments[0]!;
+    expect(tap.target).toEqual(phoneToFrame(MENU, 'left'));
+    expect(tap.target.x).toBeCloseTo(phoneToFrame(MENU, 'center').x - 384, 6);
+    expect(left.events[0]!.boxes[0]!.box).toEqual(phoneToFrame(MENU, 'left'));
+    expect(left.screen).toEqual(phoneScreen('left'));
+    expect(left.zooms[0]!.box).toEqual(clampZoom(phoneToFrame(MENU, 'left'), FRAME, 24, undefined, phoneFrame('left').x));
+    // Without phoneAlign the plan is the v1 centred phone.
+    expect((build().scenes[1]! as unknown as Record<string, any>).screen).toEqual(phoneScreen('center'));
+  });
+
   it('phone scenes map the initial zoom into the frame', () => {
     const s = build(opts({
       plan: { ...zplan([{ start: 0, end: 2.0, box: HEAD, instant: true }]), scenes: [{ kind: 'card', duration: 3 }, { ...zplan([{ start: 0, end: 2.0, box: HEAD, instant: true }]).scenes[1]!, phone: true }] },
       scenes: [{ scene: zz, planIndex: 1, scheduled: sched(zz, [2.0, 4.0], [2.0, 4.0]), take: take({ viewport: 'phone' }), flashTime: 0.1 }],
     })).scenes[0] as unknown as Record<string, any>;
-    expect(s.initialZoom.target).toEqual(phoneToFrame(HEAD));
-    expect(s.initialZoom.box).toEqual(clampZoom(phoneToFrame(HEAD), FRAME, 24, undefined, phoneFrame().x));
+    expect(s.initialZoom.target).toEqual(phoneToFrame(HEAD, 'center'));
+    expect(s.initialZoom.box).toEqual(clampZoom(phoneToFrame(HEAD, 'center'), FRAME, 24, undefined, phoneFrame('center').x));
   });
 
   it('the rules carry the full-frame share', () => {

@@ -3,7 +3,9 @@
 import {
   actionAt,
   DEFAULTS,
+  DESKTOP_CAPTIONS,
   layoutCaptions,
+  phoneCaptions,
   onScreen,
   outputTimeOf,
   retime,
@@ -18,6 +20,8 @@ import {
   type ScheduledStep,
   type Segment,
   type CardsCfg,
+  type PhoneAlign,
+  type PhoneCfg,
   type Take,
   type VideoSpec,
   zoomedCaptionEvents as captionEvents,
@@ -119,8 +123,17 @@ export function planZooms(take: Take, scheduled: ScheduledStep[], times: Map<num
   return zooms;
 }
 
-/** One app scene of the plan: the retimed take with its zooms, composer rings and captions. */
-export function appPlanScene(scene: Scene, voice: SceneVoice, scheduled: ScheduledStep[], rec: Recorded): { plan: PlanScene; segments: Segment[] } {
+/**
+ * One app scene of the plan: the retimed take with its zooms, composer rings and captions. `align` is where a phone
+ * take sits (`phone.align`): its boxes are mapped there, and its captions go beside the phone (`phoneCaptions`).
+ */
+export function appPlanScene(
+  scene: Scene,
+  voice: SceneVoice,
+  scheduled: ScheduledStep[],
+  rec: Recorded,
+  align: PhoneAlign,
+): { plan: PlanScene; segments: Segment[] } {
   const segments = retime(rec.take, scheduled, voice, {
     sceneId: scene.id,
     flashTime: rec.flashTime,
@@ -143,7 +156,8 @@ export function appPlanScene(scene: Scene, voice: SceneVoice, scheduled: Schedul
       rings.push({ start: t, end: Math.min(duration, end), box: padBox(e.target, step.pad ?? 0) });
     }
   }
-  const cues = layoutCaptions(scene, voice, captionEvents(rec.take, times, zooms, duration));
+  const layout = rec.take.viewport === 'phone' ? phoneCaptions(align) : DESKTOP_CAPTIONS;
+  const cues = layoutCaptions(scene, voice, captionEvents(rec.take, times, zooms, duration, align), layout);
   const plan: PlanScene = {
     kind: 'app',
     duration,
@@ -157,8 +171,11 @@ export function appPlanScene(scene: Scene, voice: SceneVoice, scheduled: Schedul
   return { plan, segments };
 }
 
-/** What `buildVideo` needs of the scene file: test fixtures may leave out `cards` (then `DEFAULTS.cards` applies). */
-export type BuildSpec = Omit<VideoSpec, 'cards'> & { cards?: CardsCfg };
+/**
+ * What `buildVideo` needs of the scene file: test fixtures may leave out `cards` and `phone` (then `DEFAULTS.cards`
+ * and `DEFAULTS.phone.align` apply).
+ */
+export type BuildSpec = Omit<VideoSpec, 'cards' | 'phone'> & { cards?: CardsCfg; phone?: PhoneCfg };
 
 export interface BuildOpts {
   /** false (a `--only` render) leaves out the intro and outro cards. */
@@ -175,6 +192,7 @@ export interface BuildOpts {
  */
 export function buildVideo(spec: BuildSpec, inputs: SceneInput[], opts: BuildOpts): BuiltVideo {
   const cards: CardsCfg = spec.cards ?? DEFAULTS.cards;
+  const align: PhoneAlign = spec.phone?.align ?? DEFAULTS.phone.align;
   const planScenes: PlanScene[] = [];
   const placed: PlacedScene[] = [];
   let t = 0;
@@ -198,7 +216,7 @@ export function buildVideo(spec: BuildSpec, inputs: SceneInput[], opts: BuildOpt
       continue;
     }
     if (!input.scheduled || !input.recorded) throw new Error(`scene "${scene.id}": app scene needs its schedule and take`);
-    const { plan, segments } = appPlanScene(scene, voice, input.scheduled, input.recorded);
+    const { plan, segments } = appPlanScene(scene, voice, input.scheduled, input.recorded, align);
     const start = push(plan);
     placed.push({ ...input, planIndex: planScenes.length - 1, start, segments });
   }
@@ -211,7 +229,7 @@ export function buildVideo(spec: BuildSpec, inputs: SceneInput[], opts: BuildOpt
     };
     push({ kind: 'card', duration: toFrames(cards.outroSec), card });
   }
-  return { plan: { brand: spec.brand, scenes: planScenes, cards: { entrance: cards.entrance } }, scenes: placed, total: t };
+  return { plan: { brand: spec.brand, scenes: planScenes, cards: { entrance: cards.entrance }, phoneAlign: align }, scenes: placed, total: t };
 }
 
 function hms(sec: number): string {

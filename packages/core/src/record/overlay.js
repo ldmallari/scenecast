@@ -6,6 +6,10 @@
   if (window.top !== window || window.__scenecast) return;
 
   const CURSOR_PX = 28;
+  /** Touch mode (phone takes): a soft fingertip circle instead of the arrow. */
+  const TOUCH = { px: 34, fill: 'rgba(255,255,255,0.55)', ring: 'rgba(20,20,30,0.5)', pressScale: 0.85, pressMs: 90, fadeOutMs: 250 };
+  // The recorder sets this in an init script before the overlay runs, so every document of a phone take starts in touch mode.
+  let mode = window.__scenecastInitMode === 'touch' ? 'touch' : 'mouse';
   const RING = { color: '#F5C518', width: 3, opacity: 0.9, fadeMs: 150, radius: 10 };
   const POS_KEY = '__scenecastCursor';
   const now = () => performance.timeOrigin + performance.now();
@@ -26,10 +30,14 @@
       .ring { position: absolute; box-sizing: border-box; border: ${RING.width}px solid ${RING.color};
         border-radius: ${RING.radius}px; opacity: 0; transition: opacity ${RING.fadeMs}ms ease; }
       .flash { position: fixed; inset: 0; background: #FF00FF; }
+      .touch { position: absolute; left: 0; top: 0; width: ${TOUCH.px}px; height: ${TOUCH.px}px; box-sizing: border-box;
+        margin: ${-TOUCH.px / 2}px 0 0 ${-TOUCH.px / 2}px; border-radius: 50%; background: ${TOUCH.fill};
+        box-shadow: 0 0 0 2px ${TOUCH.ring}; opacity: 0; display: none; will-change: transform, opacity; }
       .nudge { position: absolute; left: 0; top: 0; width: 1px; height: 1px; background: #000; opacity: 0.01; }
     </style>
     <div class="layer">
       <div class="nudge"></div>
+      <div class="touch"></div>
       <svg class="cursor" viewBox="0 0 28 28" aria-hidden="true">
         <path d="M3 2 L3 23 L8.6 18 L12.4 26.2 L16.2 24.5 L12.5 16.6 L20 16.4 Z"
           fill="#ffffff" stroke="#1a1a1a" stroke-width="1.6" stroke-linejoin="round" />
@@ -70,6 +78,42 @@
     });
   }
   const cursor = shadow.querySelector('.cursor');
+  const touchEl = shadow.querySelector('.touch');
+  /** The running touch animation; a new touch replaces it. */
+  let touchRun = 0;
+  const TOUCH_KEY = '__scenecastTouch';
+
+  /**
+   * Fades the indicator at (x, y) from opacity `from` (at epoch ms `start`) to 1 at `endAt`, then presses it to 0.85
+   * and fades it out. Timed on the epoch clock, so a tap that navigates carries on in the next document.
+   */
+  function animateTouch(x, y, start, endAt, from) {
+    const run = ++touchRun;
+    touchEl.style.display = 'block';
+    touchEl.style.left = `${x}px`;
+    touchEl.style.top = `${y}px`;
+    const tick = () => {
+      if (run !== touchRun) return;
+      const t = now();
+      let opacity;
+      let scale = 1;
+      if (t < endAt) opacity = from + (1 - from) * Math.min(1, (t - start) / Math.max(1, endAt - start));
+      else {
+        const after = t - endAt;
+        const p = Math.min(1, after / TOUCH.pressMs);
+        scale = 1 - (1 - TOUCH.pressScale) * (1 - (1 - p) * (1 - p));
+        opacity = after <= TOUCH.pressMs ? 1 : Math.max(0, 1 - (after - TOUCH.pressMs) / TOUCH.fadeOutMs);
+      }
+      touchEl.style.opacity = String(opacity);
+      touchEl.style.transform = `scale(${scale})`;
+      if (t < endAt || opacity > 0) requestAnimationFrame(tick);
+      else {
+        touchEl.style.display = 'none';
+        nudge(); // the frame without the indicator must reach the video (see nudge)
+      }
+    };
+    tick();
+  }
 
   let pos = null;
   try {
@@ -78,7 +122,7 @@
 
   function place(x, y) {
     pos = { x, y };
-    cursor.style.display = 'block';
+    cursor.style.display = mode === 'touch' ? 'none' : 'block';
     // the arrow tip sits at (3, 2) in the 28 px box
     cursor.style.transform = `translate(${x - 3}px, ${y - 2}px)`;
   }
@@ -92,14 +136,43 @@
     if (!host.isConnected) document.documentElement.appendChild(host);
     if (pos) place(pos.x, pos.y);
   }
+  // A tap that opened this document: let its indicator finish pressing and fading here.
+  function resumeTouch() {
+    let t = null;
+    try {
+      t = JSON.parse(sessionStorage.getItem(TOUCH_KEY) || 'null');
+    } catch {}
+    if (t && touchRun === 0 && now() < t.endAt + TOUCH.pressMs + TOUCH.fadeOutMs) animateTouch(t.x, t.y, t.start, t.endAt, t.from);
+  }
   if (document.documentElement) mount();
   else document.addEventListener('readystatechange', mount, { once: true });
+  if (mode === 'touch') resumeTouch();
   // some apps replace <html> children wholesale; keep the overlay attached
   document.addEventListener('DOMContentLoaded', mount);
 
   const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
   window.__scenecast = {
+    /** 'touch' hides the arrow and shows taps with the touch indicator; 'mouse' is the arrow cursor. */
+    mode(m) {
+      mode = m === 'touch' ? 'touch' : 'mouse';
+      if (pos) place(pos.x, pos.y);
+    },
+    /**
+     * Touch indicator at (x, y): fades in until epoch ms `endAt` (the tap), presses down to 0.85 and fades out
+     * over 250 ms. Calling it again while one shows moves that one there and restarts its timing.
+     */
+    touch(x, y, endAt) {
+      mount();
+      const start = now();
+      const from = endAt > start && touchEl.style.display === 'block' ? Number(touchEl.style.opacity) || 0 : 0;
+      pos = { x, y };
+      remember();
+      try {
+        sessionStorage.setItem(TOUCH_KEY, JSON.stringify({ x, y, start, endAt, from }));
+      } catch {}
+      animateTouch(x, y, start, endAt, from);
+    },
     /** Put the cursor at (x, y) CSS px with no visible travel. */
     cursor(x, y) {
       mount();
@@ -134,6 +207,7 @@
     /** Soft click ripple at (x, y). */
     ripple(x, y) {
       mount();
+      if (mode === 'touch') return;
       const r = document.createElement('div');
       r.className = 'ripple';
       r.style.left = `${x}px`;

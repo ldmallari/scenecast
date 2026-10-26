@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { cutsDeclaredNav, DEFAULTS, ensureToolchain, phoneFrame, phoneToFrame, type AuditPlan, type Brand } from '@scenecast/core';
 import { chromium } from 'playwright';
-import { clampZoom, entranceAt, gradientLine, inFramePixels, resolveBackground, resolveLook, ringAlpha, sceneOpacity, srcTimeAt, timeline, zoomBoxAt, type ComposePlan } from '../src/plan.js';
+import { clampZoom, entranceAt, gradientLine, inFramePixels, inkOver, resolveBackground, resolveLook, ringAlpha, sceneOpacity, srcTimeAt, timeline, zoomBoxAt, type ComposePlan } from '../src/plan.js';
 import { ffprobePath, finish, preview, renderVideo, runRevideo } from '../src/render.js';
 
 const run = promisify(execFile);
@@ -181,8 +181,8 @@ describe('declared navs', () => {
 
   it('maps phone navs into the frame', () => {
     const nav = { x: 0, y: 0, w: 390, h: 90 };
-    const scene = inFramePixels({ kind: 'app', duration: 2, phone: true, segments: [], navs: [{ edge: 'top', box: nav }] });
-    expect(scene.navs![0]!.box).toEqual(phoneToFrame(nav));
+    const scene = inFramePixels({ kind: 'app', duration: 2, phone: true, segments: [], navs: [{ edge: 'top', box: nav }] }, 'center');
+    expect(scene.navs![0]!.box).toEqual(phoneToFrame(nav, 'center'));
   });
 });
 
@@ -192,11 +192,11 @@ describe('phone scenes', () => {
     const zoom = { x: 40, y: 100, w: 200, h: 80 };
     const nav = { x: 0, y: 0, w: 60, h: 844 };
     const scene = inFramePixels({ kind: 'app', duration: 2, phone: true, segments: [],
-      rings: [{ start: 0, end: 1, box: ring }], zooms: [{ start: 0, end: 1, box: zoom }], navBox: nav });
-    const f = phoneFrame();
-    expect(scene.rings![0]!.box).toEqual(phoneToFrame(ring));
-    expect(scene.zooms![0]!.box).toEqual(phoneToFrame(zoom));
-    expect(scene.navBox).toEqual(phoneToFrame(nav));
+      rings: [{ start: 0, end: 1, box: ring }], zooms: [{ start: 0, end: 1, box: zoom }], navBox: nav }, 'center');
+    const f = phoneFrame('center');
+    expect(scene.rings![0]!.box).toEqual(phoneToFrame(ring, 'center'));
+    expect(scene.zooms![0]!.box).toEqual(phoneToFrame(zoom, 'center'));
+    expect(scene.navBox).toEqual(phoneToFrame(nav, 'center'));
     expect(scene.rings![0]!.box.x).toBeCloseTo(f.x + 20 * f.scale, 6);
     expect(scene.rings![0]!.box.y).toBeCloseTo(f.y + 700 * f.scale, 6);
     expect(scene.rings![0]!.box.w).toBeCloseTo(350 * f.scale, 6);
@@ -204,13 +204,22 @@ describe('phone scenes', () => {
 
   it('leaves desktop boxes alone', () => {
     const scene = { kind: 'app' as const, duration: 2, rings: [{ start: 0, end: 1, box: { x: 1, y: 2, w: 3, h: 4 } }] };
-    expect(inFramePixels(scene)).toBe(scene);
+    expect(inFramePixels(scene, 'center')).toBe(scene);
+  });
+
+  it('maps phone boxes for the alignment it is given', () => {
+    const ring = { x: 20, y: 700, w: 350, h: 60 };
+    const scene = inFramePixels({ kind: 'app', duration: 2, phone: true, segments: [], rings: [{ start: 0, end: 1, box: ring }] }, 'left');
+    expect(scene.rings![0]!.box).toEqual(phoneToFrame(ring, 'left'));
+    const f = phoneFrame('left');
+    expect(scene.rings![0]!.box.x).toBeCloseTo(f.x + 20 * f.scale, 6);
+    expect(f.x + f.w / 2).toBeCloseTo(576, 1);
   });
 
   it('honours a phone nav at the phone screen edge', () => {
-    const f = phoneFrame();
-    const nav = phoneToFrame({ x: 0, y: 0, w: 60, h: 844 });
-    const z = clampZoom(phoneToFrame({ x: 50, y: 400, w: 40, h: 30 }), FRAME, PAD, nav, f.x);
+    const f = phoneFrame('center');
+    const nav = phoneToFrame({ x: 0, y: 0, w: 60, h: 844 }, 'center');
+    const z = clampZoom(phoneToFrame({ x: 50, y: 400, w: 40, h: 30 }, 'center'), FRAME, PAD, nav, f.x);
     expect(z.x > nav.x + 1e-6 && z.x < nav.x + nav.w - 1e-6).toBe(false);
   });
 });
@@ -313,6 +322,24 @@ describe('card look', () => {
     });
     const look = resolveLook({ brand: { ...brand, cardFont: 'Lora', background: { image: '/bg.png' } }, scenes: [], cards: { entrance: 'rise' } }, { backgroundUrl: '/brand-background.png' });
     expect(look).toEqual({ background: { kind: 'image', url: '/brand-background.png', dim: 0.35 }, cardFont: 'Lora', entrance: 'rise' });
+  });
+
+  it('the phone stage is the brand background', () => {
+    expect(resolveLook({ brand: { ...brand, background: '#223344' }, scenes: [] }, {}).background).toEqual({ kind: 'color', color: '#223344' });
+  });
+
+  it('captions beside the phone are set on the stage only where one ink keeps 4.5:1 under all of them', () => {
+    const col = { x: 880, y: 400, w: 700, h: 200 };
+    expect(inkOver({ kind: 'color', color: '#223344' }, col, 1920, 1080)).toBe('#FFFFFF');
+    expect(inkOver({ kind: 'color', color: '#F4F1EA' }, col, 1920, 1080)).toBe('#14161B');
+    // A mid grey gives neither ink 4.5:1, and a photo is never trusted: both keep the caption plate.
+    expect(inkOver({ kind: 'color', color: '#7A7A7A' }, col, 1920, 1080)).toBeNull();
+    expect(inkOver({ kind: 'image', url: '/bg.png', dim: 0.35 }, col, 1920, 1080)).toBeNull();
+    // A gradient is read under the box, not at the frame centre: black to white left to right is dark on the left.
+    const g = { kind: 'gradient' as const, from: '#000000', to: '#FFFFFF', angle: 90 };
+    expect(inkOver(g, { x: 0, y: 400, w: 300, h: 100 }, 1920, 1080)).toBe('#FFFFFF');
+    expect(inkOver(g, { x: 1620, y: 400, w: 300, h: 100 }, 1920, 1080)).toBe('#14161B');
+    expect(inkOver(g, { x: 400, y: 400, w: 1100, h: 100 }, 1920, 1080)).toBeNull();
   });
 
   it('gradient angles follow CSS: 135 runs from the top-left to the bottom-right', () => {
