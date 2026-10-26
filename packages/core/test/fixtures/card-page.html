@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>card</title>
+<style>
+  :root { --sc-primary: #000000; }
+  body { margin: 0; background: var(--sc-primary); }
+  #accent { position: absolute; left: 0; top: 0; width: 40px; height: 40px; background: var(--sc-accent); }
+  #seen { position: absolute; right: 0; top: 0; width: 40px; height: 40px; background: #ff0000; }
+</style>
+<div id="accent"></div>
+<div id="seen"></div>
+<script>
+  // Green when the page's own script already sees both font variables, red otherwise.
+  const css = getComputedStyle(document.documentElement);
+  const ok = css.getPropertyValue('--sc-font').trim() === '"Inter"' && css.getPropertyValue('--sc-card-font').trim() === '"Lora"';
+  document.getElementById('seen').style.background = ok ? '#00ff00' : '#ff0000';
+</script>

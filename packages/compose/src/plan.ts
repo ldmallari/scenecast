@@ -1,8 +1,8 @@
 // Plan types, the scene timeline and zoom clamping (Node side). Per-frame helpers the Revideo
 // page uses live in timing.ts, which stays free of Node imports.
-import { DEFAULTS, phoneToFrame, type Box, type Brand, type Cue, type NavBox, type Segment } from '@scenecast/core';
+import { DEFAULTS, phoneToFrame, type Box, type Brand, type CardsCfg, type Cue, type NavBox, type Segment } from '@scenecast/core';
 export { clampZoom } from '@scenecast/core';
-export { easeInOutCubic, ringAlpha, sceneOpacity, srcTimeAt, zoomBoxAt } from './timing.js';
+export { CARD_BAR_W, easeInOutCubic, entranceAt, gradientLine, ringAlpha, sceneOpacity, srcTimeAt, zoomBoxAt, type CardPart, type PartLook } from './timing.js';
 
 /** Something shown from `start` to `end` (scene seconds) around `box` (frame px; take px on phone scenes). */
 export interface Timed {
@@ -19,6 +19,10 @@ export interface CardSpec {
   title?: string;
   /** Intro defaults to `brand.introSubtitle`. */
   subtitle?: string;
+  /** A smaller line under the title (the outro's "Next: …"). */
+  next?: string;
+  /** A rendered card page (a 1920×1080 image file) shown full-frame instead of the drawn card. */
+  image?: string;
 }
 
 export interface PlanScene {
@@ -50,6 +54,22 @@ export interface ComposePlan {
   scenes: PlanScene[];
   /** Cross-fade between scenes; default `DEFAULTS.video.dissolveSec`. */
   dissolveSec?: number;
+  /** Card settings the composer needs; without it the entrance is `DEFAULTS.cards.entrance`. */
+  cards?: Pick<CardsCfg, 'entrance'>;
+}
+
+/** The background of the cards (and the phone stage), with any image as a URL the Revideo page can load. */
+export type ResolvedBackground =
+  | { kind: 'color'; color: string }
+  | { kind: 'gradient'; from: string; to: string; angle: number }
+  | { kind: 'image'; url: string; dim: number };
+
+/** The card look a plan asks for. */
+export interface CardLook {
+  background: ResolvedBackground;
+  /** Font family of the card text (`brand.cardFont`, else `brand.font`). */
+  cardFont: string;
+  entrance: CardsCfg['entrance'];
 }
 
 export interface SceneTiming {
@@ -70,9 +90,36 @@ export interface ResolvedPlan {
   total: number;
   brand: Brand;
   logoUrl?: string;
+  background: ResolvedBackground;
+  cardFont: string;
+  entrance: CardsCfg['entrance'];
   /** Phone take rectangle in frame px. */
   phoneRect: Box;
   scenes: (PlanScene & SceneTiming)[];
+}
+
+/**
+ * `brand.background` resolved: a colour string, a gradient (`angle` defaults to 135, CSS convention) or an image
+ * (shown at `imageUrl`, else at its path, under a black overlay of `dim`, default 0.35). None: `brand.primary`.
+ */
+export function resolveBackground(brand: Brand, imageUrl?: string): ResolvedBackground {
+  const bg = brand.background;
+  if (bg === undefined) return { kind: 'color', color: brand.primary };
+  if (typeof bg === 'string') return { kind: 'color', color: bg };
+  if ('image' in bg) return { kind: 'image', url: imageUrl ?? bg.image, dim: bg.dim ?? DEFAULTS.background.dim };
+  return { kind: 'gradient', from: bg.from, to: bg.to, angle: bg.angle ?? DEFAULTS.background.angle };
+}
+
+/**
+ * The pure part of resolving a plan's card look: the background (with the background image's URL), the card
+ * font and the entrance. `logoUrl` is accepted so callers can pass every resolved brand URL in one object.
+ */
+export function resolveLook(plan: ComposePlan, urls: { logoUrl?: string; backgroundUrl?: string }): CardLook {
+  return {
+    background: resolveBackground(plan.brand, urls.backgroundUrl),
+    cardFont: plan.brand.cardFont ?? plan.brand.font,
+    entrance: plan.cards?.entrance ?? DEFAULTS.cards.entrance,
+  };
 }
 
 /**

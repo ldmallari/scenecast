@@ -72,21 +72,50 @@ scenes:
 | Field | Required | Meaning |
 |---|---|---|
 | `id` | yes | Short name. The work folder is `<work>/<id>/`. |
-| `title` | yes | The video's title. It is shown on the outro card. |
+| `title` | yes | The video's title. It is shown on the outro card unless `cards.outroTitle` is set. |
 | `output` | yes | Base name of the output files: `<out>/<output>.mp4` and `.srt`. |
 | `brand` | yes | Colours, font and card text. See [brand](#brand). |
 | `app` | yes | How to reach and sign in to the app. See [app](#app). |
 | `voice` | no | The narrator. See [voice](#voice). |
 | `scenes` | yes | At least one scene. See [scenes](#scenes). |
+| `cards` | no | The intro and outro cards. See [cards](#cards). |
 | `audit` | no | `allowList`: names and words that speech recognition may spell differently, or leave out, without a narration WARN (for example `[Demo Co]`). An allow-listed cue word that is left out is placed by position, in the gap the heard words around it leave. |
+
+## cards
+
+| Field | Default | Meaning |
+|---|---|---|
+| `introSec` | `3` | Intro card length: 0 (no intro card) or at least 1 s. |
+| `outroSec` | `3` | Outro card length: 0 (no outro card) or at least 1 s. |
+| `outroTitle` | `title` | The outro card's title. |
+| `outroNext` | none | A smaller line under the outro title, for example `Next: approving requests`. |
+| `entrance` | `reveal` | How the logo, bar and text come in. `reveal`: the logo scales up slightly and fades in, the accent bar grows, then the title, subtitle and next line rise in one after another (about 1 s in all). `rise` is the v1 look (everything rises and fades in over 0.5 s). `none` shows the card at once. |
+| `introPage` | none | An HTML file shown as the intro card instead of the drawn one (see [card pages](#card-pages)). |
+| `outroPage` | none | The same for the outro card. |
+
+### Card pages
+
+A card page (`cards.introPage`, `cards.outroPage`, or `page` on a title scene) is an HTML file that Chromium renders
+**once**, at 1920×1080, into the image the card shows. Paths are relative to the scene file. The page gets the brand
+as CSS variables on `:root`: `--sc-primary`, `--sc-accent`, `--sc-font` and `--sc-card-font` (font names come
+quoted, so `font-family: var(--sc-card-font), sans-serif` works). The capture waits for the page's fonts to load.
+
+- The card is a still. CSS animations and transitions do not play in the video: finite ones are captured at their
+  end state. The card entrance does not apply to a page; the page fades in and out with the dissolve like any scene.
+- Keep everything the page loads local (fonts, images, styles), so it renders the same offline. The cache notices a
+  change to the HTML file itself; after changing only a file it loads, render with `--fresh`.
+- Routes, init scripts and the signed-in session do not apply to card pages.
+- A title scene's narration captions are drawn over its page.
 
 ## brand
 
 | Field | Required | Meaning |
 |---|---|---|
-| `primary` | yes | Background colour of the intro, outro and chapter cards. The card text is light or dark to suit it. |
+| `primary` | yes | Background colour of the intro, outro and chapter cards, unless `background` is set. The card text is light or dark to suit the background. |
 | `accent` | yes | The accent bar on the cards. |
-| `font` | yes | Font family for captions and cards, for example `Inter`. If it is not installed, the system sans-serif is used. |
+| `font` | yes | Font family for captions (and cards, unless `cardFont` is set), for example `Inter`. If it is not installed, the system sans-serif is used. |
+| `cardFont` | no | Font family of the card text. Defaults to `font`. It must be installed on the machine that renders; use a free font (OFL is fine). |
+| `background` | no | Background of the cards: a colour (`"#1F3A5F"`), a gradient `{ from, to, angle }` (`angle` in CSS degrees, default 135: from the top-left to the bottom-right), or an image `{ image, dim }` (a path; it covers the frame, under a black overlay of `dim`, 0 to 1, default 0.35). Default: `primary`. |
 | `logo` | no | An image file shown on the intro and outro cards (not on chapter cards). |
 | `introTitle` | yes | Title of the intro card. |
 | `introSubtitle` | no | Subtitle of the intro card. |
@@ -133,9 +162,10 @@ is split again at commas.
 | `signedOut` | no | `true` records this scene without signing in. |
 | `prewarm` | no | Paths to open, and wait on, before `route`, so caches are warm when recording starts. |
 | `seconds` | title scenes: yes | The card's minimum length. It runs longer if the narration needs it. |
-| `page` | no | Accepted and resolved as a path, but not used by v1. |
+| `page` | no | Title scenes: an HTML file shown as the card instead of the drawn one (see [card pages](#card-pages)). On an app scene it is ignored, with a warning. |
 
-The video is an intro card (3 s, music only), then every scene in order, then an outro card (3 s) with `title`.
+The video is an intro card (3 s by default, music only), then every scene in order, then an outro card (3 s) with
+`title`. See [cards](#cards).
 A render with `--only <id>` leaves out the intro and outro cards and writes `<output>-<id>.mp4` and `<output>-<id>.srt`.
 
 ## steps

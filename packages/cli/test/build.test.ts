@@ -240,6 +240,54 @@ describe('title cards', () => {
   });
 });
 
+describe('cards', () => {
+  it('intro and outro last cards.introSec and outroSec; 0 leaves the card out', () => {
+    const v = buildVideo({ ...spec, cards: { introSec: 2, outroSec: 0, entrance: 'reveal' } }, [appInput('a')], { cards: true });
+    expect(v.plan.scenes[0]).toMatchObject({ kind: 'card', duration: 2, card: { variant: 'intro' } });
+    expect(v.plan.scenes.at(-1)!.kind).toBe('app');
+    expect(v.plan.scenes).toHaveLength(2);
+    expect(v.scenes[0]!.start).toBe(2);
+    const noIntro = buildVideo({ ...spec, cards: { introSec: 0, outroSec: 4, entrance: 'reveal' } }, [appInput('a')], { cards: true });
+    expect(noIntro.plan.scenes.map((s) => s.kind)).toEqual(['app', 'card']);
+    expect(noIntro.plan.scenes[1]!.duration).toBe(4);
+    expect(noIntro.scenes[0]!.start).toBe(0);
+  });
+
+  it('a spec without cards uses the defaults', () => {
+    const v = buildVideo(spec, [appInput('a')], { cards: true });
+    expect(v.plan.scenes.map((s) => s.duration)).toEqual([DEFAULTS.cards.introSec, expect.any(Number), DEFAULTS.cards.outroSec]);
+    expect(INTRO_SEC).toBe(DEFAULTS.cards.introSec);
+    expect(OUTRO_SEC).toBe(DEFAULTS.cards.outroSec);
+    expect(v.plan.cards).toEqual({ entrance: DEFAULTS.cards.entrance });
+  });
+
+  it('the plan carries the entrance', () => {
+    const v = buildVideo({ ...spec, cards: { introSec: 3, outroSec: 3, entrance: 'rise' } }, [appInput('a')], { cards: true });
+    expect(v.plan.cards).toEqual({ entrance: 'rise' });
+  });
+
+  it('the outro carries outroTitle and the next line', () => {
+    const cards = { introSec: 3, outroSec: 3, entrance: 'reveal' as const, outroTitle: 'Thanks for watching', outroNext: 'Next: approving requests' };
+    const v = buildVideo({ ...spec, cards }, [appInput('a')], { cards: true });
+    expect(v.plan.scenes.at(-1)!.card).toEqual({ variant: 'outro', title: 'Thanks for watching', next: 'Next: approving requests' });
+    // Without outroTitle the outro shows the video title, and no next line.
+    const plain = buildVideo({ ...spec, cards: { introSec: 3, outroSec: 3, entrance: 'reveal' } }, [appInput('a')], { cards: true });
+    expect(plain.plan.scenes.at(-1)!.card).toEqual({ variant: 'outro', title: 'The video' });
+  });
+
+  it('a title scene with page shows the rendered image', () => {
+    const title = { scene: { id: 'ch', kind: 'title', title: 'Chapter', narration: 'Hi.', steps: [], seconds: 2, page: '/w/p.html' } as unknown as Scene, voice: voice(1, 'Hi.'), cardImage: '/w/cards/p.png' };
+    const v = buildVideo(spec, [title], { cards: false });
+    expect(v.plan.scenes[0]!.card).toEqual({ variant: 'chapter', title: 'Chapter', image: '/w/cards/p.png' });
+  });
+
+  it('the intro and outro pages show their rendered images', () => {
+    const v = buildVideo(spec, [appInput('a')], { cards: true, introImage: '/w/cards/intro.png', outroImage: '/w/cards/outro.png' });
+    expect(v.plan.scenes[0]!.card).toEqual({ variant: 'intro', image: '/w/cards/intro.png' });
+    expect(v.plan.scenes.at(-1)!.card).toEqual({ variant: 'outro', title: 'The video', image: '/w/cards/outro.png' });
+  });
+});
+
 describe('declared navs', () => {
   it('the plan carries the take navs, and caption zoom views clear them like the composer', () => {
     const app = appInput('a', { zoom: true });

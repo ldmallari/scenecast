@@ -25,6 +25,8 @@ export const DEFAULTS = {
   },
   phone: { width: 390, height: 844, align: 'left', touchPx: 34, touchLeadSec: 0.25, centreShare: 0.3 },
   cards: { introSec: 3, outroSec: 3, entrance: 'reveal' },
+  /** `brand.background`: a gradient's angle (CSS degrees: 0 points up, 135 runs top-left to bottom-right) and an image's black overlay. */
+  background: { angle: 135, dim: 0.35 },
   cursor: { start: 'center', park: 'right', parkAfterSec: 2.5, parkDelaySec: 0.6, marginPx: 96, spotY: 0.45 },
   audit: { syncMaxSec: 0.3, zoomPadPx: 24 },
   /**
@@ -70,6 +72,11 @@ const CardsSchema = z.object({
   outroTitle: z.string().optional(),
   outroNext: z.string().optional(),
   entrance: z.enum(['reveal', 'rise', 'none']).default(DEFAULTS.cards.entrance),
+  /**
+   * HTML files rendered once (1920×1080, in Chromium) as the intro/outro card image, with the brand as the CSS
+   * variables --sc-primary, --sc-accent, --sc-font and --sc-card-font. It is a still: CSS animations and
+   * transitions are captured at their end state and do not play; the card's entrance does not apply to it.
+   */
   introPage: z.string().optional(),
   outroPage: z.string().optional(),
 }).strict();
@@ -160,6 +167,7 @@ const SceneSchema = z.object({
   prewarm: z.array(z.string()).optional(),
   narration: z.string(),
   steps: z.array(StepSchema).default([]),
+  /** Title scenes: an HTML file shown as the card, rendered once like `cards.introPage`. Ignored (with a warning) on app scenes. */
   page: z.string().optional(),
   zoom: z.object({ sel: SelSchema, pad: z.number().nonnegative().optional() }).strict().optional(),
   cursor: CursorSpotSchema.optional(),

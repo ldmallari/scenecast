@@ -17,6 +17,7 @@ import {
   type SceneVoice,
   type ScheduledStep,
   type Segment,
+  type CardsCfg,
   type Take,
   type VideoSpec,
   zoomedCaptionEvents as captionEvents,
@@ -26,9 +27,9 @@ import type { ComposePlan, PlanScene, Timed } from '@scenecast/compose';
 // The zoom-aware caption events live in core (captions.ts); re-exported for the CLI's tests and callers.
 export { onScreen, captionEvents };
 
-/** Intro and outro cards: silent, music only. */
-export const INTRO_SEC = 3;
-export const OUTRO_SEC = 3;
+/** Default intro and outro card lengths (`cards.introSec` / `outroSec`); the cards are silent, music only. */
+export const INTRO_SEC = DEFAULTS.cards.introSec;
+export const OUTRO_SEC = DEFAULTS.cards.outroSec;
 /** A zoom with no `ms` holds this long once it has eased in. */
 export const ZOOM_HOLD_MS = 2000;
 
@@ -59,6 +60,8 @@ export interface SceneInput {
   scheduled?: ScheduledStep[];
   /** App scenes only. */
   recorded?: Recorded;
+  /** Title scenes with `page`: the rendered page image the card shows. */
+  cardImage?: string;
 }
 
 export interface PlacedScene extends SceneInput {
@@ -154,12 +157,24 @@ export function appPlanScene(scene: Scene, voice: SceneVoice, scheduled: Schedul
   return { plan, segments };
 }
 
+/** What `buildVideo` needs of the scene file: test fixtures may leave out `cards` (then `DEFAULTS.cards` applies). */
+export type BuildSpec = Omit<VideoSpec, 'cards'> & { cards?: CardsCfg };
+
+export interface BuildOpts {
+  /** false (a `--only` render) leaves out the intro and outro cards. */
+  cards: boolean;
+  /** The rendered `cards.introPage` / `outroPage` images. */
+  introImage?: string;
+  outroImage?: string;
+}
+
 /**
  * The whole video: an intro card, then every scene (app scenes as retimed takes, title scenes as
- * narrated chapter cards), then an outro card. `cards: false` (a `--only` render) leaves out the
- * intro and outro.
+ * narrated chapter cards), then an outro card. The intro and outro last `cards.introSec` and `outroSec`
+ * (0 leaves the card out); the outro shows `cards.outroTitle` (else the video title) and `outroNext`.
  */
-export function buildVideo(spec: VideoSpec, inputs: SceneInput[], opts: { cards: boolean }): BuiltVideo {
+export function buildVideo(spec: BuildSpec, inputs: SceneInput[], opts: BuildOpts): BuiltVideo {
+  const cards: CardsCfg = spec.cards ?? DEFAULTS.cards;
   const planScenes: PlanScene[] = [];
   const placed: PlacedScene[] = [];
   let t = 0;
@@ -169,14 +184,16 @@ export function buildVideo(spec: VideoSpec, inputs: SceneInput[], opts: { cards:
     t += s.duration;
     return start;
   };
-  if (opts.cards) push({ kind: 'card', duration: INTRO_SEC, card: { variant: 'intro' } });
+  if (opts.cards && cards.introSec > 0)
+    push({ kind: 'card', duration: toFrames(cards.introSec), card: { variant: 'intro', ...(opts.introImage ? { image: opts.introImage } : {}) } });
   for (const input of inputs) {
     const { scene, voice } = input;
     if (scene.kind === 'title') {
       const duration = toFrames(Math.max(scene.seconds ?? 0, voice.duration + DEFAULTS.video.breathSec));
       // Narrated card: its captions sit at the bottom (nothing on a card to keep clear of).
       const cues = layoutCaptions(scene, voice, []);
-      const start = push({ kind: 'card', duration, card: { variant: 'chapter', title: scene.title ?? scene.id }, cues });
+      const card = { variant: 'chapter' as const, title: scene.title ?? scene.id, ...(input.cardImage ? { image: input.cardImage } : {}) };
+      const start = push({ kind: 'card', duration, card, cues });
       placed.push({ ...input, planIndex: planScenes.length - 1, start });
       continue;
     }
@@ -185,8 +202,16 @@ export function buildVideo(spec: VideoSpec, inputs: SceneInput[], opts: { cards:
     const start = push(plan);
     placed.push({ ...input, planIndex: planScenes.length - 1, start, segments });
   }
-  if (opts.cards) push({ kind: 'card', duration: OUTRO_SEC, card: { variant: 'outro', title: spec.title } });
-  return { plan: { brand: spec.brand, scenes: planScenes }, scenes: placed, total: t };
+  if (opts.cards && cards.outroSec > 0) {
+    const card = {
+      variant: 'outro' as const,
+      title: cards.outroTitle ?? spec.title,
+      ...(cards.outroNext ? { next: cards.outroNext } : {}),
+      ...(opts.outroImage ? { image: opts.outroImage } : {}),
+    };
+    push({ kind: 'card', duration: toFrames(cards.outroSec), card });
+  }
+  return { plan: { brand: spec.brand, scenes: planScenes, cards: { entrance: cards.entrance } }, scenes: placed, total: t };
 }
 
 function hms(sec: number): string {

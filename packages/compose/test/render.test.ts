@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { cutsDeclaredNav, DEFAULTS, ensureToolchain, phoneFrame, phoneToFrame, type AuditPlan, type Brand } from '@scenecast/core';
 import { chromium } from 'playwright';
-import { clampZoom, inFramePixels, ringAlpha, sceneOpacity, srcTimeAt, timeline, zoomBoxAt, type ComposePlan } from '../src/plan.js';
+import { clampZoom, entranceAt, gradientLine, inFramePixels, resolveBackground, resolveLook, ringAlpha, sceneOpacity, srcTimeAt, timeline, zoomBoxAt, type ComposePlan } from '../src/plan.js';
 import { ffprobePath, finish, preview, renderVideo, runRevideo } from '../src/render.js';
 
 const run = promisify(execFile);
@@ -295,6 +295,75 @@ describe('scene helpers', () => {
   });
 });
 
+describe('card look', () => {
+  it('resolveBackground reads a colour, a gradient and an image', () => {
+    expect(resolveBackground({ ...brand })).toEqual({ kind: 'color', color: '#1F3A5F' });
+    expect(resolveBackground({ ...brand, background: '#223344' })).toEqual({ kind: 'color', color: '#223344' });
+    expect(resolveBackground({ ...brand, background: { from: '#111111', to: '#222222' } })).toEqual({ kind: 'gradient', from: '#111111', to: '#222222', angle: 135 });
+    expect(resolveBackground({ ...brand, background: { from: '#111111', to: '#222222', angle: 90 } })).toMatchObject({ angle: 90 });
+    expect(resolveBackground({ ...brand, background: { image: '/bg.png' } }, 'u')).toEqual({ kind: 'image', url: 'u', dim: 0.35 });
+    expect(resolveBackground({ ...brand, background: { image: '/bg.png', dim: 0 } }, 'u')).toEqual({ kind: 'image', url: 'u', dim: 0 });
+  });
+
+  it('resolveLook gives the background, the card font and the entrance', () => {
+    expect(resolveLook({ brand: { ...brand, background: '#223344' }, scenes: [] }, {})).toEqual({
+      background: { kind: 'color', color: '#223344' },
+      cardFont: 'Inter',
+      entrance: 'reveal',
+    });
+    const look = resolveLook({ brand: { ...brand, cardFont: 'Lora', background: { image: '/bg.png' } }, scenes: [], cards: { entrance: 'rise' } }, { backgroundUrl: '/brand-background.png' });
+    expect(look).toEqual({ background: { kind: 'image', url: '/brand-background.png', dim: 0.35 }, cardFont: 'Lora', entrance: 'rise' });
+  });
+
+  it('gradient angles follow CSS: 135 runs from the top-left to the bottom-right', () => {
+    const W = 1920, H = 1080;
+    const g = gradientLine(135, W, H);
+    // Centred coordinates, y down. The line is long enough that the corners get exactly from and to.
+    expect(g.from.x).toBeLessThan(0);
+    expect(g.from.y).toBeLessThan(0);
+    expect(g.to.x).toBeCloseTo(-g.from.x, 9);
+    expect(g.to.y).toBeCloseTo(-g.from.y, 9);
+    const along = (p: { x: number; y: number }) => {
+      const dx = g.to.x - g.from.x, dy = g.to.y - g.from.y;
+      return ((p.x - g.from.x) * dx + (p.y - g.from.y) * dy) / (dx * dx + dy * dy);
+    };
+    expect(along({ x: -W / 2, y: -H / 2 })).toBeCloseTo(0, 9);
+    expect(along({ x: W / 2, y: H / 2 })).toBeCloseTo(1, 9);
+    // 0 points up (from at the bottom), 90 to the right (from at the left).
+    const up = gradientLine(0, W, H);
+    expect(up.from.y).toBeCloseTo(H / 2, 9);
+    expect(up.to.y).toBeCloseTo(-H / 2, 9);
+    const right = gradientLine(90, W, H);
+    expect(right.from.x).toBeCloseTo(-W / 2, 9);
+    expect(right.to.x).toBeCloseTo(W / 2, 9);
+  });
+
+  it('entranceAt reveals the logo, bar and title in order', () => {
+    expect(entranceAt('reveal', 'logo', 0)).toMatchObject({ opacity: 0, scale: 0.92 });
+    expect(entranceAt('reveal', 'logo', 0.6)).toMatchObject({ opacity: 1, scale: 1 });
+    expect(entranceAt('reveal', 'bar', 0.15).barW).toBe(0);
+    expect(entranceAt('reveal', 'bar', 0.65).barW).toBe(88);
+    expect(entranceAt('reveal', 'title', 0.25)).toMatchObject({ opacity: 0, dy: 14 });
+    expect(entranceAt('reveal', 'title', 0.75)).toMatchObject({ opacity: 1, dy: 0 });
+    expect(entranceAt('reveal', 'subtitle', 0.35)).toMatchObject({ opacity: 0, dy: 14 });
+    expect(entranceAt('reveal', 'next', 0.45)).toMatchObject({ opacity: 0, dy: 14 });
+    expect(entranceAt('reveal', 'next', 0.95)).toMatchObject({ opacity: 1, dy: 0 });
+    // Easing out: past halfway by a quarter of the way through.
+    expect(entranceAt('reveal', 'title', 0.25 + 0.125).opacity).toBeGreaterThan(0.5);
+    expect(entranceAt('none', 'title', 0)).toMatchObject({ opacity: 1, dy: 0, scale: 1 });
+    expect(entranceAt('none', 'bar', 0).barW).toBe(88);
+  });
+
+  it('rise keeps the v1 settle: everything rises 14 px and fades in over 0.5 s', () => {
+    expect(entranceAt('rise', 'logo', 0)).toMatchObject({ opacity: 0, dy: 0, scale: 1 });
+    expect(entranceAt('rise', 'bar', 0)).toMatchObject({ opacity: 0, dy: 14, barW: 88 });
+    expect(entranceAt('rise', 'title', 0.05)).toMatchObject({ opacity: 0, dy: 14 });
+    expect(entranceAt('rise', 'subtitle', 0.15)).toMatchObject({ opacity: 0, dy: 14 });
+    expect(entranceAt('rise', 'title', 0.3).opacity).toBeCloseTo(0.5, 6); // v1's ease-in-out, halfway at 0.25 s in
+    expect(entranceAt('rise', 'subtitle', 0.65)).toMatchObject({ opacity: 1, dy: 0 });
+  });
+});
+
 describe('renderVideo', () => {
   let dir: string;
   let ffmpeg: string;
@@ -357,6 +426,49 @@ describe('renderVideo', () => {
     // caption box (dark, translucent) at 2.0 s near its left padding
     const cap = await pixel(out, 2.0, 668, 924);
     expect(Math.max(...cap)).toBeLessThan(90);
+  }, 180_000);
+
+  it('renders a card with a gradient background and the card font', async () => {
+    const plan: ComposePlan = {
+      brand: { ...brand, cardFont: 'Georgia', background: { from: '#102030', to: '#F0E0D0' } },
+      cards: { entrance: 'reveal' },
+      scenes: [{ kind: 'card', duration: 1.5, card: { variant: 'intro' } }],
+    };
+    const out = path.join(dir, 'gradient.mp4');
+    await renderVideo(plan, out);
+    const { stdout } = await run(ffprobePath(), ['-v', 'error', '-show_entries', 'stream=width,height,nb_frames', '-of', 'csv=p=0', out]);
+    expect(stdout.trim()).toBe('1920,1080,45');
+    // Frame 40: the top-left corner is "from", the bottom-right corner is "to" (CSS 135 degrees).
+    const at = 40 / 30;
+    const tl = await pixel(out, at, 8, 8);
+    expect(tl.map((c, i) => Math.abs(c - [0x10, 0x20, 0x30][i]!)).every((d) => d <= 10), `top-left ${tl}`).toBe(true);
+    const br = await pixel(out, at, 1904, 1064);
+    expect(br.map((c, i) => Math.abs(c - [0xf0, 0xe0, 0xd0][i]!)).every((d) => d <= 10), `bottom-right ${br}`).toBe(true);
+  }, 180_000);
+
+  it('renders an image background with its dim and a page card image', async () => {
+    const bg = path.join(dir, 'bg.png');
+    // A 4:3 image in pure red: "cover" fills the 16:9 frame, and the 0.5 dim halves it.
+    await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=#FF0000:s=800x600', '-frames:v', '1', bg]);
+    const page = path.join(dir, 'page.png');
+    await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=#00C000:s=1920x1080', '-frames:v', '1', page]);
+    const plan: ComposePlan = {
+      brand: { ...brand, background: { image: bg, dim: 0.5 } },
+      scenes: [
+        { kind: 'card', duration: 1, card: { variant: 'intro' } },
+        { kind: 'card', duration: 1, card: { variant: 'chapter', title: 'Ignored', image: page } },
+      ],
+    };
+    const out = path.join(dir, 'image.mp4');
+    await renderVideo(plan, out);
+    const corner = await pixel(out, 0.3, 8, 8);
+    expect(Math.abs(corner[0]! - 128), `dimmed red ${corner}`).toBeLessThanOrEqual(12);
+    expect(Math.max(corner[1]!, corner[2]!)).toBeLessThanOrEqual(12);
+    const right = await pixel(out, 0.3, 1904, 1064);
+    expect(Math.abs(right[0]! - 128), `dimmed red at the far corner ${right}`).toBeLessThanOrEqual(12);
+    const pageAt = await pixel(out, 1.6, 960, 540);
+    expect(Math.abs(pageAt[1]! - 0xc0), `page image ${pageAt}`).toBeLessThanOrEqual(12);
+    expect(Math.max(pageAt[0]!, pageAt[2]!)).toBeLessThanOrEqual(12);
   }, 180_000);
 
   it('shows the recording on frame 0 of an app scene (not a blank frame)', async () => {

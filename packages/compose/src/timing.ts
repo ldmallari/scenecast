@@ -1,5 +1,5 @@
 // Per-frame timing helpers. Pure and free of Node imports: the Revideo page runs them every frame.
-import type { Box, Segment } from '@scenecast/core';
+import type { Box, CardsCfg, Segment } from '@scenecast/core';
 import type { SceneTiming, Timed } from './plan.js';
 
 const RING_FADE = 0.15;
@@ -67,3 +67,64 @@ export function ringAlpha(r: { start: number; end: number }, t: number): number 
   return RING_OPACITY * Math.max(0, k);
 }
 
+
+/** The accent bar's full width on a card, in px. */
+export const CARD_BAR_W = 88;
+
+export type CardPart = 'logo' | 'bar' | 'title' | 'subtitle' | 'next';
+export interface PartLook {
+  opacity: number;
+  /** Extra px below the part's resting place. */
+  dy: number;
+  scale: number;
+  /** The accent bar's width (the full width for every other part). */
+  barW: number;
+}
+
+const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
+const easeOutCubic = (x: number) => 1 - Math.pow(1 - clamp01(x), 3);
+const RISE_PX = 14;
+const REST: PartLook = { opacity: 1, dy: 0, scale: 1, barW: CARD_BAR_W };
+
+/** `reveal`: the logo scales and fades in, the bar grows, then the text lines rise in one after another (ease-out). */
+const REVEAL = {
+  logo: { at: 0, sec: 0.6, fromScale: 0.92 },
+  bar: { at: 0.15, sec: 0.5 },
+  text: { title: 0.25, subtitle: 0.35, next: 0.45 } as Record<'title' | 'subtitle' | 'next', number>,
+  textSec: 0.5,
+};
+/** `rise`, the v1 look: every part fades in and rises 14 px over 0.5 s (ease-in-out); the logo only fades. */
+const RISE = { sec: 0.5, delay: { logo: 0, bar: 0, title: 0.05, subtitle: 0.15, next: 0.25 } as Record<CardPart, number> };
+
+/** How a card part looks `t` seconds into its card under the given entrance. */
+export function entranceAt(entrance: CardsCfg['entrance'], part: CardPart, t: number): PartLook {
+  if (entrance === 'none') return { ...REST };
+  if (entrance === 'rise') {
+    const k = easeInOutCubic((t - RISE.delay[part]) / RISE.sec);
+    return { opacity: k, dy: part === 'logo' ? 0 : RISE_PX * (1 - k), scale: 1, barW: CARD_BAR_W };
+  }
+  if (part === 'logo') {
+    const k = easeOutCubic((t - REVEAL.logo.at) / REVEAL.logo.sec);
+    return { opacity: k, dy: 0, scale: REVEAL.logo.fromScale + (1 - REVEAL.logo.fromScale) * k, barW: CARD_BAR_W };
+  }
+  if (part === 'bar') {
+    const k = easeOutCubic((t - REVEAL.bar.at) / REVEAL.bar.sec);
+    return { opacity: 1, dy: 0, scale: 1, barW: CARD_BAR_W * k };
+  }
+  const k = easeOutCubic((t - REVEAL.text[part]) / REVEAL.textSec);
+  return { opacity: k, dy: RISE_PX * (1 - k), scale: 1, barW: CARD_BAR_W };
+}
+
+/**
+ * The start and end points of a CSS `linear-gradient(<angle>deg, from, to)` over a `w`×`h` box, in coordinates
+ * centred on the box with y down (Revideo's). 0 deg points up and angles turn clockwise, so 135 runs from the
+ * top-left corner to the bottom-right one; as in CSS, the line is just long enough that those corners get
+ * exactly `from` and `to`.
+ */
+export function gradientLine(angle: number, w: number, h: number): { from: { x: number; y: number }; to: { x: number; y: number } } {
+  const rad = (angle * Math.PI) / 180;
+  const dx = Math.sin(rad);
+  const dy = -Math.cos(rad);
+  const half = (Math.abs(w * dx) + Math.abs(h * dy)) / 2;
+  return { from: { x: -dx * half, y: -dy * half }, to: { x: dx * half, y: dy * half } };
+}

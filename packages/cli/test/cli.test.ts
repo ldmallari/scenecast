@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { BrowserContext, Page } from 'playwright';
 import { loadScene, sessionStoragePath } from '@scenecast/core';
 import { saveSession } from '../src/index.js';
-import { runSeed, timingSummary } from '../src/render.js';
+import { prepare, runSeed, timingSummary } from '../src/render.js';
 
 let dir: string;
 beforeEach(() => (dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-cli-'))));
@@ -131,4 +131,60 @@ describe('scenecast login: saveSession', () => {
     await saveSession(stubContext([closed, last]), closed, target, 'http://127.0.0.1:9');
     expect(JSON.parse(fs.readFileSync(sessionStoragePath(target), 'utf8'))).toEqual({ 'http://127.0.0.1:9': { token: 't2' } });
   });
+});
+
+describe('cards and pages', () => {
+  const sceneFile = (lines: string[]) => {
+    const file = path.join(dir, 'video.yaml');
+    fs.writeFileSync(file, [
+      'id: t', 'title: T', 'output: t',
+      'brand: { primary: "#1F3A5F", accent: "#F5C518", font: Inter, introTitle: T }',
+      'app: { baseUrl: "http://127.0.0.1:9" }',
+      ...lines,
+    ].join('\n'));
+    return file;
+  };
+
+  it('prints the scene file warnings, including page on an app scene', async () => {
+    const file = sceneFile(['scenes: [{ id: s, kind: app, narration: Hello., page: ./card.html }]']);
+    const logs: string[] = [];
+    // An unknown --only stops before any voice work, after the warnings are out.
+    await expect(prepare(file, { only: 'nope', workRoot: path.join(dir, 'work'), log: (m) => logs.push(m) })).rejects.toThrow(/no scene "nope"/);
+    expect(logs).toEqual(['warning: scene "s": page is used only on title scenes; ignored']);
+  });
+
+  it('renders the intro, outro and title scene pages once and passes the images to the plan', async () => {
+    const page = (name: string, colour: string) => {
+      fs.writeFileSync(path.join(dir, name), `<!doctype html><style>body{margin:0;background:${colour}}</style>`);
+      return `./${name}`;
+    };
+    const file = sceneFile([
+      `cards: { introPage: ${page('intro.html', 'var(--sc-primary)')}, outroPage: ${page('outro.html', 'var(--sc-accent)')} }`,
+      `scenes: [{ id: ch, kind: title, title: Chapter, seconds: 2, narration: Hello there., page: ${page('ch.html', '#123456')} }]`,
+    ]);
+    const prevFake = process.env.SCENECAST_FAKE_TTS;
+    process.env.SCENECAST_FAKE_TTS = '1';
+    try {
+      const logs: string[] = [];
+      const work = path.join(dir, 'work');
+      const { video } = await prepare(file, { workRoot: work, log: (m) => logs.push(m) });
+      const cards = video.plan.scenes.map((s) => s.card);
+      expect(cards.map((c) => c?.variant)).toEqual(['intro', 'chapter', 'outro']);
+      expect(cards.map((c) => c?.image)).toEqual(['intro', 'scene-ch', 'outro'].map((n) => path.join(work, 't', 'cards', n, 'card.png')));
+      for (const c of cards) expect(fs.existsSync(c!.image!)).toBe(true);
+      expect(logs.filter((l) => /^cards\/.*done/.test(l))).toHaveLength(3);
+      // A second prepare reuses the rendered pages.
+      const again: string[] = [];
+      await prepare(file, { workRoot: work, log: (m) => again.push(m) });
+      expect(again.filter((l) => /^cards\/.*cached/.test(l))).toHaveLength(3);
+      // --only leaves out the intro and outro, so their pages are not rendered.
+      const only: string[] = [];
+      const one = await prepare(file, { only: 'ch', workRoot: path.join(dir, 'work-only'), log: (m) => only.push(m) });
+      expect(one.video.plan.scenes.map((s) => s.card?.variant)).toEqual(['chapter']);
+      expect(only.filter((l) => l.startsWith('cards/'))).toEqual([expect.stringMatching(/^cards\/scene-ch: done/)]);
+    } finally {
+      if (prevFake === undefined) delete process.env.SCENECAST_FAKE_TTS;
+      else process.env.SCENECAST_FAKE_TTS = prevFake;
+    }
+  }, 120_000);
 });

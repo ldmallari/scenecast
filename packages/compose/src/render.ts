@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { DEFAULTS, ensureToolchain, phoneFrame } from '@scenecast/core';
-import { clampZoom, inFramePixels, timeline, type ComposePlan, type ResolvedPlan } from './plan.js';
+import { clampZoom, inFramePixels, resolveLook, timeline, type ComposePlan, type ResolvedPlan } from './plan.js';
 import { runRevideo } from './supervise.js';
 export { runRevideo, STALL_SEC } from './supervise.js';
 
@@ -88,12 +88,34 @@ async function resolvePlan(plan: ComposePlan, publicDir: string, ffmpeg: string,
     fs.copyFileSync(plan.brand.logo, path.join(publicDir, logoUrl));
   }
 
+  // The background image, scaled and cropped to cover the frame (centred), so the page draws it 1:1.
+  let backgroundUrl: string | undefined;
+  const bg = plan.brand.background;
+  if (bg && typeof bg === 'object' && 'image' in bg) {
+    if (!fs.existsSync(bg.image)) throw new Error(`brand.background image not found: ${bg.image}`);
+    backgroundUrl = '/brand-background.png';
+    await coverImage(ffmpeg, bg.image, path.join(publicDir, backgroundUrl), width, height);
+  }
+
+  // Rendered card pages (image files) are served next to the media.
+  const cardImages = new Map<string, string>();
+  for (const scene of plan.scenes) {
+    const img = scene.card?.image;
+    if (!img || cardImages.has(img)) continue;
+    if (!fs.existsSync(img)) throw new Error(`card image not found: ${img}`);
+    const url = `/cards/card-${cardImages.size}${path.extname(img) || '.png'}`;
+    fs.mkdirSync(path.join(publicDir, 'cards'), { recursive: true });
+    fs.copyFileSync(img, path.join(publicDir, url));
+    cardImages.set(img, url);
+  }
+
   const pf = phoneFrame();
   return {
     width, height, fps, zoomEaseSec,
     total: tl.total,
     brand: plan.brand,
     logoUrl,
+    ...resolveLook(plan, { logoUrl, backgroundUrl }),
     phoneRect: { x: pf.x, y: pf.y, w: pf.w, h: pf.h },
     scenes: plan.scenes.map(inFramePixels).map((s, i) => {
       if (s.kind === 'card' && !s.card) throw new Error(`scene ${i}: card scene needs \`card\``);
@@ -102,10 +124,20 @@ async function resolvePlan(plan: ComposePlan, publicDir: string, ffmpeg: string,
         ...s,
         ...tl.scenes[i]!,
         segments: s.segments?.map((g) => ({ ...g, src: media.get(g.src)! })),
+        ...(s.card?.image ? { card: { ...s.card, image: cardImages.get(s.card.image)! } } : {}),
         zooms: s.zooms?.map((z) => ({ ...z, box: clampZoom(z.box, frame, DEFAULTS.audit.zoomPadPx, s.navBox, s.phone ? pf.x : 0, s.navs) })),
       };
     }),
   };
+}
+
+/** Scales an image to cover `w`×`h` (keeping its aspect, centred crop) and writes it as a PNG. */
+async function coverImage(ffmpeg: string, src: string, dest: string, w: number, h: number): Promise<void> {
+  await run(ffmpeg, [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', src, '-frames:v', '1',
+    '-vf', `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=lanczos,crop=${w}:${h}`,
+    '-pix_fmt', 'rgb24', dest,
+  ]);
 }
 
 function chromePath(): string {

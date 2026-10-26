@@ -13,11 +13,13 @@ import {
   loadScene,
   mix,
   recordScene,
+  renderCardPage,
   runFfmpeg,
   runPy,
   scanBlank,
   scanFlash,
   schedule,
+  sceneWarnings,
   sessionStoragePath,
   splitPhrases,
   spotPoint,
@@ -161,10 +163,27 @@ async function voiceStage(spec: VideoSpec, scenes: Scene[], cache: StageCache, l
   return out;
 }
 
+/**
+ * Renders a card page (`cards.introPage`, `cards.outroPage` or a title scene's `page`) to a PNG once, cached as
+ * `cards/<name>`. The key covers the HTML file and the brand values it receives, not files the page loads.
+ */
+async function cardPageStage(spec: VideoSpec, name: string, page: string, cache: StageCache): Promise<string> {
+  const vars = { primary: spec.brand.primary, accent: spec.brand.accent, font: spec.brand.font, cardFont: spec.brand.cardFont ?? spec.brand.font };
+  const { result } = await cache.run({
+    name: `cards/${name}`,
+    input: { page, vars },
+    files: [page],
+    run: async (dir) => ({ png: await renderCardPage(page, path.join(dir, 'card.png'), vars) }),
+    outputs: (r) => [r.png],
+  });
+  return result.png;
+}
+
 /** Load, seed, voice, schedule, record, retime and captions: the plan, ready to compose. */
 export async function prepare(file: string, opts: RenderOptions = {}): Promise<Prepared> {
   const log = opts.log ?? ((m: string) => console.log(`scenecast: ${m}`));
   const spec = await loadScene(file);
+  for (const w of sceneWarnings(spec)) log(`warning: ${w}`);
   const sceneDir = path.dirname(path.resolve(file));
   const scenes = opts.only ? spec.scenes.filter((s) => s.id === opts.only) : spec.scenes;
   if (!scenes.length) throw new Error(`no scene "${opts.only}" in ${file} (scenes: ${spec.scenes.map((s) => s.id).join(', ')})`);
@@ -179,13 +198,18 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
     log(`the app at ${spec.app.baseUrl} is not responding; start it first (recording will fail unless every scene is cached)`);
 
   const voices = await voiceStage(spec, scenes, cache, log);
+  const cards = !opts.only;
+  const cardImage = (name: string, page: string | undefined) => (page ? cardPageStage(spec, name, page, cache) : Promise.resolve(undefined));
+  const introImage = cards && spec.cards.introSec > 0 ? await cardImage('intro', spec.cards.introPage) : undefined;
+  const outroImage = cards && spec.cards.outroSec > 0 ? await cardImage('outro', spec.cards.outroPage) : undefined;
 
   let seeded = false;
   const inputs: SceneInput[] = [];
   for (const scene of scenes) {
     const { voice } = voices.get(scene.id)!;
     if (scene.kind === 'title') {
-      inputs.push({ scene, voice });
+      const image = await cardImage(`scene-${scene.id}`, scene.page);
+      inputs.push({ scene, voice, ...(image ? { cardImage: image } : {}) });
       continue;
     }
     // Desktop scenes park the cursor between distant pointer steps; phone scenes never do (the touch indicator fades).
@@ -249,7 +273,11 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
     inputs.push({ scene, voice, scheduled, recorded });
   }
 
-  const video = buildVideo(spec, inputs, { cards: !opts.only });
+  const video = buildVideo(spec, inputs, {
+    cards,
+    ...(introImage ? { introImage } : {}),
+    ...(outroImage ? { outroImage } : {}),
+  });
   const name = opts.only ? `${spec.output}-${opts.only}` : spec.output;
   return { spec, video, cache, workDir, name };
 }
@@ -267,10 +295,17 @@ export async function render(file: string, opts: RenderOptions = {}): Promise<Re
   const { plan, total } = video;
 
   const sources = [...new Set(plan.scenes.flatMap((s) => (s.segments ?? []).map((g) => g.src)))];
+  // Every image the composer draws is part of the key: a changed logo, background or card page re-composes.
+  const bg = spec.brand.background;
+  const images = [
+    ...(spec.brand.logo ? [spec.brand.logo] : []),
+    ...(bg && typeof bg === 'object' && 'image' in bg ? [bg.image] : []),
+    ...new Set(plan.scenes.flatMap((s) => (s.card?.image ? [s.card.image] : []))),
+  ];
   const { result: composed } = await cache.run({
     name: 'compose',
     input: { plan },
-    files: [...sources, ...(spec.brand.logo ? [spec.brand.logo] : [])],
+    files: [...sources, ...images],
     run: async (dir) =>
       renderVideo(plan, path.join(dir, 'video.mp4'), opts.keepWork ? { workDir: path.join(dir, 'render') } : {}),
     outputs: (r) => [r.file],
