@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  appFiles,
   audit,
   buildVoice,
   DEFAULTS,
@@ -16,6 +17,7 @@ import {
   scanBlank,
   scanFlash,
   schedule,
+  sessionStoragePath,
   splitPhrases,
   travelSecFor,
   type AuditCounts,
@@ -190,7 +192,7 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
     const { result: recorded } = await cache.run<Recorded>({
       name: `record/${scene.id}`,
       input: { scene, scheduled, app },
-      files: [app.storageState, app.loginHook, seedFile].filter((f): f is string => !!f && fs.existsSync(f)),
+      files: [...appFiles(app), ...(seedFile ? [seedFile] : [])],
       run: async (dir) => {
         if (app.seed && !seeded) {
           log(`seed: ${app.seed}`);
@@ -202,7 +204,9 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
         // when the process is stopped mid-recording (Ctrl-C exits through Playwright's signal handler).
         const session = path.join(dir, '.session.json');
         const removeSession = () => {
-          if (!opts.keepWork) fs.rmSync(session, { force: true });
+          if (opts.keepWork) return;
+          fs.rmSync(session, { force: true });
+          fs.rmSync(sessionStoragePath(session), { force: true });
         };
         process.once('exit', removeSession);
         try {

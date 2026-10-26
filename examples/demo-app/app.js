@@ -2,7 +2,20 @@
 // no external fonts or assets. Every name and record in it is invented.
 (function () {
   const root = document.getElementById('app');
-  const signedIn = () => localStorage.getItem('token') !== null;
+  // The token is in localStorage, or in sessionStorage when the `sessionToken` flag is on.
+  const signedIn = () => localStorage.getItem('token') !== null || sessionStorage.getItem('token') !== null;
+  const signOut = () => {
+    localStorage.removeItem('token');
+    sessionStorage.removeItem('token');
+  };
+  // GET /api/flags (server.mjs, or a scene file's route) switches features on. A plain static server has no
+  // API, so every flag stays off.
+  const FLAGS = { sso: false, sessionToken: false };
+  const loadFlags = () =>
+    fetch('/api/flags')
+      .then((r) => (r.ok && (r.headers.get('content-type') || '').includes('json') ? r.json() : {}))
+      .catch(() => ({}))
+      .then((f) => ({ ...FLAGS, ...f }));
 
   const SAMPLE_WORKLIST = [
     { title: 'Approve the March travel request', due: 'Due today' },
@@ -53,7 +66,7 @@
       btn.setAttribute('aria-expanded', 'false');
     });
     document.getElementById('signout').addEventListener('click', () => {
-      localStorage.removeItem('token');
+      signOut();
       location.href = '/login';
     });
   }
@@ -80,13 +93,21 @@
               <input id="password" type="password" autocomplete="current-password" required />
               <div class="actions"><button id="signin" type="submit" class="wide">Sign in</button></div>
             </form>
+            <div class="actions" id="sso-row" hidden><button id="sso" type="button" class="secondary wide">Sign in with single sign-on</button></div>
           </main>
         </div>`;
+      const flags = loadFlags();
+      flags.then((f) => (document.getElementById('sso-row').hidden = !f.sso));
+      const signIn = () =>
+        flags.then((f) => {
+          (f.sessionToken ? sessionStorage : localStorage).setItem('token', 'demo-' + Date.now());
+          location.href = '/dashboard';
+        });
       document.getElementById('login-form').addEventListener('submit', (e) => {
         e.preventDefault();
-        localStorage.setItem('token', 'demo-' + Date.now());
-        location.href = '/dashboard';
+        signIn();
       });
+      document.getElementById('sso').addEventListener('click', signIn);
     },
     '/dashboard'(path) {
       shell(path, `
@@ -95,7 +116,17 @@
             <h1>Good morning, Sam</h1>
             <p class="muted">Here is what needs you this week.</p>
           </div>
-          <a class="button secondary" href="/requests">View all requests</a>
+          <div class="head-actions">
+            <div class="filters-wrap">
+              <button id="filters" type="button" class="secondary" aria-expanded="false">Filters</button>
+              <div class="filters-pop" hidden>
+                <label class="check"><input type="checkbox" checked /> Due this week</label>
+                <label class="check"><input type="checkbox" /> Waiting on others</label>
+                <label class="check"><input type="checkbox" /> Signed</label>
+              </div>
+            </div>
+            <a class="button secondary" href="/requests">View all requests</a>
+          </div>
         </div>
         <div class="grid">
           <div class="stack">
@@ -130,6 +161,12 @@
             </section>
           </div>
         </div>`);
+      const filters = document.getElementById('filters');
+      const pop = root.querySelector('.filters-pop');
+      filters.addEventListener('click', () => {
+        pop.hidden = !pop.hidden;
+        filters.setAttribute('aria-expanded', String(!pop.hidden));
+      });
       const list = root.querySelector('.worklist');
       const show = (items) => {
         document.getElementById('work-count').textContent = items.length ? `${items.length} items` : '';

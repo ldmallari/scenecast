@@ -256,4 +256,25 @@ describe('recordScene', () => {
     expect(b.w).toBeGreaterThan(0);
     expect(b.x + b.w).toBeLessThanOrEqual(DEFAULTS.phone.width + 4);
   }, 60_000);
+
+  it('a sign-in kept in sessionStorage survives into the recorded scene', async () => {
+    const sessionApp: AppConn = { ...app, routes: [{ url: '**/api/flags', json: { sso: false, sessionToken: true } }] };
+    const steps: Step[] = [{ do: 'ring', sel: '.worklist', ms: 300 }];
+    const out = path.join(work, 'takes-session');
+    const take = await recordScene(scene('session', '/dashboard', steps), sched(steps, [0.5]), sessionApp, out);
+    expect(take.events[0]!.target).toBeDefined();
+    // The token lived only in sessionStorage, so it is in the sibling file and not in the storageState.
+    const saved = JSON.parse(fs.readFileSync(path.join(out, '.session.session-storage.json'), 'utf8'));
+    expect(Object.values(saved[app.baseUrl]).some((v) => String(v).startsWith('demo-'))).toBe(true);
+    expect(fs.readFileSync(path.join(out, '.session.json'), 'utf8')).not.toContain('demo-');
+  }, 60_000);
+
+  it('app.panels adds a role-less popover to the panels', async () => {
+    const steps: Step[] = [{ do: 'click', sel: '#filters' }];
+    const plan = sched(steps, [0.5]);
+    const without = await recordScene(scene('filters0', '/dashboard', steps), plan, app, path.join(work, 'takes'));
+    expect(without.events[0]!.panels).toEqual([]);
+    const take = await recordScene(scene('filters', '/dashboard', steps), plan, { ...app, panels: ['.filters-pop'] }, path.join(work, 'takes'));
+    expect(take.events[0]!.panels.length).toBe(1);
+  }, 60_000);
 });

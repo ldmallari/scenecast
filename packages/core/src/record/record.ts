@@ -4,14 +4,13 @@ import { pathToFileURL } from 'node:url';
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
 import { DEFAULTS, type AppConn, type Scene, type Step } from '../scene/schema.js';
 import type { ScheduledStep } from '../schedule.js';
+import { applyAppContext, captureSessionStorage, panelSelector } from './context.js';
 import { LOADING_SELECTOR, settle, trackNetwork } from './settle.js';
 
 /** Every cursor move takes exactly this long, whatever the distance, so the scheduler's arithmetic holds. */
 export const DEFAULT_TRAVEL_SEC = 0.52;
 /** A selector must match a visible element within this long. */
 export const SELECTOR_TIMEOUT_MS = 2500;
-/** Visible elements matching this are open panels (captions keep clear of them). */
-export const PANEL_SELECTOR = '[role=dialog],[role=menu],[role=listbox],[aria-modal=true],[data-scenecast-panel]';
 
 const POINTER = new Set<Step['do']>(['click', 'hover', 'type']);
 const CURSOR_PX = 28;
@@ -231,8 +230,11 @@ async function clockOffset(page: Page): Promise<number> {
 
 const padBox = (b: Box, pad = 0): Box => ({ x: b.x - pad, y: b.y - pad, w: b.w + 2 * pad, h: b.h + 2 * pad });
 
-/** Open panels and loading state, ignoring the overlay. Retries once if a navigation destroys the page context. */
-async function snapshot(page: Page): Promise<{ panels: Box[]; loading: boolean }> {
+/**
+ * Open panels (elements matching `panelSel`) and loading state, ignoring the overlay. Retries once if a
+ * navigation destroys the page context.
+ */
+async function snapshot(page: Page, panelSel: string): Promise<{ panels: Box[]; loading: boolean }> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       return await page.evaluate(
@@ -251,7 +253,7 @@ async function snapshot(page: Page): Promise<{ panels: Box[]; loading: boolean }
           const loading = [...document.querySelectorAll(loadingSel)].some((el) => visible(el) !== null);
           return { panels, loading };
         },
-        [PANEL_SELECTOR, LOADING_SELECTOR] as const,
+        [panelSel, LOADING_SELECTOR] as const,
       ).then((s) => ({ panels: s.panels.map(toBox), loading: s.loading }));
     } catch {
       await page.waitForLoadState('domcontentloaded').catch(() => {});
@@ -290,6 +292,7 @@ function sessionState(browser: Browser, app: AppConn, out: string): Promise<stri
 async function signIn(browser: Browser, app: AppConn, file: string): Promise<string> {
   const ctx = await browser.newContext();
   try {
+    await applyAppContext(ctx, app);
     const page = await ctx.newPage();
     trackNetwork(page);
     if (app.login?.length) {
@@ -304,6 +307,7 @@ async function signIn(browser: Browser, app: AppConn, file: string): Promise<str
       await mod.default(page, ctx);
     }
     await ctx.storageState({ path: file });
+    await captureSessionStorage(page, file, app.baseUrl);
     return file;
   } finally {
     await ctx.close();
@@ -365,6 +369,7 @@ export async function recordScene(scene: Scene, scheduled: ScheduledStep[], app:
       storageState,
       recordVideo: { dir: videoDir, size: viewport },
     });
+    await applyAppContext(context, app, { sessionFile: storageState });
     await context.addInitScript({ content: OVERLAY_JS });
     let take: Omit<Take, 'file'>;
     let page: Page | undefined;
@@ -401,6 +406,7 @@ async function runTake(
   videoStart: number,
 ): Promise<Omit<Take, 'file'>> {
   const url = (p: string) => new URL(p, app.baseUrl).href;
+  const panelSel = panelSelector(app);
   trackNetwork(page);
   // Per-take settle budget: after one settle runs out its full cap, the rest get a short one.
   let capped = false;
@@ -460,7 +466,7 @@ async function runTake(
       quiet(page.evaluate(([x, y, end]) => window.__scenecast.moveTo(x, y, end), glide));
       await sleepUntil(arrive - AIM_CHECK_MS);
       m = await aim(m, sels, scene.id, index);
-      ev.loadingBefore = (await snapshot(page)).loading;
+      ev.loadingBefore = (await snapshot(page, panelSel)).loading;
       const aimed = centre(m.first);
       await page.mouse.move(aimed.x, aimed.y); // the real pointer moves ahead so the action itself is one press
       await sleepUntil(arrive);
@@ -483,7 +489,7 @@ async function runTake(
     } else if (step.do === 'ring' || step.do === 'zoom') {
       const m = await measure(page, scene.id, index, sels);
       const box = padBox(m.union, step.pad);
-      ev.loadingBefore = (await snapshot(page)).loading;
+      ev.loadingBefore = (await snapshot(page, panelSel)).loading;
       await sleepUntil(due);
       ev.at = sinceFlash();
       if (step.do === 'ring') {
@@ -504,7 +510,7 @@ async function runTake(
       } else ev.target = box;
     } else {
       const el = sels.length ? await findVisible(page, scene.id, index, sels[0]!) : undefined;
-      ev.loadingBefore = (await snapshot(page)).loading;
+      ev.loadingBefore = (await snapshot(page, panelSel)).loading;
       await sleepUntil(due);
       ev.at = sinceFlash();
       switch (step.do) {
@@ -525,7 +531,7 @@ async function runTake(
       if (sels.length && step.do !== 'goto') ev.target = (await measure(page, scene.id, index, sels)).union;
     }
 
-    Object.assign(ev, await snapshot(page));
+    Object.assign(ev, await snapshot(page, panelSel));
     // A step held with `ms` is busy until the hold ends.
     if (step.ms && ev.at !== undefined) ev.busyUntil = Math.max(ev.busyUntil ?? ev.at, ev.at + step.ms / 1000);
     events.push(ev as TakeEvent);

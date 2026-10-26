@@ -8,7 +8,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { chromium } from 'playwright';
-import { ensureToolchain, findUv, loadScene, type Toolchain } from '@scenecast/core';
+import { applyAppContext, captureSessionStorage, ensureToolchain, findUv, loadScene, type Toolchain } from '@scenecast/core';
 import { preview } from '@scenecast/compose';
 import { prepare, render } from './render.js';
 
@@ -79,6 +79,7 @@ export async function login(file: string): Promise<number> {
   const browser = await chromium.launch({ headless: false });
   try {
     const context = await browser.newContext({ viewport: null });
+    await applyAppContext(context, spec.app);
     const page = await context.newPage();
     await page.goto(spec.app.baseUrl);
     const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -88,6 +89,9 @@ export async function login(file: string): Promise<number> {
     if (answer === 'closed') throw new Error('the browser was closed before the session was saved');
     fs.mkdirSync(path.dirname(target), { recursive: true });
     await context.storageState({ path: target });
+    // An app that keeps its session in sessionStorage: save that too, from the tab the sign-in ended in.
+    const last = page.isClosed() ? context.pages().at(-1) : page;
+    if (last) await captureSessionStorage(last, target, spec.app.baseUrl);
     console.log(`scenecast: saved the session to ${target}`);
     return 0;
   } finally {

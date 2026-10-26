@@ -1,6 +1,6 @@
 // Serves the demo app with a tiny in-memory API, so a scene file has something to seed.
 //   node server.mjs [--port 4310]
-// GET /api/worklist returns the dashboard's worklist; POST /api/seed replaces it (see seed.mjs).
+// GET /api/flags returns the feature flags (all off; a scene file can route it). GET /api/worklist returns the dashboard's worklist; POST /api/seed replaces it (see seed.mjs).
 // /events and /stream stay open forever (the /live page uses them). Every other path that is not a
 // file falls back to index.html (client-side routes).
 import fs from 'node:fs';
@@ -24,6 +24,11 @@ export function serveDemoApp({ port = 4310, host = '127.0.0.1' } = {}) {
       urlPath = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
     } catch {
       res.writeHead(400, { 'content-type': 'text/plain' }).end('bad request');
+      return;
+    }
+    if (urlPath === '/api/flags' && req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ sso: false, sessionToken: false }));
       return;
     }
     if (urlPath === '/api/worklist' && req.method === 'GET') {

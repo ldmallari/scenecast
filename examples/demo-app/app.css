@@ -47,7 +47,7 @@ button, .button {
   color: var(--accent-ink);
   cursor: pointer;
 }
-.button.secondary { background: var(--card); color: var(--ink); border-color: var(--line); box-shadow: var(--shadow); }
+.button.secondary, button.secondary { background: var(--card); color: var(--ink); border-color: var(--line); box-shadow: var(--shadow); }
 button.wide { width: 100%; padding: 14px 22px; }
 input[type='text'], input[type='email'], input[type='password'] {
   font: inherit;
@@ -101,6 +101,22 @@ label { display: block; font-size: 16px; font-weight: 600; color: var(--ink-2); 
   box-shadow: 0 16px 40px rgba(16, 24, 40, 0.16);
 }
 .menu[hidden] { display: none; }
+.head-actions { display: flex; align-items: center; gap: 12px; }
+.filters-wrap { position: relative; }
+.filters-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  z-index: 5;
+  min-width: 260px;
+  padding: 4px 18px 18px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(16, 24, 40, 0.16);
+}
+.filters-pop[hidden] { display: none; }
+.filters-pop .check { margin-top: 14px; font-size: 16px; }
 .menu-head { display: flex; flex-direction: column; padding: 10px 14px 14px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
 .menu-head span { color: var(--muted); font-size: 16px; }
 .menu [role='menuitem'] {

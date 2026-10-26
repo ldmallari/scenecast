@@ -4,6 +4,7 @@ export * from './toolchain.js';
 export * from './voice.js';
 export * from './schedule.js';
 export * from './record/record.js';
+export * from './record/context.js';
 export { settle, trackNetwork, LOADING_SELECTOR } from './record/settle.js';
 export * from './ffmpeg.js';
 export * from './retime.js';
