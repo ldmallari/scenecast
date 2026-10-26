@@ -3,7 +3,6 @@
 A checklist for the maintainer. Work through it before the repository is made public. Each item is open until it is
 ticked.
 
-- [ ] **Employer sign-off.** Get the employer's sign-off to publish this personal project.
 - [ ] **Fresh history.** Publish from a fresh root commit (squash the branch into one commit), because earlier history
       contains internal design docs. Before pushing, search the
       new history once more for employer, product or person names and for absolute local paths.
