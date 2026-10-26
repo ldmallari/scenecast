@@ -195,6 +195,10 @@ describe('buildAuditInput', () => {
     expect(m.ring).toEqual({ box: box(1192, 592, 316, 96), peak: expect.closeTo(3.9 + ringPeakSec(600), 9), by: 'recorder' });
     expect(m.target).toEqual(TOTALS_AT_PEAK); // not the click's own target
     expect(m.problems).toEqual([]);
+    // A hover's ring drawn once the hover settled (`ringAt`, 0.2 s after the action) peaks that much later.
+    const late = withRingSel({ ringBox: box(1192, 592, 316, 96), ringTarget: TOTALS_AT_PEAK, ringAt: deskTake.events[0]!.at + 0.2 });
+    expect(late.ring!.peak).toBeCloseTo(3.9 + 0.2 + ringPeakSec(600), 9);
+    expect(late.actionTime).toBeCloseTo(m.actionTime!, 9);
     const gone = withRingSel({ ringBox: box(1192, 592, 316, 96) }); // the element was gone by the peak
     expect(gone.target).toBeNull();
     const none = withRingSel({});

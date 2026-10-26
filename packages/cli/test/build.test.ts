@@ -346,6 +346,44 @@ describe('declared navs', () => {
   });
 });
 
+describe('zoom that becomes the full frame', () => {
+  // A top bar, and a region just under it: with a large pad the zoom reaches the bar, grows to hold it whole and
+  // ends up as the full frame (which the audit then fails, as the padded target spills past the frame).
+  const top = { edge: 'top' as const, selector: 'header.topbar', box: { x: 0, y: 0, w: 1920, h: 64 } };
+  const nearTop: Box = { x: 100, y: 40, w: 1200, h: 500 };
+
+  it('warns when the starting zoom grows to hold a declared nav and becomes the full frame', () => {
+    const app = appInput('a');
+    app.scene = { ...app.scene, zoom: { sel: '.hero', pad: 60 } } as Scene;
+    app.recorded.take.navs = [top];
+    app.recorded.take.initialZoom = nearTop;
+    expect(buildVideo(spec, [app], { cards: false }).warnings).toEqual([
+      'scene "a": zoom on .hero became the full frame because it holds nav header.topbar; use a smaller pad, or zoom on an element clear of the nav',
+    ]);
+  });
+
+  it('warns for a zoom step, and names the nav by its edge on a take logged without selectors', () => {
+    const app = appInput('a', { zoom: true });
+    app.recorded.take.navs = [{ edge: 'top', box: top.box }];
+    app.recorded.take.events[1]!.target = nearTop;
+    expect(buildVideo(spec, [app], { cards: false }).warnings).toEqual([
+      'scene "a" step 1: zoom on #z became the full frame because it holds nav (the top nav); use a smaller pad, or zoom on an element clear of the nav',
+    ]);
+  });
+
+  it('no warning when the zoom stays smaller than the frame, or would be the full frame without the nav', () => {
+    const app = appInput('a', { zoom: true });
+    app.recorded.take.navs = [top];
+    app.recorded.take.events[1]!.target = { x: 300, y: 150, w: 900, h: 50 }; // shifts below the bar
+    expect(buildVideo(spec, [app], { cards: false }).warnings).toEqual([]);
+    app.recorded.take.events[1]!.target = { x: 0, y: 20, w: 1900, h: 1000 }; // the full frame either way
+    expect(buildVideo(spec, [app], { cards: false }).warnings).toEqual([]);
+    app.recorded.take.navs = undefined;
+    app.recorded.take.events[1]!.target = nearTop;
+    expect(buildVideo(spec, [app], { cards: false }).warnings).toEqual([]);
+  });
+});
+
 describe('voice track', () => {
   let dir: string;
   beforeEach(() => (dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-vt-'))));

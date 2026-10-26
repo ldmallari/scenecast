@@ -1,4 +1,4 @@
-import type { Page, Request } from 'playwright';
+import type { Locator, Page, Request } from 'playwright';
 
 /** Visible elements matching this mean the page is still loading. */
 export const LOADING_SELECTOR =
@@ -103,4 +103,38 @@ export async function settle(page: Page, { quietMs = 350, maxMs = 9000 }: Settle
     }
   }
   return false;
+}
+
+/**
+ * Waits until `els` have stopped moving: two animation frames (so a style change just made, such as a hover, has
+ * started its transitions), then until no finite CSS transition or animation is running on any of them or on their
+ * ancestors (a row that lifts on hover moves what is inside it too). Gives up after `maxMs`; infinite animations
+ * (spinners) never hold it up. Elements that are gone are skipped.
+ */
+export async function motionSettled(els: Locator[], maxMs: number): Promise<void> {
+  await Promise.all(
+    els.map((el) =>
+      el
+        .evaluate(async (target, cap) => {
+          const deadline = performance.now() + cap;
+          const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+          await frame();
+          await frame();
+          for (;;) {
+            const moving = document.getAnimations().filter((a) => {
+              const fx = a.effect as KeyframeEffect | null;
+              const on = fx?.target;
+              if (!fx || !on || !(on === target || on.contains(target))) return false;
+              if (a.playState !== 'running' && !a.pending) return false;
+              return Number.isFinite(Number(fx.getComputedTiming().endTime));
+            });
+            const left = deadline - performance.now();
+            if (!moving.length || left <= 0) return;
+            await Promise.race([Promise.all(moving.map((a) => a.finished.catch(() => {}))), new Promise((r) => setTimeout(r, left))]);
+            await frame();
+          }
+        }, maxMs)
+        .catch(() => {}),
+    ),
+  );
 }

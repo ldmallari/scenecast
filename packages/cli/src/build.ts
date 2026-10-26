@@ -5,7 +5,10 @@ import {
   DEFAULTS,
   DESKTOP_CAPTIONS,
   layoutCaptions,
+  navMakesFullFrame,
   phoneCaptions,
+  phoneScreen,
+  phoneToFrame,
   onScreen,
   outputTimeOf,
   retime,
@@ -98,6 +101,8 @@ export interface BuiltVideo {
   plan: ComposePlan;
   scenes: PlacedScene[];
   total: number;
+  /** Plan-time notes for the user (render and preview log them): e.g. a zoom that became the full frame. */
+  warnings: string[];
 }
 
 const padBox = (b: Box, pad: number): Box => ({ x: b.x - pad, y: b.y - pad, w: b.w + 2 * pad, h: b.h + 2 * pad });
@@ -140,6 +145,37 @@ export function planZooms(take: Take, scheduled: ScheduledStep[], times: Map<num
     zooms.push({ start: t, end: Math.min(duration, end), box: e.target! });
   });
   return zooms;
+}
+
+const selText = (sel: string | string[]) => (Array.isArray(sel) ? sel.join(', ') : sel);
+
+/**
+ * Warnings for zooms (the scene's starting zoom and zoom steps) that the composer turns into the full frame because
+ * they grow to hold a declared nav whole (`app.nav`): typically a large `pad` reaching a top bar. The region is
+ * computed as the composer and the audit compute it.
+ */
+export function fullFrameZoomWarnings(scene: Scene, take: Take, scheduled: ScheduledStep[], align: PhoneAlign): string[] {
+  const navs = take.navs ?? [];
+  if (!navs.length) return [];
+  const phone = take.viewport === 'phone';
+  const toFrame = (b: Box) => (phone ? phoneToFrame(b, align) : b);
+  const frame: Box = { x: 0, y: 0, w: DEFAULTS.video.width, h: DEFAULTS.video.height };
+  const framed = navs.map((n) => ({ ...n, box: toFrame(n.box) }));
+  const navEdge = phone ? phoneScreen(align).x : 0;
+  const check = (box: Box, owner: string, sel: string): string[] => {
+    const nav = navMakesFullFrame(toFrame(box), frame, DEFAULTS.audit.zoomPadPx, undefined, navEdge, framed);
+    if (!nav) return [];
+    const name = nav.selector ?? `(the ${nav.edge} nav)`;
+    return [`${owner}: zoom on ${sel} became the full frame because it holds nav ${name}; use a smaller pad, or zoom on an element clear of the nav`];
+  };
+  const out: string[] = [];
+  if (take.initialZoom && scene.zoom) out.push(...check(take.initialZoom, `scene "${scene.id}"`, selText(scene.zoom.sel)));
+  for (const e of take.events) {
+    if (e.kind !== 'zoom' || !e.target) continue;
+    const step = scheduled.find((s) => s.index === e.index)?.step;
+    if (step?.sel !== undefined) out.push(...check(e.target, `scene "${scene.id}" step ${e.index}`, selText(step.sel)));
+  }
+  return out;
 }
 
 /**
@@ -214,6 +250,7 @@ export function buildVideo(spec: BuildSpec, inputs: SceneInput[], opts: BuildOpt
   const align: PhoneAlign = spec.phone?.align ?? DEFAULTS.phone.align;
   const planScenes: PlanScene[] = [];
   const placed: PlacedScene[] = [];
+  const warnings: string[] = [];
   let t = 0;
   const push = (s: PlanScene) => {
     planScenes.push(s);
@@ -236,6 +273,7 @@ export function buildVideo(spec: BuildSpec, inputs: SceneInput[], opts: BuildOpt
     }
     if (!input.scheduled || !input.recorded) throw new Error(`scene "${scene.id}": app scene needs its schedule and take`);
     const { plan, segments } = appPlanScene(scene, voice, input.scheduled, input.recorded, align);
+    warnings.push(...fullFrameZoomWarnings(scene, input.recorded.take, input.scheduled, align));
     const start = push(plan);
     placed.push({ ...input, planIndex: planScenes.length - 1, start, segments });
   }
@@ -248,7 +286,7 @@ export function buildVideo(spec: BuildSpec, inputs: SceneInput[], opts: BuildOpt
     };
     push({ kind: 'card', duration: toFrames(cards.outroSec), card });
   }
-  return { plan: { brand: spec.brand, scenes: planScenes, cards: { entrance: cards.entrance }, phoneAlign: align }, scenes: placed, total: t };
+  return { plan: { brand: spec.brand, scenes: planScenes, cards: { entrance: cards.entrance }, phoneAlign: align }, scenes: placed, total: t, warnings };
 }
 
 function hms(sec: number): string {

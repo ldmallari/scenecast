@@ -6,7 +6,7 @@ import { DEFAULTS, type AppConn, type CursorCfg, type Scene, type Step } from '.
 import { actionAt, DEFAULT_TRAVEL_SEC, POINTER, PROTECT_MARGIN_SEC, spotPoint, type Point, type ScheduledStep } from '../schedule.js';
 import { VideoClock } from './clock.js';
 import { applyAppContext, captureSessionStorage, panelSelector } from './context.js';
-import { LOADING_SELECTOR, settle, trackNetwork } from './settle.js';
+import { LOADING_SELECTOR, motionSettled, settle, trackNetwork } from './settle.js';
 
 // The pointer timing rules live in the pure scheduler; re-exported here, where v1 defined them.
 export { DEFAULT_TRAVEL_SEC, travelSecFor } from '../schedule.js';
@@ -70,6 +70,11 @@ const CLOCK_SAMPLES = 5;
 const TYPE_DELAY_MS = 35;
 /** After a check step's click, the element has this long to show as checked (an app may re-render it). */
 const CHECKED_WAIT_MS = 1000;
+/**
+ * A hover step's `ringSel` ring waits at most this long after the action for the hover's own transitions (a row
+ * that lifts) to finish, so it is drawn round the element where it comes to rest.
+ */
+const HOVER_SETTLE_MAX_MS = 400;
 /** How long the recorder's ring holds at full strength when the step sets no `ms`. */
 export const RING_HOLD_MS = 1200;
 /** The recorder's ring fades in (and out) over this long; it is at full strength after it. */
@@ -124,6 +129,11 @@ export interface TakeEvent {
   ringBox?: Box;
   /** Pointer steps with `ringSel`: the union of the `ringSel` elements' own boxes (no pad), re-measured at the ring's peak. */
   ringTarget?: Box;
+  /**
+   * Seconds after the flash when a `ringSel` ring was drawn, on the video's clock, when that was after `at`: a hover
+   * step's ring waits for the hover's transitions to settle first. Absent when the ring was drawn at `at`.
+   */
+  ringAt?: number;
   /** Box covered by the cursor graphic at its destination. */
   cursorTo?: Box;
   /** Seconds after the flash when the cursor set off to park, after this pointer step (see `ScheduledStep.park`). */
@@ -161,8 +171,11 @@ export interface Take {
   flashAt: number;
   /** Set for phone takes: boxes are in the 390×844 take's own pixels, which composition maps into the frame. */
   viewport?: 'phone';
-  /** The declared navs (`app.nav`) that were visible when the take started, with their boxes. */
-  navs?: { edge: 'left' | 'top'; box: Box }[];
+  /**
+   * The declared navs (`app.nav`) that were visible when the take started, with their boxes and selectors (absent
+   * on takes recorded before the selector was logged).
+   */
+  navs?: { edge: 'left' | 'top'; box: Box; selector?: string }[];
   /** The scene's `zoom.sel` (union of all selectors) measured before the flash, plus its `pad`: the scene starts zoomed on it. */
   initialZoom?: Box;
   events: TakeEvent[];
@@ -754,7 +767,16 @@ async function runTake(
       const at = ev.at;
       if (ringM) {
         const hold = step.ringMs ?? RING_HOLD_MS;
-        drawRing(ev, { at, box: padBox(ringM.union, step.pad), hold, m: ringM, sels: ringSels, index, atPeak: (b) => void (b && (ev.ringTarget = b)) });
+        let ringAt = at;
+        if (step.do === 'hover') {
+          // The hover may move what it rings (a row that lifts 2 px): measured once that has settled, the ring holds
+          // the element where it comes to rest, as the audit checks it at the ring's peak.
+          await motionSettled(ringM.els, HOVER_SETTLE_MAX_MS);
+          ringM = await boxesOf(ringM.els, ringSels, scene.id, index);
+          ringAt = Math.max(at, videoNow());
+          if (ringAt > at) ev.ringAt = ringAt;
+        }
+        drawRing(ev, { at: ringAt, box: padBox(ringM.union, step.pad), hold, m: ringM, sels: ringSels, index, atPeak: (b) => void (b && (ev.ringTarget = b)) });
       }
       if (step.do === 'click' || step.do === 'type' || (step.do === 'check' && !wasChecked)) {
         // A phone taps (a check too, like any other press there); the indicator's press is its feedback.
@@ -902,7 +924,7 @@ async function navBoxes(page: Page, app: AppConn): Promise<NonNullable<Take['nav
       const el = loc.nth(i);
       if (!(await el.isVisible().catch(() => false))) continue;
       const b = await el.boundingBox().catch(() => null);
-      if (b) out.push({ edge: nav.edge, box: toBox(b) });
+      if (b) out.push({ edge: nav.edge, box: toBox(b), selector: nav.selector });
       break;
     }
   }

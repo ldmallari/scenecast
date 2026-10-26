@@ -39,6 +39,101 @@ export function hashFile(file: string): Promise<string> {
   });
 }
 
+/** A held work dir lock (see `lockWorkDir`). */
+export interface WorkLock {
+  file: string;
+  /** Frees the lock (once every holder in this process has released it). Calling it again does nothing. */
+  release(): void;
+}
+
+const LOCK_FILE = '.lock';
+/** Work dirs this process holds, with how many holders each has. */
+const held = new Map<string, { count: number; free: () => void }>();
+
+/** Whether a process with this pid is running (EPERM: it is, under another user). */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * Locks a video's work dir for this process: two renders writing the same stages at once corrupt them (the voice
+ * stage fails with a libsndfile error). The lock is `<dir>/.lock` holding the pid, created atomically. A lock held by
+ * a live process fails at once with a message naming the dir and that pid; a stale one (its process is gone) is
+ * taken over. It is released by `release()`, and on exit, an uncaught error or SIGINT/SIGTERM/SIGHUP. Re-entrant
+ * within a process.
+ */
+export function lockWorkDir(dir: string): WorkLock {
+  const file = path.join(dir, LOCK_FILE);
+  const mine = held.get(file);
+  if (mine) {
+    mine.count++;
+    return onceRelease(file);
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  // Written whole to a file of our own, then linked into place: a reader never sees a lock without its pid.
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${process.pid}\n`);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.linkSync(tmp, file);
+        break;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || attempt > 0) throw e;
+        const pid = Number.parseInt(fs.readFileSync(file, 'utf8').trim(), 10);
+        if (pid === process.pid) break; // ours, from a holder that has been released without cleaning up
+        if (Number.isInteger(pid) && pid > 0 && alive(pid))
+          throw new Error(`work dir ${dir} is in use by another render (pid ${pid}); wait for it to finish, or render into another dir with --work <dir>`);
+        fs.rmSync(file, { force: true }); // stale: its process is gone
+      }
+    }
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  const onExit = () => free();
+  // Releases, then lets the signal do what it would have done: other handlers (Playwright's, the preview's) decide;
+  // with none, the signal is raised again with no handler, so the process ends as it would have.
+  const onSignal = (sig: NodeJS.Signals) => {
+    free();
+    if (process.listenerCount(sig) === 0) process.kill(process.pid, sig);
+  };
+  const free = () => {
+    if (!held.has(file)) return;
+    held.delete(file);
+    process.removeListener('exit', onExit);
+    for (const sig of signals) process.removeListener(sig, onSignal);
+    try {
+      if (Number.parseInt(fs.readFileSync(file, 'utf8').trim(), 10) === process.pid) fs.rmSync(file, { force: true });
+    } catch {
+      // already gone
+    }
+  };
+  process.on('exit', onExit);
+  for (const sig of signals) process.once(sig, onSignal);
+  held.set(file, { count: 1, free });
+  return onceRelease(file);
+}
+
+/** A holder's release: frees the lock when the last holder in this process lets go. */
+function onceRelease(file: string): WorkLock {
+  let done = false;
+  return {
+    file,
+    release() {
+      if (done) return;
+      done = true;
+      const h = held.get(file);
+      if (h && --h.count === 0) h.free();
+    },
+  };
+}
+
 export class StageCache {
   readonly root: string;
   /** Wall-clock seconds of each stage that ran in this process (cached stages are absent). */

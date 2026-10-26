@@ -99,6 +99,8 @@ scenecast preview <video.yaml>        open the composed video in the Revideo pla
 
 `render` exits with 0 when the audit passes and 1 when any moment FAILs, so it can gate a CI job. Stages whose inputs
 did not change are reused from `work/<id>/`; `--fresh` redoes them all, for example after the app itself changed.
+A render locks `work/<id>/` while it runs, so a second render of the same video into the same folder stops at once,
+naming the folder and the pid of the render that holds it (use `--work <dir>` to run both).
 
 ## How long it takes
 

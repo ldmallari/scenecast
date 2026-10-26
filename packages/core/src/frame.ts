@@ -120,6 +120,19 @@ export function clampZoom(box: Box, frame: Box, pad: number, navBox?: Box, navEd
   return z;
 }
 
+/**
+ * The declared nav that turns the zoom on `box` into the full frame: the region (as `clampZoom` makes it) is the
+ * whole frame, yet without the declared navs it would not be, because growing to hold this nav whole took it
+ * there. Undefined otherwise (the zoom stays smaller, or is the full frame anyway). Same arguments as `clampZoom`.
+ */
+export function navMakesFullFrame<N extends NavBox>(box: Box, frame: Box, pad: number, navBox: Box | undefined, navEdge: number, navs: N[]): N | undefined {
+  const full = (z: Box) => z.w >= frame.w - EPS || z.h >= frame.h - EPS;
+  if (!navs.length || !full(clampZoom(box, frame, pad, navBox, navEdge, navs))) return undefined;
+  if (full(clampZoom(box, frame, pad, navBox, navEdge))) return undefined;
+  // The nav that does it alone; when only several together do, the first of them.
+  return navs.find((n) => full(clampZoom(box, frame, pad, navBox, navEdge, [n]))) ?? navs[0];
+}
+
 function fixLeftNav(z: Box, box: Box, nav: Box, frame: Box): Box {
   const navRight = nav.x + nav.w;
   const widen = (): Box => {

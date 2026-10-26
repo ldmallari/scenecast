@@ -31,6 +31,15 @@ The cache is keyed on the scene file, the saved session, the login hook and the 
 When the **app** has changed, render with `--fresh` so every scene is recorded again. `--only <sceneId>` re-renders a single scene (without the intro and outro
 cards) while you work on it.
 
+## One render per work dir
+
+**`work dir <dir> is in use by another render (pid <pid>); wait for it to finish, or render into another dir with
+--work <dir>`.** Each render (and preview) locks the video's work dir, `work/<id>/`, while it runs: two renders writing
+the same stages at once would corrupt them (the voice stage failed with a libsndfile error). Wait for the other render
+to finish, stop it, or give this one its own `--work <dir>`. The lock (`work/<id>/.lock`) is removed when the render
+ends, fails or is stopped with Ctrl-C; one left by a process that is no longer running (after a crash or a kill -9) is
+taken over by the next render, so it never needs deleting by hand.
+
 ## One render per process
 
 Revideo, which draws the video, changes process-wide state (environment variables and patched modules). A process
@@ -98,6 +107,11 @@ app:
 
 A zoom then shows each declared nav whole or leaves it out.
 
+**`zoom on <sel> became the full frame because it holds nav <nav>`** (a warning from render or preview), often followed
+by a target FAIL such as `zoom 0,0 1920x1080 does not contain target`. The zoom's region (the element plus `pad`)
+reached a declared nav, so it grew to show that nav whole, and that made it the whole frame: no zoom at all. Use a
+smaller `pad` (on the scene's `zoom` or the step), or zoom on an element that is clear of the nav.
+
 **The target is too close to the zoom's edge.** Zoom a slightly larger element (its card or section), so the zoomed
 region has room around it inside the frame.
 
@@ -140,7 +154,10 @@ a `{ do: park }` step (with `at` for the spot); to start a scene with the cursor
 indicator fades by itself (use `wait` to hold).
 
 **A hover step cannot ring what it reveals.** The ring is measured as the cursor arrives, before a tooltip or hover
-menu appears. Ring the revealed element with a separate `ring` step cued a word or two later.
+menu appears. Ring the revealed element with a separate `ring` step cued a word or two later. A hover that only moves
+what it rings (a row that lifts 2 px on hover) needs nothing: its `ringSel` ring waits up to 0.4 s for the hover's
+transitions to finish and is drawn where the element comes to rest. A transition longer than that can still leave
+the ring off by the rest of the movement.
 
 ## Steps that fail while recording
 

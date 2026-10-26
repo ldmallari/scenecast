@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { StageCache } from '../src/cache.js';
+import { execFileSync, spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { lockWorkDir, StageCache } from '../src/cache.js';
 import { RECORD_STAGE_VERSION, recordStageInput } from '../src/render.js';
 
 let work: string;
@@ -123,4 +125,77 @@ describe('the record stage version', () => {
     await cache.save('music', await cache.key('music', { seconds: 10, seed: 0 }), { wav: 'bed.wav' });
     expect(await cache.lookup('music', '9f37274d5c2edab8549b58e30d9a6a69b586d7a7d014a8202d4a381463ff2ee0')).toEqual({ wav: 'bed.wav' });
   });
+});
+
+describe('work dir lock', () => {
+  const CACHE_TS = fileURLToPath(new URL('../src/cache.ts', import.meta.url));
+  const lockFile = (dir: string) => path.join(dir, '.lock');
+  /** The pid of a process that has exited. */
+  const deadPid = () => Number(execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))']).toString());
+
+  it('takes the lock with its pid and releases it', () => {
+    const dir = path.join(work, 'v');
+    const lock = lockWorkDir(dir);
+    expect(fs.readFileSync(lockFile(dir), 'utf8').trim()).toBe(String(process.pid));
+    lock.release();
+    expect(fs.existsSync(lockFile(dir))).toBe(false);
+    lock.release(); // twice is harmless
+  });
+
+  it('refuses a dir another live process holds, naming the dir and its pid', () => {
+    const dir = path.join(work, 'v');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(lockFile(dir), `${process.ppid}\n`);
+    expect(() => lockWorkDir(dir)).toThrow(
+      `work dir ${dir} is in use by another render (pid ${process.ppid}); wait for it to finish, or render into another dir with --work <dir>`,
+    );
+    expect(fs.readFileSync(lockFile(dir), 'utf8').trim()).toBe(String(process.ppid));
+  });
+
+  it('takes over a stale lock whose process is gone', () => {
+    const dir = path.join(work, 'v');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(lockFile(dir), `${deadPid()}\n`);
+    const lock = lockWorkDir(dir);
+    expect(fs.readFileSync(lockFile(dir), 'utf8').trim()).toBe(String(process.pid));
+    lock.release();
+  });
+
+  it('is re-entrant in the same process: the last release frees it', () => {
+    const dir = path.join(work, 'v');
+    const [a, b] = [lockWorkDir(dir), lockWorkDir(dir)];
+    a.release();
+    expect(fs.existsSync(lockFile(dir))).toBe(true);
+    b.release();
+    expect(fs.existsSync(lockFile(dir))).toBe(false);
+  });
+
+  /** Runs a child that takes the lock, prints "locked", then does `then`; resolves with its exit once it is gone. */
+  const child = (dir: string, then: string) =>
+    new Promise<{ code: number | null; signal: NodeJS.Signals | null; sawLock: boolean }>((resolve, reject) => {
+      const code = `import { lockWorkDir } from ${JSON.stringify(CACHE_TS)}; lockWorkDir(${JSON.stringify(dir)}); console.log('locked'); ${then}`;
+      const p = spawn(process.execPath, ['--no-warnings', '--input-type=module', '-e', code], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let sawLock = false;
+      p.stdout.on('data', (d: Buffer) => {
+        if (!sawLock && d.toString().includes('locked')) {
+          sawLock = fs.existsSync(lockFile(dir));
+          p.emit('locked');
+        }
+      });
+      p.on('locked', () => {
+        if (then.includes('setInterval')) p.kill('SIGTERM');
+      });
+      p.on('error', reject);
+      p.on('exit', (code, signal) => resolve({ code, signal, sawLock }));
+    });
+
+  it('a process that throws or is stopped by a signal leaves no lock behind', async () => {
+    for (const then of ["throw new Error('boom');", 'setInterval(() => {}, 1000);']) {
+      const dir = path.join(work, `v-${then.length}`);
+      const r = await child(dir, then);
+      expect(r.sawLock, then).toBe(true);
+      expect(r.code !== 0 || r.signal !== null, then).toBe(true);
+      expect(fs.existsSync(lockFile(dir)), then).toBe(false);
+    }
+  }, 30_000);
 });

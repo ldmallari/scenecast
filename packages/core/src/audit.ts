@@ -218,7 +218,11 @@ export function buildAuditInput(
           // The ring drawn at the cue, checked against the element as it was at the ring's peak.
           const hold = (ringSel ? s.step.ringMs : s.step.ms) ?? RING_HOLD_MS;
           if (!ev.ringBox) problems.push(`no ring box was logged for this ${ringSel ? 'ringSel ring' : 'ring step'}`);
-          else if (mapped !== null) ring = { box: toFrame(ev.ringBox), peak: round(start + mapped + ringPeakSec(hold)), by: 'recorder' };
+          else if (mapped !== null) {
+            // A hover's ring is drawn once the hover has settled (`ringAt`), a little after the action.
+            const drawn = ev.ringAt !== undefined ? (sceneTimeOf(ev.ringAt) ?? mapped) : mapped;
+            ring = { box: toFrame(ev.ringBox), peak: round(start + drawn + ringPeakSec(hold)), by: 'recorder' };
+          }
         } else {
           const r = nearest(rings, ref);
           if (r) ring = { box: r.box, peak: round(start + Math.min(r.start + RING_FADE_SEC, (r.start + r.end) / 2)), by: 'composer' };

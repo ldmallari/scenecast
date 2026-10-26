@@ -34,7 +34,7 @@ import {
 import { renderVideo } from '@scenecast/compose';
 import { buildVoiceTrack } from './audio.js';
 import { buildVideo, chaptersTxt, finalSrt, scheduleOptsFor, type BuiltVideo, type Recorded, type SceneInput } from './build.js';
-import { StageCache } from './cache.js';
+import { lockWorkDir, StageCache, type WorkLock } from './cache.js';
 
 export interface RenderOptions {
   /** Render just this scene (no intro or outro card); the files get a `-<sceneId>` suffix. */
@@ -72,6 +72,11 @@ export interface Prepared {
   workDir: string;
   /** Output base name (`<output>` or `<output>-<only>`). */
   name: string;
+  /**
+   * The lock on `workDir`, taken before any stage runs (a second render into the same dir fails at once). `render`
+   * releases it when done; otherwise it is released when the process exits.
+   */
+  lock: WorkLock;
 }
 
 const secs = (since: number) => (performance.now() - since) / 1000;
@@ -196,102 +201,111 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
   const scenes = opts.only ? spec.scenes.filter((s) => s.id === opts.only) : spec.scenes;
   if (!scenes.length) throw new Error(`no scene "${opts.only}" in ${file} (scenes: ${spec.scenes.map((s) => s.id).join(', ')})`);
   const workDir = path.resolve(opts.workRoot ?? 'work', spec.id);
-  const cache = new StageCache(workDir, { fresh: opts.fresh, log });
+  // Two renders into the same work dir would write the same stages at once: the second stops here.
+  const lock = lockWorkDir(workDir);
+  try {
+    const cache = new StageCache(workDir, { fresh: opts.fresh, log });
 
-  // Problems with the app are reported before the (slow) voice stage.
-  const signedIn = scenes.some((s) => s.kind === 'app' && !s.signedOut);
-  if (signedIn && spec.app.storageState && !fs.existsSync(spec.app.storageState))
-    throw new Error(`app.storageState ${spec.app.storageState} does not exist yet: run \`scenecast login ${file}\` first`);
-  if (scenes.some((s) => s.kind === 'app') && !(await reachable(spec.app.baseUrl)))
-    log(`the app at ${spec.app.baseUrl} is not responding; start it first (recording will fail unless every scene is cached)`);
+    // Problems with the app are reported before the (slow) voice stage.
+    const signedIn = scenes.some((s) => s.kind === 'app' && !s.signedOut);
+    if (signedIn && spec.app.storageState && !fs.existsSync(spec.app.storageState))
+      throw new Error(`app.storageState ${spec.app.storageState} does not exist yet: run \`scenecast login ${file}\` first`);
+    if (scenes.some((s) => s.kind === 'app') && !(await reachable(spec.app.baseUrl)))
+      log(`the app at ${spec.app.baseUrl} is not responding; start it first (recording will fail unless every scene is cached)`);
 
-  const voices = await voiceStage(spec, scenes, cache, log);
-  const cards = !opts.only;
-  const cardImage = (name: string, page: string | undefined) => (page ? cardPageStage(spec, name, page, cache, log) : Promise.resolve(undefined));
-  const introImage = cards && spec.cards.introSec > 0 ? await cardImage('intro', spec.cards.introPage) : undefined;
-  const outroImage = cards && spec.cards.outroSec > 0 ? await cardImage('outro', spec.cards.outroPage) : undefined;
+    const voices = await voiceStage(spec, scenes, cache, log);
+    const cards = !opts.only;
+    const cardImage = (name: string, page: string | undefined) => (page ? cardPageStage(spec, name, page, cache, log) : Promise.resolve(undefined));
+    const introImage = cards && spec.cards.introSec > 0 ? await cardImage('intro', spec.cards.introPage) : undefined;
+    const outroImage = cards && spec.cards.outroSec > 0 ? await cardImage('outro', spec.cards.outroPage) : undefined;
 
-  let seeded = false;
-  const inputs: SceneInput[] = [];
-  for (const scene of scenes) {
-    const { voice } = voices.get(scene.id)!;
-    if (scene.kind === 'title') {
-      const image = await cardImage(`scene-${scene.id}`, scene.page);
-      inputs.push({ scene, voice, ...(image ? { cardImage: image } : {}) });
-      continue;
+    let seeded = false;
+    const inputs: SceneInput[] = [];
+    for (const scene of scenes) {
+      const { voice } = voices.get(scene.id)!;
+      if (scene.kind === 'title') {
+        const image = await cardImage(`scene-${scene.id}`, scene.page);
+        inputs.push({ scene, voice, ...(image ? { cardImage: image } : {}) });
+        continue;
+      }
+      const scheduled: ScheduledStep[] = schedule(scene, voice, scheduleOptsFor(scene, spec.cursor, voice.duration));
+      const app = spec.app;
+      const seedFile = app.seed && path.isAbsolute(app.seed) && fs.existsSync(app.seed) ? app.seed : undefined;
+      // The take runs at least as long as the scene it fills (voice, breath) plus a tail, so retime never runs out of frames.
+      const minTakeSec = voice.duration + DEFAULTS.video.breathSec + DEFAULTS.video.takeTailSec;
+      const { result: recorded } = await cache.run<Recorded>({
+        name: `record/${scene.id}`,
+        input: recordStageInput(scene, scheduled, app, spec.cursor, minTakeSec, spec.brand.accent),
+        files: [...appFiles(app), ...(seedFile ? [seedFile] : [])],
+        run: async (dir) => {
+          if (app.seed && !seeded) {
+            log(`seed: ${app.seed}`);
+            await runSeed(app.seed, sceneDir, app.baseUrl);
+            seeded = true;
+          }
+          let take;
+          // The signed-in session the recorder saves holds credentials: never leave it behind, even on failure or
+          // when the process is stopped mid-recording (Ctrl-C exits through Playwright's signal handler).
+          const session = path.join(dir, '.session.json');
+          const removeSession = () => {
+            if (opts.keepWork) return;
+            fs.rmSync(session, { force: true });
+            fs.rmSync(sessionStoragePath(session), { force: true });
+          };
+          process.once('exit', removeSession);
+          try {
+            take = await recordScene(scene, scheduled, app, dir, { minTakeSec, cursor: spec.cursor, touchColour: spec.brand.accent });
+          } finally {
+            removeSession();
+            process.removeListener('exit', removeSession);
+          }
+          const flash = await scanFlash(take.file);
+          let blanks = await scanBlank(take.file, flash.end);
+          if (blanks.length) {
+            // Blank frames (a page between navigations) become the last good frame before them, in the take itself.
+            const frozen = await freezeBlankFrames(take.file, blanks);
+            log(`record/${scene.id}: ${blanks.length} blank frame run(s) in the take; froze ${frozen} on the last good frame`);
+            blanks = await scanBlank(take.file, flash.end);
+          }
+          return {
+            take,
+            flashTime: flash.start,
+            flashEnd: flash.end,
+            srcDuration: await mediaDuration(take.file),
+            lastFrameSec: await lastFrameTime(take.file),
+            blanks,
+          };
+        },
+        outputs: (r) => [r.take.file],
+      });
+      // A take recorded before blank-frame scanning existed: scan it now.
+      recorded.blanks ??= await scanBlank(recorded.take.file, recorded.flashEnd);
+      // A take recorded before the last frame was measured: measure it now.
+      recorded.lastFrameSec ??= await lastFrameTime(recorded.take.file);
+      inputs.push({ scene, voice, scheduled, recorded });
     }
-    const scheduled: ScheduledStep[] = schedule(scene, voice, scheduleOptsFor(scene, spec.cursor, voice.duration));
-    const app = spec.app;
-    const seedFile = app.seed && path.isAbsolute(app.seed) && fs.existsSync(app.seed) ? app.seed : undefined;
-    // The take runs at least as long as the scene it fills (voice, breath) plus a tail, so retime never runs out of frames.
-    const minTakeSec = voice.duration + DEFAULTS.video.breathSec + DEFAULTS.video.takeTailSec;
-    const { result: recorded } = await cache.run<Recorded>({
-      name: `record/${scene.id}`,
-      input: recordStageInput(scene, scheduled, app, spec.cursor, minTakeSec, spec.brand.accent),
-      files: [...appFiles(app), ...(seedFile ? [seedFile] : [])],
-      run: async (dir) => {
-        if (app.seed && !seeded) {
-          log(`seed: ${app.seed}`);
-          await runSeed(app.seed, sceneDir, app.baseUrl);
-          seeded = true;
-        }
-        let take;
-        // The signed-in session the recorder saves holds credentials: never leave it behind, even on failure or
-        // when the process is stopped mid-recording (Ctrl-C exits through Playwright's signal handler).
-        const session = path.join(dir, '.session.json');
-        const removeSession = () => {
-          if (opts.keepWork) return;
-          fs.rmSync(session, { force: true });
-          fs.rmSync(sessionStoragePath(session), { force: true });
-        };
-        process.once('exit', removeSession);
-        try {
-          take = await recordScene(scene, scheduled, app, dir, { minTakeSec, cursor: spec.cursor, touchColour: spec.brand.accent });
-        } finally {
-          removeSession();
-          process.removeListener('exit', removeSession);
-        }
-        const flash = await scanFlash(take.file);
-        let blanks = await scanBlank(take.file, flash.end);
-        if (blanks.length) {
-          // Blank frames (a page between navigations) become the last good frame before them, in the take itself.
-          const frozen = await freezeBlankFrames(take.file, blanks);
-          log(`record/${scene.id}: ${blanks.length} blank frame run(s) in the take; froze ${frozen} on the last good frame`);
-          blanks = await scanBlank(take.file, flash.end);
-        }
-        return {
-          take,
-          flashTime: flash.start,
-          flashEnd: flash.end,
-          srcDuration: await mediaDuration(take.file),
-          lastFrameSec: await lastFrameTime(take.file),
-          blanks,
-        };
-      },
-      outputs: (r) => [r.take.file],
-    });
-    // A take recorded before blank-frame scanning existed: scan it now.
-    recorded.blanks ??= await scanBlank(recorded.take.file, recorded.flashEnd);
-    // A take recorded before the last frame was measured: measure it now.
-    recorded.lastFrameSec ??= await lastFrameTime(recorded.take.file);
-    inputs.push({ scene, voice, scheduled, recorded });
-  }
 
-  const video = buildVideo(spec, inputs, {
-    cards,
-    ...(introImage ? { introImage } : {}),
-    ...(outroImage ? { outroImage } : {}),
-  });
-  const name = opts.only ? `${spec.output}-${opts.only}` : spec.output;
-  return { spec, video, cache, workDir, name };
+    const video = buildVideo(spec, inputs, {
+      cards,
+      ...(introImage ? { introImage } : {}),
+      ...(outroImage ? { outroImage } : {}),
+    });
+    for (const w of video.warnings) log(`warning: ${w}`);
+    const name = opts.only ? `${spec.output}-${opts.only}` : spec.output;
+    return { spec, video, cache, workDir, name, lock };
+  } catch (e) {
+    lock.release();
+    throw e;
+  }
 }
 
 /**
  * The record stage's own version, part of its cache key: bump it when takes recorded before a change must be
- * recorded again (2: blank frames are frozen in the take). The global cache version stays, so voice and music
- * clips are kept.
+ * recorded again (2: blank frames are frozen in the take; 3: a hover's ringSel ring waits for the hover to settle,
+ * and declared navs are logged with their selectors). The global cache version stays, so voice and music clips are
+ * kept.
  */
-export const RECORD_STAGE_VERSION = 2;
+export const RECORD_STAGE_VERSION = 3;
 
 /** Everything a scene's take depends on: the record stage's cache input. */
 export function recordStageInput(
@@ -320,7 +334,21 @@ export function recordStageInput(
 export async function render(file: string, opts: RenderOptions = {}): Promise<RenderResult> {
   const started = performance.now();
   const log = opts.log ?? ((m: string) => console.log(`scenecast: ${m}`));
-  const { spec, video, cache, workDir, name } = await prepare(file, { ...opts, log });
+  const prepared = await prepare(file, { ...opts, log });
+  try {
+    return await composeAndAudit(prepared, opts, log, started);
+  } finally {
+    prepared.lock.release();
+  }
+}
+
+/** The rest of `render` once the plan is ready: compose, mux, write the outputs and audit. */
+async function composeAndAudit(
+  { spec, video, cache, workDir, name }: Prepared,
+  opts: RenderOptions,
+  log: (m: string) => void,
+  started: number,
+): Promise<RenderResult> {
   const outDir = path.resolve(opts.outDir ?? 'out');
   fs.mkdirSync(outDir, { recursive: true });
   const { plan, total } = video;

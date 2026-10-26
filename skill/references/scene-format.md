@@ -243,7 +243,7 @@ exactly one time, whatever its punctuation, hyphens or numbers ("sign-in", "$1,5
 | `signedOut` | no | `true` records this scene without signing in. |
 | `prewarm` | no | Paths to open, and wait on, before `route`, so caches are warm when recording starts. |
 | `seconds` | title scenes: yes | The card's minimum length. It runs longer if the narration needs it. |
-| `zoom` | no | App scenes: `{ sel, pad }`. The scene starts zoomed on this element (measured before recording starts), until its first `zoom` or `unzoom` step, or the scene end. A selector that matches nothing fails the recording (`scene "<id>" zoom selector "<sel>" not found`). |
+| `zoom` | no | App scenes: `{ sel, pad }`. The scene starts zoomed on this element (measured before recording starts), until its first `zoom` or `unzoom` step, or the scene end. A selector that matches nothing fails the recording (`scene "<id>" zoom selector "<sel>" not found`). A zoom that grows to hold a declared nav and so becomes the full frame prints a warning (`scene "<id>": zoom on <sel> became the full frame because it holds nav <nav>`). |
 | `cursor` | no | App scenes: where the cursor starts in this scene (a [spot](#cursor)). Overrides `cursor.start`. |
 | `page` | no | Title scenes: an HTML file shown as the card instead of the drawn one (see [card pages](#card-pages)). On an app scene it is ignored, with a warning. |
 
@@ -282,7 +282,9 @@ What each action does:
   the field, then types `text` one character at a time.
   A `hover` cannot ring an element that the hover itself reveals (a tooltip, a menu that opens on hover): the ring is
   measured as the cursor arrives, before it appears. Ring it from the next step instead, for example
-  `{ cue: …, do: ring, sel: ".tooltip" }`.
+  `{ cue: …, do: ring, sel: ".tooltip" }`. A hover that moves what it rings (a row that lifts or grows on hover) is
+  fine: a hover's `ringSel` ring waits for the transitions and animations on those elements and their ancestors to
+  finish (at most 0.4 s after the cue) and is drawn round them where they come to rest.
 - **check.** Ticks a checkbox or switch: the cursor glides to it, and it is clicked only when it is not already
   checked, so a re-render over seeded data that already has it ticked stays the same. The recording fails when it
   is still unchecked afterwards (`scene "<id>" step <i>: <sel> is not checked after the click`). `sel` must be the
@@ -296,7 +298,10 @@ What each action does:
 - **zoom.** Eases the view in to the element (0.7 s), holds it for `ms` (default 2 s) or until the `unzoom` that
   closes it, then eases out. A zoom ended by an `unzoom` may not also set `ms`. The zoomed region keeps the
   frame's 16:9 shape, magnifies at most 2.5×, keeps 24 px of space around the target, stays inside the frame, and
-  shows a declared nav whole or not at all. A target too big to need a zoom gets the full frame.
+  shows a declared nav whole or not at all. A target too big to need a zoom gets the full frame. When holding a
+  declared nav whole is what makes the region the full frame (a large `pad` reaching a top bar, say), render and
+  preview print a warning: `scene "<id>" step <i>: zoom on <sel> became the full frame because it holds nav <nav>`
+  (see [troubleshooting](troubleshooting.md#crop-fails)).
 - **unzoom.** Eases the zoom out, starting on its cue (it needs a `zoom` step before it in the scene, or the scene's
   own `zoom`, which it then ends). It has no `sel`.
   Use it to end a zoom on a word ("…comes **first**") instead of after a fixed `ms`.
@@ -344,8 +349,10 @@ with captions in a column beside it; `right` puts it at 70%; `center` is the v1 
 ## Captions
 
 Captions come from the narration, shown as a sequence of rounded boxes of at most 2 lines of about 42 characters.
-A phrase is cut at clause punctuation (`, : ; — .`) first, never right after a function word ("the", "to", …), and
-never between a possessive and its noun.
+A phrase is cut at clause punctuation (`, : ; — .`) first, never right after a function word ("the", "to", "your",
+…), and never between a possessive and its noun. The same holds for the line break inside a caption: rather than end a
+line on "your", the caption moves the word down, rebalancing its lines, or adds a caption when its lines would
+otherwise run past 42 characters. Only a phrase that cannot be cut any other way ends a line on a function word.
 
 Each caption takes the first position that covers nothing it must keep clear (the target, the cursor's destination, a
 ring, an open panel), trying bottom, top, bottom-left, bottom-right, top-left and top-right in that order. During a
@@ -364,4 +371,6 @@ or top when that column is blocked. The same text is written to `<output>.srt`.
 - `audit/`: `audit-table.md`, `audit.json`, `contact-sheet.png` and `frames/`. See [audit.md](audit.md).
 
 Intermediate files go to `work/<id>/` (or `--work <dir>`). Each stage there is reused when its inputs have not
-changed.
+changed. A render (or preview) locks that folder while it runs (`work/<id>/.lock`, holding its pid): a second render
+of the same video into the same folder stops at once with `work dir <dir> is in use by another render (pid <pid>)`.
+The lock is removed when the render ends, fails or is stopped; one left by a process that is gone is taken over.

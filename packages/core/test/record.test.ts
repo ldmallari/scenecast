@@ -365,6 +365,7 @@ describe('recordScene', () => {
     expect(take.navs).toHaveLength(1);
     const n = take.navs![0]!;
     expect(n.edge).toBe('top');
+    expect(n.selector).toBe('header.topbar');
     expect(n.box.x).toBe(0);
     expect(n.box.y).toBe(0);
     expect(n.box.w).toBe(DEFAULTS.video.width);
@@ -499,6 +500,29 @@ describe('recordScene', () => {
     const take = await recordScene(scene('ringms', '/form', steps), sched(steps, [0.5]), app, path.join(work, 'takes'));
     const ev = take.events[0]!;
     expect(Math.abs(ev.busyUntil! - ev.at - (600 + 300) / 1000)).toBeLessThanOrEqual(0.05);
+  }, 60_000);
+
+  it('a hover ring is drawn around its ringSel once the hover transform has settled', async () => {
+    // The row lifts 6 px over 250 ms when hovered (an app's hover lift), so the ring must wait for it.
+    const lift: AppConn = {
+      ...app,
+      initScript:
+        "document.addEventListener('DOMContentLoaded', () => { const s = document.createElement('style');" +
+        " s.textContent = '.sign-panel .actions { transition: transform 250ms ease } .sign-panel .actions:hover { transform: translateY(-6px) }';" +
+        ' document.head.appendChild(s); })',
+    };
+    const steps: Step[] = [{ do: 'hover', sel: '#sign', ringSel: '.sign-panel .actions' }];
+    const take = await recordScene(scene('hoverlift', '/form', steps), sched(steps, [0.5]), lift, path.join(work, 'takes'));
+    const ev = take.events[0]!;
+    const [ring, el] = [ev.ringBox!, ev.ringTarget!];
+    // The audit's containment check: the ring drawn holds the element as it is at the ring's peak.
+    expect(ring.y, `ring ${ring.x},${ring.y} vs element ${el.x},${el.y}`).toBeLessThanOrEqual(el.y + 0.5);
+    expect(ring.y + ring.h).toBeGreaterThanOrEqual(el.y + el.h - 0.5);
+    expect(ring.x).toBeLessThanOrEqual(el.x + 0.5);
+    // The ring is drawn after the action, by no more than the wait's cap, and its time is logged.
+    expect(ev.ringAt!).toBeGreaterThanOrEqual(ev.at);
+    expect(ev.ringAt! - ev.at).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(ev.busyUntil! - ev.ringAt! - (1200 + 300) / 1000)).toBeLessThanOrEqual(0.001);
   }, 60_000);
 
   it('check ticks a box once and leaves a ticked box alone', async () => {

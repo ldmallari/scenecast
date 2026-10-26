@@ -253,9 +253,9 @@ function breakCost(word: string): number {
 /**
  * The cheapest way to cut words[0..n) into `parts` pieces: the sum of each piece's cost and the cost of
  * each break. `piece(i, j)` is the cost of words[i..j) as one piece (Infinity when it can't be one).
- * Returns the end index of each piece, or null when no cut is finite.
+ * Returns the end index of each piece and the total cost, or null when no cut is finite.
  */
-function cheapestCut(words: string[], parts: number, piece: (i: number, j: number) => number): number[] | null {
+function cheapestCut(words: string[], parts: number, piece: (i: number, j: number) => number): { ends: number[]; cost: number } | null {
   const n = words.length;
   // best[k][j]: cheapest cost of words[0..j) in k pieces; from[k][j]: where the last of them starts.
   const best = Array.from({ length: parts + 1 }, () => new Array<number>(n + 1).fill(Infinity));
@@ -275,7 +275,7 @@ function cheapestCut(words: string[], parts: number, piece: (i: number, j: numbe
   if (best[parts]![n] === Infinity) return null;
   const ends: number[] = [];
   for (let k = parts, j = n; k > 0; j = from[k]![j]!, k--) ends.unshift(j);
-  return ends;
+  return { ends, cost: best[parts]![n]! };
 }
 
 /**
@@ -288,8 +288,10 @@ const imbalance = (pieceLen: number, mean: number, charsPerLine: number) => (pie
 const meanLen = (total: number, parts: number) => (total - (parts - 1)) / parts;
 
 /**
- * Cuts words into the fewest pieces (from `minParts`) for which `piece` is finite, cheapest first.
- * Each piece holds at least `minWords` words. Returns the pieces' word ranges, or null.
+ * Cuts words into the fewest pieces (from `minParts`) that need no break after a function word (nor a piece that
+ * must end a line on one): one more piece beats such a break, so a word moves down rather than end a line or cue
+ * on "your". When every count needs one, it takes the fewest pieces for which `piece` is finite. Cheapest first
+ * within a count; each piece holds at least `minWords` words. Returns the pieces' word ranges, or null.
  */
 function fewestPieces(
   words: string[],
@@ -299,13 +301,18 @@ function fewestPieces(
   piece: (i: number, j: number, mean: number) => number,
 ): [number, number][] | null {
   const total = len(words);
+  let fallback: number[] | null = null;
   for (let parts = Math.max(1, minParts); parts <= Math.min(maxParts, Math.floor(words.length / minWords)); parts++) {
     const mean = meanLen(total, parts);
-    const ends = cheapestCut(words, parts, (i, j) => (j - i < minWords ? Infinity : piece(i, j, mean)));
-    if (ends) return ends.map((e, k) => [k ? ends[k - 1]! : 0, e]);
+    const cut = cheapestCut(words, parts, (i, j) => (j - i < minWords ? Infinity : piece(i, j, mean)));
+    if (!cut) continue;
+    if (cut.cost < FUNCTION_WORD_BREAK) return ranges(cut.ends);
+    fallback ??= cut.ends;
   }
-  return null;
+  return fallback && ranges(fallback);
 }
+
+const ranges = (ends: number[]): [number, number][] => ends.map((e, k) => [k ? ends[k - 1]! : 0, e]);
 
 /**
  * The lines of one cue (one line when it fits), cut with the same costs as cues, or null when the words
@@ -325,7 +332,9 @@ function cueLines(words: string[], layout: CaptionLayout): { lines: string[]; fo
 }
 
 /**
- * Splits a phrase into cues of lines. It uses the fewest cues that fit; among those, it picks the breaks
+ * Splits a phrase into cues of lines. It uses the fewest cues that fit with no cue or line ending on a function
+ * word (one more cue, rather than a line ending on "your"; the fewest that fit at all when every count needs such
+ * an end); among those, it picks the breaks
  * (between cues and between lines) with the lowest total cost: a break after a function word is all but
  * ruled out, one that does not follow clause punctuation costs 1, and uneven cues or lines add their
  * imbalance. Cues hold at least two words when the phrase has 4+ (one only when a hard-broken word needs it).

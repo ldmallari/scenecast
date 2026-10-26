@@ -156,6 +156,21 @@ describe('cards and pages', () => {
     expect(logs).toEqual(['warning: scene "s": page is used only on title scenes; ignored']);
   });
 
+  it('a second render into the same work dir fails at once, naming the dir and the pid that holds it', async () => {
+    const file = sceneFile(['scenes: [{ id: s, kind: app, narration: Hello. }]']);
+    const workDir = path.join(dir, 'work', 't');
+    fs.mkdirSync(workDir, { recursive: true });
+    // Another live process (the test runner's parent) holds the lock.
+    fs.writeFileSync(path.join(workDir, '.lock'), `${process.ppid}\n`);
+    const logs: string[] = [];
+    await expect(prepare(file, { workRoot: path.join(dir, 'work'), log: (m) => logs.push(m) })).rejects.toThrow(
+      `work dir ${workDir} is in use by another render (pid ${process.ppid})`,
+    );
+    // Nothing ran: the voice stage never started.
+    expect(logs.filter((l) => !l.startsWith('warning:') && !l.includes('not responding'))).toEqual([]);
+    expect(fs.readdirSync(workDir)).toEqual(['.lock']);
+  });
+
   it('renders the intro, outro and title scene pages once and passes the images to the plan', async () => {
     const page = (name: string, colour: string) => {
       fs.writeFileSync(path.join(dir, name), `<!doctype html><style>body{margin:0;background:${colour}}</style>`);

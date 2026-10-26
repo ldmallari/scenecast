@@ -332,6 +332,26 @@ describe('clause-first captions', () => {
     for (const cue of cues) for (const line of cue) expect(FUNCTION_WORDS.has(lastWord(line))).toBe(false);
   });
 
+  it('adds a cue rather than wrap a line after a function word', () => {
+    // One two-line cue fits these only with a line ending on "your" or "for": the words move down into a second cue.
+    const texts = [
+      'Here, your documents, your requests, your referrals, your reviews and your team.',
+      'Your home page shows what is waiting for you today: a document to upload, a policy to sign, a survey waiting for your answer before the end of the week.',
+      'Your home page shows what is waiting for you today: your documents, your requests, your referrals and your reviews before the end of the week.',
+    ];
+    for (const text of texts) {
+      const cues = splitCaption(text);
+      expect(cues.flat().join(' ')).toBe(text);
+      for (const cue of cues) {
+        expect(cue.length).toBeLessThanOrEqual(2);
+        for (const line of cue) {
+          expect(line.length, text).toBeLessThanOrEqual(42);
+          expect(FUNCTION_WORDS.has(lastWord(line)), `${text}: "${line}"`).toBe(false);
+        }
+      }
+    }
+  });
+
   it('a phrase whose only breaks end on function words still splits', () => {
     const text = 'the the the the the the the the the the the the the the the the the the the the the the the end';
     const cues = splitCaption(text);
