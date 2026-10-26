@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { blankRanges, detectFlash, lastFrameTime, scanBlank } from '../src/ffmpeg.js';
+import { blankRanges, detectFlash, frameTimes, freezeBlankFrames, lastFrameTime, scanBlank } from '../src/ffmpeg.js';
 import { DEFAULT_TRAVEL_SEC, type Take, type TakeEvent } from '../src/record/record.js';
 import { outputTimeOf, retime, type Segment } from '../src/retime.js';
 import { travelSecFor, type ScheduledStep } from '../src/schedule.js';
@@ -342,6 +342,26 @@ describe('blank frames', () => {
     expect(segs.some((g) => g.hold !== undefined && g.srcIn === blank.holdAt)).toBe(true);
   });
 
+  it('freezes blank frames that start right after an action, holding the action frame (the sign-in race)', () => {
+    // The demo's sign-in take: the click is logged 23 ms after the last good frame and the page paints blank
+    // 17 ms later. The composer can show a blank frame up to two output frames early, so the freeze must start
+    // before the click; it holds the click's own frame, so the click stays on screen.
+    const blank = { start: FLASH + 1.04, end: FLASH + 1.08, holdAt: FLASH + 1.0 };
+    const t = take([{ index: 0, kind: 'click', at: 1.023 }]);
+    const s = sched([{ index: 0, do: 'click', startAt: 1.023 - DEFAULT_TRAVEL_SEC }]);
+    const plain = retime(t, s, voice(4), opts);
+    const segs = retime(t, s, voice(4), { ...opts, blanks: [blank] });
+    expect(sceneLen(segs)).toBeCloseTo(sceneLen(plain), 9);
+    for (const g of segs.filter((x) => x.hold === undefined))
+      expect(g.srcOut <= blank.start - 2 * FRAME + FRAME / 2 + 1e-9 || g.srcIn >= blank.end + FRAME - 1e-9).toBe(true);
+    const freeze = segs.find((g) => g.covers);
+    // The held frame is the one on screen at the click (the last frame at or before it), not an earlier one.
+    expect(freeze!.srcIn).toBe(blank.holdAt);
+    expect(freeze!.srcIn).toBeGreaterThan(FLASH + 1.023 - 0.04);
+    const out = outputTimeOf(segs, FLASH + 1.023);
+    expect(Math.abs(out! - outputTimeOf(plain, FLASH + 1.023)!)).toBeLessThanOrEqual(FRAME);
+  });
+
   it('maps an action logged inside a blank run to its place in the freeze', () => {
     // The click is logged a few ms after the first blank frame (the two clocks agree only to a frame).
     const blank = { start: FLASH + 1.0, end: FLASH + 1.04, holdAt: FLASH + 0.96 };
@@ -386,6 +406,29 @@ describe('blank frames', () => {
     // Before `from`, it is ignored.
     expect(await scanBlank(file, 1.5)).toEqual([]);
   }, 30_000);
+
+  it('freezeBlankFrames replaces a blank run right after an action with the action frame, keeping frame times (fixture video)', async () => {
+    const { ffmpeg } = await ensureToolchain();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-freeze-'));
+    const file = path.join(dir, 'take.webm');
+    // A click at 1.0 s starts a navigation: the page paints blank from the next frame (1.04 s) for 0.12 s.
+    execFileSync(ffmpeg, [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=25:d=2',
+      '-f', 'lavfi', '-i', 'color=c=0xF4F6F8:s=320x180:r=25:d=2',
+      '-filter_complex', '[0:v][1:v]overlay=enable=between(t\\,1.03\\,1.15)',
+      '-c:v', 'libvpx', '-b:v', '1M', '-t', '2', file,
+    ]);
+    const before = await frameTimes(file);
+    const runs = await scanBlank(file, 0.2);
+    expect(runs.map((r) => [+r.start.toFixed(2), +r.holdAt.toFixed(2)])).toEqual([[1.04, 1.0]]);
+    expect(runs[0]!.frames).toEqual({ first: 26, last: 28, hold: 25 });
+    expect(await freezeBlankFrames(file, runs)).toBe(1);
+    expect(await scanBlank(file, 0.2)).toEqual([]);
+    expect(await frameTimes(file)).toEqual(before);
+    // A run with no good frame to hold is left alone.
+    expect(await freezeBlankFrames(file, [{ start: 0, end: 0.08, holdAt: 0, frames: { first: 0, last: 1, hold: 0 } }])).toBe(0);
+  }, 60_000);
 });
 
 describe('retime never cuts inside an action that is still playing out', () => {

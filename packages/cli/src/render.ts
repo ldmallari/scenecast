@@ -16,6 +16,7 @@ import {
   renderCardPage,
   runFfmpeg,
   runPy,
+  freezeBlankFrames,
   scanBlank,
   scanFlash,
   schedule,
@@ -251,8 +252,13 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
           process.removeListener('exit', removeSession);
         }
         const flash = await scanFlash(take.file);
-        const blanks = await scanBlank(take.file, flash.end);
-        if (blanks.length) log(`record/${scene.id}: ${blanks.length} blank frame run(s) in the take; holding the last good frame over them`);
+        let blanks = await scanBlank(take.file, flash.end);
+        if (blanks.length) {
+          // Blank frames (a page between navigations) become the last good frame before them, in the take itself.
+          const frozen = await freezeBlankFrames(take.file, blanks);
+          log(`record/${scene.id}: ${blanks.length} blank frame run(s) in the take; froze ${frozen} on the last good frame`);
+          blanks = await scanBlank(take.file, flash.end);
+        }
         return {
           take,
           flashTime: flash.start,

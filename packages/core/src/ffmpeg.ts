@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { DEFAULTS } from './scene/schema.js';
 import { ensureToolchain } from './toolchain.js';
 
@@ -62,6 +64,8 @@ export interface BlankRange {
   end: number;
   /** Presentation time of the last good frame before the run: the frame to freeze over it. */
   holdAt: number;
+  /** Decode-order frame numbers in the file: the run's first and last blank frame, and the held frame. */
+  frames?: { first: number; last: number; hold: number };
 }
 
 /** Luma standard deviation of one grey frame (one byte per cell). */
@@ -88,17 +92,21 @@ export function blankRanges(times: number[], stds: number[], from: number, max: 
     const t = times[i]!;
     if (t < from - 1e-6) continue;
     const blank = stds[i]! <= max;
-    if (blank && runStart === undefined) runStart = t;
+    if (blank && runStart === undefined) runStart = i;
     if (!blank) {
-      if (runStart !== undefined) out.push({ start: runStart, end: t, holdAt: lastGood ?? t });
+      if (runStart !== undefined) {
+        const hold = lastGood ?? i;
+        out.push({ start: times[runStart]!, end: t, holdAt: times[hold]!, frames: { first: runStart, last: i - 1, hold } });
+      }
       runStart = undefined;
-      lastGood = t;
+      lastGood = i;
     }
   }
   if (runStart !== undefined) {
     const last = times.at(-1)!;
     const end = last + (times.length > 1 ? last - times.at(-2)! : 1 / 25);
-    out.push({ start: runStart, end, holdAt: lastGood ?? runStart });
+    const hold = lastGood ?? runStart;
+    out.push({ start: times[runStart]!, end, holdAt: times[hold]!, frames: { first: runStart, last: times.length - 1, hold } });
   }
   return out;
 }
@@ -118,6 +126,33 @@ export async function scanBlank(file: string, from: number): Promise<BlankRange[
   const stds: number[] = [];
   for (let i = 0; i < frames; i++) stds.push(lumaStd(out.subarray(i * size, (i + 1) * size)));
   return blankRanges(times.slice(0, frames), stds, from);
+}
+
+/**
+ * Rewrites the take so each blank run shows its held frame instead (the last good frame before it, which is the frame
+ * on screen at an action that started a navigation). Frame times are kept, so every logged time still applies. The
+ * composer's decoder can show a frame up to a few output frames early, so retime alone cannot keep blank frames that
+ * start right after an action out of the video; with them gone from the take, nothing can show them. Runs with no
+ * good frame to hold are left (the audit fails them). Returns how many runs were frozen.
+ */
+export async function freezeBlankFrames(file: string, blanks: BlankRange[]): Promise<number> {
+  const runs = blanks.filter((b) => b.frames && (b.frames.hold < b.frames.first || b.frames.hold > b.frames.last));
+  if (!runs.length) return 0;
+  const { ffmpeg } = await ensureToolchain({ offline: true }).catch(() => ensureToolchain());
+  // freezeframes takes the replacement frame from its second input: a copy of the same stream.
+  const graph = runs
+    .map((b, i) => `[${i ? `v${i}` : '0:v:0'}]split[a${i}][b${i}];[a${i}][b${i}]freezeframes=first=${b.frames!.first}:last=${b.frames!.last}:replace=${b.frames!.hold}[v${i + 1}]`)
+    .join(';');
+  const tmp = `${file}.frozen${path.extname(file)}`;
+  await runFfmpeg(ffmpeg, [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', file,
+    '-filter_complex', graph, '-map', `[v${runs.length}]`, '-fps_mode', 'passthrough',
+    // Near-lossless VP8, like the recorder's own output (the composer re-encodes it anyway).
+    '-c:v', 'libvpx', '-crf', '4', '-b:v', '40M', '-qmin', '0', '-qmax', '10', '-deadline', 'good', '-cpu-used', '4',
+    tmp,
+  ]);
+  fs.renameSync(tmp, file);
+  return runs.length;
 }
 
 /** Presentation time of every decodable video frame of `file`, in order (the showinfo filter, no frame-rate change). */

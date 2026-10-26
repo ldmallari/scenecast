@@ -148,14 +148,12 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
   let srcT = srcStart;
   // Widened by output frames on each side: the composer shows the take re-encoded at the output frame rate,
   // where a frame next to a blank run can be the blank one (nearest-frame rounding), so the freeze starts up to
-  // two output frames early and ends one late. It never starts before an action plus one frame: an action
-  // (often the click that started the navigation) must stay on screen, or it would be cut from the video.
+  // two output frames early and ends one late. That margin may start before an action logged just before the
+  // run (often the click that started the navigation): the held frame is the last good frame before the run,
+  // so it is the frame on screen at that action (or a later one) and the action stays visible. Starting the
+  // freeze after the action instead left the blank frames that follow it unfrozen.
   const blanks = [...(opts.blanks ?? [])]
-    .map((b) => {
-      const action = Math.max(-Infinity, ...anchors.filter((a) => a.src <= b.start + EPS).map((a) => a.src));
-      const start = Math.min(b.start, Math.max(srcStart, b.start - 2 / fps, action + 1 / fps));
-      return { ...b, start, end: b.end + 1 / fps };
-    })
+    .map((b) => ({ ...b, start: Math.min(b.start, Math.max(srcStart, b.start - 2 / fps)), end: b.end + 1 / fps }))
     .sort((a, b) => a.start - b.start);
   /** Plays source [from, to) at outT, freezing the last good frame over any blank frames in it. */
   const clip = (from: number, to: number) => {
