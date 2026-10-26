@@ -112,8 +112,17 @@ def test_run_reads_the_gaps_from_the_input(tmp_path):
 class _Clip:
     """A 24 kHz scene with two 1 s phrases at 0-1 s and 1.2-2.2 s."""
 
-    phrases = [{"text": "Open the menu,", "start": 0.0, "end": 1.0}, {"text": "then press Save.", "start": 1.2, "end": 2.2}]
     audio = np.zeros(round(2.2 * SAMPLE_RATE), dtype=np.float32)
+
+    @staticmethod
+    def phrases():
+        return [{"text": "Open the menu,", "start": 0.0, "end": 1.0}, {"text": "then press Save.", "start": 1.2, "end": 2.2}]
+
+
+def _good(model, pcm, text, offset=0.0):
+    # Times inside the padded clip: speech starts after the 0.3 s pad, plus 0.05 s.
+    return [{"w": w, "start": offset + 0.35 + 0.25 * i, "end": offset + 0.55 + 0.25 * i, "p": 1.0,
+             "from": "onset" if i == 0 else "forced"} for i, w in enumerate(text.split())]
 
 
 def test_forced_words_align_each_phrase_clip_with_padding(monkeypatch):
@@ -123,39 +132,88 @@ def test_forced_words_align_each_phrase_clip_with_padding(monkeypatch):
 
     def fake(model, pcm, text, offset=0.0):
         calls.append((len(pcm), offset))
-        # Times inside the padded clip: speech starts after the 0.3 s pad.
-        return [{"w": w, "start": offset + 0.3 + 0.25 * i, "end": offset + 0.5 + 0.25 * i, "p": 1.0}
-                for i, w in enumerate(text.split())]
+        return _good(model, pcm, text, offset)
 
     monkeypatch.setattr(align, "align_text", fake)
-    words = forced_words("model", _Clip.audio, _Clip.phrases)
+    phrases = _Clip.phrases()
+    words = forced_words("model", _Clip.audio, phrases)
     # Each clip is 1 s of speech with 0.3 s of silence on each side, at 16 kHz; offsets put the pad before the phrase.
     assert calls == [(round(1.6 * 16000), pytest.approx(-0.3)), (round(1.6 * 16000), pytest.approx(0.9))]
     assert [w["w"] for w in words] == "Open the menu, then press Save.".split()
-    assert [w["start"] for w in words] == pytest.approx([0.0, 0.25, 0.5, 1.2, 1.45, 1.7])
-    assert set(words[0]) == {"w", "start", "end"}
+    assert [w["start"] for w in words] == pytest.approx([0.05, 0.3, 0.55, 1.25, 1.5, 1.75])
+    assert [w["from"] for w in words] == ["onset", "forced", "forced", "onset", "forced", "forced"]
+    assert set(words[0]) == {"w", "start", "end", "from"}
+    # Each phrase records its first word's onset from the phrase start, for the audit.
+    assert [p["onset"] for p in phrases] == pytest.approx([0.05, 0.05])
 
 
-def test_forced_words_reject_a_wrong_count_or_times_going_back(monkeypatch):
+def _broken_second(monkeypatch, bad):
     import scenecast_py.align as align
 
-    monkeypatch.setattr(align, "align_text", lambda m, pcm, text, offset=0.0: [{"w": "Open", "start": offset, "end": offset, "p": 1}])
-    assert forced_words("model", _Clip.audio, _Clip.phrases) is None
+    def fake(model, pcm, text, offset=0.0):
+        return bad(model, pcm, text, offset) if text.startswith("then") else _good(model, pcm, text, offset)
 
+    monkeypatch.setattr(align, "align_text", fake)
+
+
+def _check_second_phrase_fell_back(capsys, words, phrases, heard_calls):
+    assert [w["w"] for w in words] == "Open the menu, then press Save.".split()
+    assert [w["from"] for w in words[:3]] == ["onset", "forced", "forced"]  # the first phrase keeps its forced times
+    assert words[3]["from"] == "free" and words[3]["start"] == pytest.approx(1.3)
+    assert {w["from"] for w in words[4:]} == {"position"}
+    assert all(1.2 <= w["start"] <= 2.2 for w in words[3:])
+    starts = [w["start"] for w in words]
+    assert starts == sorted(starts)
+    assert "onset" in phrases[0] and "onset" not in phrases[1]
+    assert heard_calls == [1]  # the free transcript is made once, only when a phrase needs it
+    err = capsys.readouterr().err
+    assert "phrase at 1.200 s" in err and "falls back" in err
+
+
+HEARD = [{"w": " Open", "start": 0.06, "end": 0.3}, {"w": " then", "start": 1.3, "end": 1.5}]
+
+
+def _run(monkeypatch):
+    calls = []
+
+    def heard():
+        calls.append(1)
+        return HEARD
+
+    phrases = _Clip.phrases()
+    return forced_words("model", _Clip.audio, phrases, heard=heard), phrases, calls
+
+
+def test_a_phrase_with_the_wrong_word_count_falls_back_alone(monkeypatch, capsys):
+    _broken_second(monkeypatch, lambda m, pcm, text, offset: [{"w": "then", "start": offset, "end": offset, "p": 1, "from": "onset"}])
+    words, phrases, calls = _run(monkeypatch)
+    _check_second_phrase_fell_back(capsys, words, phrases, calls)
+
+
+def test_a_phrase_whose_times_go_back_falls_back_alone(monkeypatch, capsys):
     def backwards(m, pcm, text, offset=0.0):
         n = len(text.split())
-        return [{"w": w, "start": offset + 0.3 + 0.1 * (n - i), "end": offset + 0.4 + 0.1 * (n - i), "p": 1} for i, w in enumerate(text.split())]
+        return [{"w": w, "start": offset + 0.3 + 0.1 * (n - i), "end": offset + 0.4 + 0.1 * (n - i), "p": 1, "from": "forced"}
+                for i, w in enumerate(text.split())]
 
-    monkeypatch.setattr(align, "align_text", backwards)
-    assert forced_words("model", _Clip.audio, _Clip.phrases) is None
+    _broken_second(monkeypatch, backwards)
+    words, phrases, calls = _run(monkeypatch)
+    _check_second_phrase_fell_back(capsys, words, phrases, calls)
 
 
-def test_run_falls_back_to_the_free_transcript_when_alignment_fails(monkeypatch, tmp_path):
-    import scenecast_py.voice as voice
+def test_a_phrase_the_aligner_rejects_falls_back_alone(monkeypatch, capsys):
+    from scenecast_py.align import AlignmentError
 
-    heard = [{"w": " Open", "start": 0.1, "end": 0.3}]
-    monkeypatch.setattr(voice, "forced_words", lambda model, audio, phrases: None)
-    monkeypatch.setattr(voice, "_heard_words", lambda model, audio: heard)
-    words = voice.scene_words("model", _Clip.audio, _Clip.phrases)
-    assert words[0]["start"] == pytest.approx(0.1)
-    assert [w["w"] for w in words] == "Open the menu, then press Save.".split()
+    def empty(m, pcm, text, offset=0.0):
+        raise AlignmentError("the aligner returned no words")
+
+    _broken_second(monkeypatch, empty)
+    words, phrases, calls = _run(monkeypatch)
+    _check_second_phrase_fell_back(capsys, words, phrases, calls)
+
+
+def test_scene_words_without_a_model_spread_by_position():
+    from scenecast_py.voice import scene_words
+
+    words = scene_words(None, _Clip.audio, _Clip.phrases())
+    assert {w["from"] for w in words} == {"position"}

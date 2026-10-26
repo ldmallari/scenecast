@@ -8,8 +8,9 @@ input.json: {"voice": {"name", "lang", "speed", "phraseGapSec"},
 `gaps[i]` is the silence before phrase i (gaps[0] is 0); without `gaps`, phraseGapSec goes between every phrase.
 Writes <dir>/<scene>.wav (24 kHz mono) and <dir>/timeline.json. Times are seconds from scene start.
 
-Word times come from forced alignment of each phrase clip against its known text (scenecast_py.align). When a
-phrase can't be aligned, the scene falls back to the free transcript mapped onto the script (`align_words`).
+Word times come from forced alignment of each phrase clip against its known text (scenecast_py.align). A phrase
+that can't be aligned falls back on its own to the free transcript mapped onto it (`align_words`), with a log line.
+Each word records where its time came from (`from`), and each aligned phrase its first word's `onset`.
 
 SCENECAST_FAKE_TTS=1 swaps Kokoro for 1.0 s of silence per phrase and skips whisper
 (word times then come from the character-position fallback only).
@@ -19,6 +20,7 @@ import difflib
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -137,7 +139,8 @@ def _round(scene):
     r = lambda t: round(float(t), 3)  # noqa: E731
     return {
         "duration": r(scene["duration"]),
-        "phrases": [{**p, "start": r(p["start"]), "end": r(p["end"])} for p in scene["phrases"]],
+        "phrases": [{**p, "start": r(p["start"]), "end": r(p["end"]), **({"onset": r(p["onset"])} if "onset" in p else {})}
+                    for p in scene["phrases"]],
         "words": [{**w, "start": r(w["start"]), "end": r(w["end"])} for w in scene["words"]],
     }
 
@@ -159,40 +162,81 @@ def _heard_words(model, audio):
     return [{"w": w.word, "start": w.start, "end": w.end} for s in segments for w in (s.words or [])]
 
 
-def forced_words(model, audio, phrases, pad=ALIGN_PAD_SEC):
-    """Word times by forced alignment of each phrase clip (with `pad` of silence on each side) against its text.
+def _log(message):
+    print(f"scenecast: voice: {message}", file=sys.stderr, flush=True)
 
-    Returns [{w, start, end}] for every script word, each kept inside its phrase, or None when any phrase gives the
-    wrong word count or a start before the previous word's start (the caller then falls back to `align_words`).
-    """
+
+def _forced_phrase(model, audio, p, pad):
+    """Forced word times for one phrase clip (padded with `pad` of silence each side), kept inside the phrase, or
+    raises AlignmentError (or anything the aligner raised)."""
     from scenecast_py import align
 
     silence = np.zeros(round(pad * SAMPLE_RATE), dtype=np.float32)
+    clip = audio[round(p["start"] * SAMPLE_RATE):round(p["end"] * SAMPLE_RATE)]
+    got = align.align_text(model, resample_16k(np.concatenate([silence, clip, silence])), p["text"], offset=p["start"] - pad)
+    if [w["w"] for w in got] != p["text"].split():
+        raise align.AlignmentError("the word count differs")
     words = []
+    for w in got:
+        start = min(max(w["start"], p["start"]), p["end"])
+        if words and not start > words[-1]["start"]:
+            raise align.AlignmentError(f'"{w["w"]}" does not start after "{words[-1]["w"]}" inside the phrase')
+        words.append({"w": w["w"], "start": start, "end": min(max(w["end"], start), p["end"]), "from": w["from"]})
+    return words
+
+
+def _fallback_phrase(p, heard):
+    """One phrase's words from the free transcript (the heard words inside the phrase), else by character position."""
+    near = [h for h in heard if h["end"] > p["start"] and h["start"] < p["end"]]
+    words = align_words([p], near)
+    matched = _align([normalise(w["w"]) for w in fallback_word_times(p["text"], 0, 1)], [normalise(h["w"]) for h in near])
+    for i, w in enumerate(words):
+        w["start"] = min(max(w["start"], p["start"]), p["end"])
+        w["end"] = min(max(w["end"], w["start"]), p["end"])
+        w["from"] = "free" if i in matched else "position"
+    return words
+
+
+def forced_words(model, audio, phrases, pad=ALIGN_PAD_SEC, heard=None):
+    """Word times by forced alignment of each phrase clip (with `pad` of silence on each side) against its text.
+
+    A phrase whose alignment fails or can't be trusted (wrong word count, starts not strictly increasing) falls back
+    on its own, to the free transcript of the scene (`heard()`, called at most once) mapped onto that phrase, and the
+    fallback is logged. Returns [{w, start, end, from}] for every script word, each inside its phrase; `from` is
+    "onset", "forced", "free" or "position". Each phrase also gets `onset`: its first word's start from the phrase
+    start, when that comes from the clean clip ("onset"); the audit times the phrase's first word with it.
+    """
+    words, cache = [], {}
+
+    def transcript():
+        if "heard" not in cache:
+            cache["heard"] = heard() if heard else []
+        return cache["heard"]
+
     for p in phrases:
-        clip = audio[round(p["start"] * SAMPLE_RATE):round(p["end"] * SAMPLE_RATE)]
-        pcm = resample_16k(np.concatenate([silence, clip, silence]))
         try:
-            got = align.align_text(model, pcm, p["text"], offset=p["start"] - pad)
-        except (ValueError, RuntimeError, IndexError):
-            return None
-        if [w["w"] for w in got] != p["text"].split():
-            return None
-        for w in got:
-            start = min(max(w["start"], p["start"]), p["end"])
-            if words and start < words[-1]["start"]:
-                return None
-            words.append({"w": w["w"], "start": start, "end": min(max(w["end"], start), p["end"])})
+            got = _forced_phrase(model, audio, p, pad)
+        except Exception as e:  # noqa: BLE001 (any aligner failure falls back for this phrase only)
+            _log(f'phrase at {p["start"]:.3f} s ("{p["text"][:40]}") falls back to the free transcript: {e}')
+            got = _fallback_phrase(p, transcript())
+        if words and got and got[0]["start"] < words[-1]["start"]:
+            got[0]["start"] = words[-1]["start"]
+            got[0]["end"] = max(got[0]["end"], got[0]["start"])
+        if got and got[0]["from"] == "onset":
+            p["onset"] = got[0]["start"] - p["start"]
+        words += got
     return words
 
 
 def scene_words(model, audio, phrases):
-    """Per-word times for a voiced scene: forced alignment, else the free transcript mapped onto the script, else
-    (no model, or no audio) each phrase's words spread by character position."""
+    """Per-word times for a voiced scene: forced alignment phrase by phrase (falling back per phrase), or, with no
+    model or no audio, each phrase's words spread by character position."""
     if model is None or not len(audio):
-        return align_words(phrases, [])
-    words = forced_words(model, audio, phrases)
-    return words if words is not None else align_words(phrases, _heard_words(model, audio))
+        words = align_words(phrases, [])
+        for w in words:
+            w["from"] = "position"
+        return words
+    return forced_words(model, audio, phrases, heard=lambda: _heard_words(model, audio))
 
 
 def run(spec, out_dir, fake=False):

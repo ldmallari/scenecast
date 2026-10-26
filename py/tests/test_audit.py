@@ -332,7 +332,7 @@ def test_outputs_and_music_licence(tmp_path):
     table = (out / "audit-table.md").read_text()
     assert "CC BY 4.0, Example Artist" in table.split("| scene |")[0]
     assert "| scene | cue | word time | action time | gap | target label | caption side | checks | verdict |" in table
-    assert "| s1 | Open | 1.000 | 1.000 | +0.000 | #open |" in table
+    assert "| s1 | Open | 1.000 (free) | 1.000 | +0.000 | #open |" in table
 
 
 def test_plan_problem_fails(tmp_path):
@@ -746,15 +746,17 @@ def test_a_left_phone_screen_and_a_beside_caption(tmp_path):
 
 def _forced(times, narration):
     """What align_phrases returns: one entry per narration word (start None: that phrase could not be aligned)."""
-    return [{"w": w, "start": t, "end": None if t is None else t + 0.2, "p": 1.0} for w, t in zip(narration.split(), times)]
+    return [{"w": w, "start": t, "end": None if t is None else t + 0.2, "p": 1.0, "from": None if t is None else "forced"}
+            for w, t in zip(narration.split(), times)]
 
 
 class FakeAligner:
     def __init__(self, times):
         self.times, self.calls = times, []
 
-    def __call__(self, pcm, phrases, model, pad=0.4):
+    def __call__(self, pcm, phrases, model, pad=0.4, bounds=None):
         self.calls.append(phrases)
+        self.bounds = bounds
         return _forced(self.times, " ".join(p["text"] for p in phrases))
 
 
@@ -884,3 +886,111 @@ def test_first_word_stamped_before_the_scene_still_counts_as_heard(tmp_path):
     assert v["narration"][0]["verdict"] == "PASS", v["narration"]
     row = only_row(v)
     assert row["wordSource"] == "transcript" and row["wordTime"] == pytest.approx(3.0)
+
+
+# ---------------------------------------------------------------- fix round 1: onsets, sources, diagnostics
+
+
+def test_phrase_first_word_uses_the_voice_onset_and_the_mix_onset_is_a_cross_check(tmp_path, tiny_video, monkeypatch, capsys):
+    """Under a music bed the aligner can only find the first word's voiced part in the mix (here 0.18 s late, as Silero
+    is on a fricative); the voice stage measured the onset on the clean clip (0.05 s into the phrase), and the mix
+    places the clip unchanged, so that is the time used. The disagreement is logged and kept in audit.json."""
+    m = moment(cue="Open", cueWord=0, planWordTime=0.55, actionTime=0.56)
+    data = _with_media(monkeypatch, tmp_path, tiny_video, fixture(tmp_path, moments=[m]))
+    data["scenes"][0]["phrases"] = [dict(PHRASES[0], onset=0.05), dict(PHRASES[1], onset=0.04)]
+    v = run(data, aligner=FakeAligner([0.73, 1.4, 1.9, 2.45, 2.8, 3.0]))
+    row = only_row(v)
+    assert row["wordTime"] == pytest.approx(0.55) and row["wordTimeFrom"] == "onset"
+    assert row["verdict"] == "PASS"  # with the mix onset (0.73) the gap would be -0.17 s
+    err = capsys.readouterr().err
+    assert "first word at 0.550 s by the voice, 0.730 s in the mix (+0.180 s)" in err
+    assert "phrase at 2.400" not in err  # 2.44 vs 2.45: within 0.1 s, not logged
+    report = v["alignment"][0]
+    assert report["scene"] == "s1"
+    assert [(p["voiceOnset"], p["mixOnset"], p["timed"]) for p in report["phrases"]] == [(0.05, 0.23, True), (0.04, 0.05, True)]
+    assert "| s1 | Open | 0.550 (onset) |" in (tmp_path / "audit" / "audit-table.md").read_text()
+
+
+def test_word_time_sources_are_recorded(tmp_path, tiny_video, monkeypatch):
+    moments = [moment(index=0, cue="Open", cueWord=0, planWordTime=0.5, actionTime=1.0),
+               moment(index=1, cue="documents", cueWord=2, planWordTime=2.0, actionTime=2.05, target=None),
+               moment(index=2, cue="Ana", cueWord=4, planWordTime=2.5, actionTime=2.5, target=None)]
+    words = [w for w in WORDS if w["w"].strip() != "Open"]
+    data = _with_media(monkeypatch, tmp_path, tiny_video, fixture(tmp_path, words=words, moments=moments))
+    data["scenes"][0]["phrases"] = PHRASES  # no voice onsets (an old timeline): the mix times stand
+    rows = run(data, aligner=FakeAligner([1.0, 1.4, 2.05, None, None, None]))["moments"]
+    assert [r["wordTimeFrom"] for r in rows] == ["plan", "forced", "free"]
+    assert [r["wordSource"] for r in rows] == ["plan", "transcript", "transcript"]
+
+
+def test_aligner_gets_the_neighbouring_scenes_speech_as_bounds(tmp_path, tiny_video, monkeypatch):
+    data = _with_media(monkeypatch, tmp_path, tiny_video, fixture(tmp_path))
+    data["scenes"][0]["phrases"] = PHRASES
+    before = {**data["scenes"][0], "id": "s0", "start": -1.0, "end": 0.0, "moments": [], "events": [], "narration": "Hi.",
+              "phrases": [{"start": -0.9, "end": 0.2, "words": 1, "text": "Hi."}]}
+    after = {**before, "id": "s2", "start": 6.0, "end": 8.0, "phrases": [{"start": 3.6, "end": 7.0, "words": 1, "text": "Hi."}]}
+    data["scenes"] = [after, data["scenes"][0], before]  # any order
+    aligner_calls = []
+
+    def spy(pcm, phrases, model, pad=0.4, bounds=None):
+        aligner_calls.append((phrases[0]["text"], bounds))
+        return _forced([0.1] * len(" ".join(p["text"] for p in phrases).split()), " ".join(p["text"] for p in phrases))
+
+    run(data, aligner=spy)
+    assert ("Open 2 documents", (0.2, 3.6)) in aligner_calls
+
+
+def test_a_stretched_word_from_before_the_scene_is_not_counted(tmp_path):
+    # The previous scene's last word, stretched by Whisper to just past the scene start (0.1 s in): not this scene's.
+    tail = [{"w": " done.", "start": 2.6, "end": 3.1}]
+    heard = [{"w": f" {w}", "start": 3.2 + 0.2 * i, "end": 3.35 + 0.2 * i} for i, w in enumerate("Welcome to Demo Co.".split())]
+    data = fixture(tmp_path, words=tail + heard, moments=[moment(cue="Welcome", cueWord=0, planWordTime=3.2, actionTime=3.2)],
+                   events=[event(time=3.2)])
+    data["allowList"] = []
+    data["scenes"][0].update(start=3.0, end=6.0, narration="Welcome to Demo Co.")
+    assert run(data)["narration"][0]["verdict"] == "PASS"
+
+
+@E2E
+def test_real_bed_does_not_move_the_phrase_first_word(tmp_path, monkeypatch, capsys):
+    """Kokoro phrases that open with a stop or a fricative, voiced and aligned clean (the voice stage), then mixed under
+    the synthesised pad about 13 dB below the voice (as -16 vs -29 LUFS), past its fade-in. The audit's first-word
+    times are the voice onsets placed in the mix: within 0.05 s of the onset measured on the clean clip."""
+    import numpy as np
+    import soundfile as sf
+
+    import scenecast_py.audit as audit
+    from scenecast_py import music
+    from scenecast_py.kokoro import Kokoro
+    from scenecast_py.voice import build_scene, forced_words, resample_16k
+    from scenecast_py.whisper import whisper_model
+
+    cache = Path(os.environ.get("SCENECAST_CACHE") or Path.home() / ".cache" / "scenecast") / "models"
+    model = whisper_model(str(next(p.parent for p in (cache / "whisper").rglob("model.bin"))))
+    tts = Kokoro(str(cache / "kokoro-v1.0.onnx"), str(cache / "voices-v1.0.bin"))
+    texts = ["Tap the menu button.", "Select a file to share.", "Fine, then press Save."]
+    voice, tl = build_scene(texts, tts, 0.2, speed=0.9)
+    forced_words(model, voice, tl["phrases"])  # sets each phrase's clean onset, as the voice stage does
+    clean = resample_16k(voice)
+    lead = 6.0
+    music.generate(lead + len(clean) / 16000 + 6, tmp_path / "bed.wav")
+    bed, rate = sf.read(str(tmp_path / "bed.wav"))
+    bed = resample_16k(np.interp(np.arange(0, len(bed), rate / 24000), np.arange(len(bed)), bed.mean(axis=1)).astype(np.float32))
+    rms = lambda x: float(np.sqrt(np.mean(np.square(x[np.abs(x) > 1e-4])))) if np.any(np.abs(x) > 1e-4) else 0.0  # noqa: E731
+    bed = bed * (rms(clean) / rms(bed) * 10 ** (-13 / 20))
+    mix = bed[: round(lead * 16000) + len(clean)].copy()
+    mix[round(lead * 16000):] += clean
+    phrases = [{"text": p["text"], "start": lead + p["start"], "end": lead + p["end"], "words": len(p["text"].split()),
+                "onset": p["onset"]} for p in tl["phrases"]]
+    narration = " ".join(texts)
+    scene = {"id": "s", "start": lead, "end": lead + tl["duration"], "narration": narration, "phrases": phrases}
+    monkeypatch.setattr(audit, "_media", lambda *a: (mix, model))
+    forced, report = audit._forced_times({"video": "v", "whisperModel": "m", "ffmpeg": "f", "scenes": [scene]}, scene,
+                                          audit.align_phrases)
+    firsts = [0, 4, 9]
+    for k, p in zip(firsts, phrases):
+        lo = round(p["start"] * 16000)
+        onset = (lo + int(np.argmax(np.abs(clean[lo - round(lead * 16000):]) > 0.02))) / 16000
+        assert forced[k]["from"] == "onset"
+        assert abs(forced[k]["start"] - onset) <= 0.05, (p["text"], forced[k]["start"], onset)
+    print("mix onsets vs voice onsets:", [(r["mixOnset"], r["voiceOnset"]) for r in report])

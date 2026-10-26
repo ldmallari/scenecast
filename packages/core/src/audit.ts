@@ -129,6 +129,9 @@ export function buildAuditInput(
       end: round(start + p.end),
       words: p.text.trim().split(/\s+/).length,
       text: p.text,
+      // The first word's sound, seconds after the phrase start, measured on the clean voice clip (the mix places
+      // the clip unchanged, so this is where the first word starts in the video too).
+      ...(p.onset !== undefined ? { onset: p.onset } : {}),
     }));
     const cues = (ps?.cues ?? []).map((c) => ({
       start: round(start + c.start),

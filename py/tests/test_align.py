@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from scenecast_py.align import align_phrases, align_text, refine_onset, words_from_tokens
+from scenecast_py.align import AlignmentError, align_phrases, align_text, finish_alignment, refine_onset, words_from_tokens
 
 E2E = pytest.mark.skipif(not os.environ.get("SCENECAST_E2E"), reason="set SCENECAST_E2E=1 for real models")
 CACHE = Path(os.environ.get("SCENECAST_CACHE") or Path.home() / ".cache" / "scenecast") / "models"
@@ -70,6 +70,39 @@ def test_refine_onset_keeps_the_vad_start_when_nothing_louder_comes_before_it():
     assert refine_onset(far, 0) == 0.0
 
 
+def _pieces(*spec):
+    return [{"word": w, "start": a, "end": b, "probability": 1.0} for w, a, b in spec]
+
+
+def test_the_first_word_starts_at_the_onset_but_never_after_the_second_word():
+    # The path pins "To" to the clip's first frame (0.0). The onset says 0.30, but "sign" starts at 0.24: the first word
+    # is capped one frame before it, so the times still increase.
+    out = finish_alignment("To sign it", _pieces((" To", 0.0, 0.2), (" sign", 0.24, 0.5), (" it", 0.5, 0.7)), 0.30, 10.0)
+    assert [w["start"] for w in out] == pytest.approx([10.22, 10.24, 10.5])
+    assert [w["from"] for w in out] == ["onset", "forced", "forced"]
+    # An onset before the second word is used as it is.
+    out = finish_alignment("To sign it", _pieces((" To", 0.0, 0.2), (" sign", 0.32, 0.5), (" it", 0.5, 0.7)), 0.20, 10.0)
+    assert [w["start"] for w in out] == pytest.approx([10.20, 10.32, 10.5])
+    # One word: the onset stands.
+    assert finish_alignment("Done.", _pieces((" Done", 0.0, 0.4), (".", 0.4, 0.4)), 0.3, 1.0)[0]["start"] == pytest.approx(1.3)
+
+
+def test_finish_alignment_rejects_an_empty_result():
+    with pytest.raises(AlignmentError, match="no words"):
+        finish_alignment("Open the menu", [], 0.1, 0.0)
+
+
+def test_finish_alignment_rejects_pieces_that_do_not_spell_the_text():
+    with pytest.raises(AlignmentError, match="spell"):
+        finish_alignment("Open the menu", _pieces((" Opne", 0.1, 0.3), (" the", 0.3, 0.4), (" menu", 0.4, 0.7)), 0.1, 0.0)
+
+
+def test_finish_alignment_rejects_degenerate_times():
+    # The aligner had nothing to go on: every piece on frame 0.
+    with pytest.raises(AlignmentError, match="does not start after"):
+        finish_alignment("Open the menu", _pieces((" Open", 0.0, 0.0), (" the", 0.0, 0.0), (" menu", 0.0, 0.0)), 0.0, 0.0)
+
+
 class FakeAligner:
     """Stands in for faster-whisper: records the windows it is given and returns evenly spread word pieces."""
 
@@ -113,6 +146,53 @@ def test_align_phrases_leaves_a_phrase_it_cannot_align_untimed(monkeypatch):
     out = align_phrases(pcm, [{"start": 0.5, "end": 1.5, "text": "Open it,"}, {"start": 1.7, "end": 2.5, "text": "then go."}], model=None)
     assert [w["w"] for w in out] == ["Open", "it,", "then", "go."]
     assert out[0]["start"] is not None and out[2]["start"] is None and out[3]["start"] is None
+    assert out[2]["from"] is None
+
+
+def test_align_phrases_logs_each_phrase_it_leaves_untimed(monkeypatch, capsys):
+    import scenecast_py.align as align
+
+    def boom(model, pcm, text, offset=0.0):
+        raise KeyError("anything at all")
+
+    monkeypatch.setattr(align, "align_text", boom)
+    out = align_phrases(np.zeros(16000 * 3, dtype=np.float32), [{"start": 0.5, "end": 1.5, "text": "Open it."}], model=None)
+    assert [w["start"] for w in out] == [None, None]
+    assert 'phrase at 0.500 s ("Open it.") left untimed' in capsys.readouterr().err
+
+
+def test_align_phrases_never_reaches_into_the_neighbouring_scenes(monkeypatch):
+    import scenecast_py.align as align
+
+    fake = FakeAligner()
+    monkeypatch.setattr(align, "align_text", fake)
+    phrases = [{"start": 1.0, "end": 2.0, "text": "Open it,"}, {"start": 2.2, "end": 3.0, "text": "then go."}]
+    align_phrases(np.zeros(16000 * 5, dtype=np.float32), phrases, model=None, bounds=(0.8, 3.1))
+    # The previous scene's speech ends at 0.8 s and the next one's starts at 3.1 s.
+    assert [c[2] for c in fake.calls] == pytest.approx([0.8, 2.0])
+    assert [c[0] for c in fake.calls] == [round(1.4 * 16000), round(1.1 * 16000)]
+
+
+def test_align_text_installs_the_pyav_stub_before_faster_whisper():
+    import subprocess
+    import sys
+    import textwrap
+
+    r = subprocess.run([sys.executable, "-c", textwrap.dedent(
+        """
+        import sys
+        import numpy as np
+        from scenecast_py import align
+        try:
+            align.align_text(object(), np.zeros(16000, dtype=np.float32), "Hello there.")
+        except AttributeError:
+            pass  # the stand-in model has no feature extractor; the imports already happened
+        assert "faster_whisper" in sys.modules
+        assert getattr(sys.modules["av"], "SCENECAST_STUB", False), "real PyAV loaded"
+        print("ok")
+        """)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "ok"
 
 
 # ---------------------------------------------------------------- real models

@@ -95,7 +95,7 @@ const build = (o = opts()) => buildAuditInput(o, { outDir: '/tmp/x/audit', ffmpe
 describe('buildAuditInput', () => {
   it('a title scene on a card gets the narration and phrase windows, with no moments', () => {
     const title = { id: 'ch', kind: 'title', narration: 'Next up. The phone view.', steps: [], seconds: 2, page: '/p', viewport: 'desktop' } as unknown as Scene;
-    const voice = { duration: 2.4, phrases: [{ text: 'Next up.', start: 0, end: 0.8 }, { text: 'The phone view.', start: 1.0, end: 2.4 }], words: [] };
+    const voice = { duration: 2.4, phrases: [{ text: 'Next up.', start: 0, end: 0.8, onset: 0.04 }, { text: 'The phone view.', start: 1.0, end: 2.4 }], words: [] };
     const cue = { start: 0, end: 0.8, lines: ['Next up.'], side: 'bottom' as const, box: box(800, 900, 300, 100) };
     const p: AuditPlan = { ...plan, scenes: [{ kind: 'card', duration: 3, cues: [cue] }, ...plan.scenes.slice(1)] };
     const s = build(opts({ plan: p, scenes: [{ scene: title, planIndex: 0, voice }] })).scenes[0] as unknown as Record<string, unknown>;
@@ -103,7 +103,7 @@ describe('buildAuditInput', () => {
     expect(s.events).toEqual([]);
     expect(s.narration).toBe('Next up. The phone view.');
     expect(s.phrases).toEqual([
-      { start: 0, end: 0.8, words: 2, text: 'Next up.' },
+      { start: 0, end: 0.8, words: 2, text: 'Next up.', onset: 0.04 }, // the clean clip's first-word onset
       { start: 1, end: 2.4, words: 3, text: 'The phone view.' },
     ]);
     expect((s.cues as unknown[]).length).toBe(1);

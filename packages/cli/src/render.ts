@@ -23,6 +23,7 @@ import {
   sessionStoragePath,
   splitPhrases,
   phraseGaps,
+  VOICE_ALIGN_VERSION,
   type AuditCounts,
   type Scene,
   type SceneVoice,
@@ -134,6 +135,7 @@ async function voiceStage(spec: VideoSpec, scenes: Scene[], cache: StageCache, l
       voice: spec.voice,
       phrases: splitPhrases(scene.narration),
       gaps: phraseGaps(scene.narration, spec.voice),
+      align: VOICE_ALIGN_VERSION,
       fake: process.env.SCENECAST_FAKE_TTS === '1',
     };
     const key = await cache.key(`voice/${scene.id}`, input);

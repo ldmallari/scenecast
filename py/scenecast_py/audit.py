@@ -42,6 +42,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from scenecast_py.align import align_phrases
@@ -272,8 +273,10 @@ def audit_scene(scene, speech, rules):
     windows = _event_windows(scene)
     rows = []
     for k, m in enumerate(moments):
-        heard = speech.cue_time(m["cue"], m.get("occ") or 1, m.get("cueWord"))
+        heard, time_from = speech.cue_timing(m["cue"], m.get("occ") or 1, m.get("cueWord"))
         word_time, source = (heard, "transcript") if heard is not None else (m["planWordTime"], "plan")
+        if heard is None:
+            time_from = "plan"
         checks = []
         if source == "plan":
             checks.append(_check("word", WARN, f'cue "{m["cue"]}" was not heard; using the planned word time'))
@@ -300,7 +303,8 @@ def audit_scene(scene, speech, rules):
             "kind": m["kind"],
             "label": m.get("label") or "",
             "wordTime": None if word_time is None else round(float(word_time), 3),
-            "wordSource": source,
+            "wordSource": source,  # heard in the transcript, or not (the plan time)
+            "wordTimeFrom": time_from,  # forced | onset | free | plan: where the word time itself came from
             "actionTime": None if t is None else round(float(t), 3),
             "gap": gap,
             "captionSide": side,
@@ -456,18 +460,60 @@ def transcribe(video, model_dir, ffmpeg, start=None, end=None):
             for s in segments for w in (s.words or [])]
 
 
+ONSET_CHECK_SEC = 0.1  # the voice's first-word onset and the one found in the mix disagree by more than this: logged
+
+
+def _log(message):
+    print(f"scenecast: audit: {message}", file=sys.stderr, flush=True)
+
+
+def _speech_bounds(scenes, scene):
+    """The end of the previous scene's speech and the start of the next one's (video clock): no phrase window of
+    this scene reaches past them."""
+    ordered = sorted(scenes, key=lambda sc: sc["start"])
+    k = next(i for i, sc in enumerate(ordered) if sc is scene)
+    prev = ordered[k - 1].get("phrases") if k > 0 else None
+    nxt = ordered[k + 1].get("phrases") if k + 1 < len(ordered) else None
+    return (prev[-1]["end"] if prev else 0.0, nxt[0]["start"] if nxt else float("inf"))
+
+
 def _forced_times(data, scene, aligner):
-    """Forced word times for the scene's narration words, or None: the aligner runs only with a video, a model and
-    ffmpeg, and phrases whose text spells the narration word for word."""
+    """Forced word times for the scene's narration words and a per-phrase account of them, or (None, None): the
+    aligner runs only with a video, a model and ffmpeg, and phrases whose text spells the narration word for word.
+
+    Each phrase's first word is timed by the voice stage's onset (measured on the clean clip, which the mix places
+    unchanged) when the phrase has one; the onset the aligner finds in the mix, where the music bed can hide a quiet
+    first consonant, is only a cross-check, logged when the two differ by more than 0.1 s.
+    """
     if not (data.get("video") and data.get("whisperModel") and data.get("ffmpeg")):
-        return None
+        return None, None
     phrases = scene.get("phrases") or []
     if not phrases or any("text" not in p for p in phrases):
-        return None
+        return None, None
     if " ".join(p["text"] for p in phrases).split() != scene["narration"].split():
-        return None
+        return None, None
     pcm, model = _media(data["video"], data["whisperModel"], data["ffmpeg"])
-    return aligner(pcm, phrases, model)
+    forced = [dict(w) for w in aligner(pcm, phrases, model, bounds=_speech_bounds(data["scenes"], scene))]
+    report, k = [], 0
+    for p in phrases:
+        n = len(p["text"].split())
+        mine = forced[k:k + n]
+        mix = mine[0]["start"] if mine and mine[0].get("start") is not None else None
+        entry = {"start": p["start"], "text": p["text"], "timed": mix is not None,
+                 "voiceOnset": None, "mixOnset": None if mix is None else round(mix - p["start"], 3)}
+        if p.get("onset") is not None and mine:
+            first = p["start"] + p["onset"]
+            entry["voiceOnset"] = round(p["onset"], 3)
+            if mix is not None and abs(mix - first) > ONSET_CHECK_SEC:
+                _log(f'scene "{scene["id"]}" phrase at {p["start"]:.3f} s: first word at {first:.3f} s by the voice, '
+                     f'{mix:.3f} s in the mix ({mix - first:+.3f} s)')
+            mine[0].update(start=first, end=max(first, mine[0].get("end") or first), **{"from": "onset"})
+            for w in mine[1:]:
+                if w.get("start") is not None and w["start"] < first:
+                    w["start"] = first
+        report.append(entry)
+        k += n
+    return forced, report
 
 
 def _slug(text):
@@ -576,7 +622,7 @@ def write_table(path, verdict):
     ]
     for r in verdict["moments"]:
         gap = "—" if r["gap"] is None else f'{r["gap"]:+.3f}'
-        word = _t(r["wordTime"]) + (" (plan)" if r["wordSource"] == "plan" else "")
+        word = _t(r["wordTime"]) + f' ({r.get("wordTimeFrom") or r["wordSource"]})'
         lines.append(
             f'| {_cell(r["scene"])} | {_cell(r["cue"])} | {word} | {_t(r["actionTime"])} | {gap} | {_cell(r["label"])} '
             f'| {r["captionSide"]} | {_cell(_checks_cell(r["checks"]))} | {r["verdict"]} |'
@@ -603,11 +649,13 @@ def run(data, transcriber=transcribe, aligner=align_phrases):
         if not data.get("video") or not data.get("whisperModel") or not data.get("ffmpeg"):
             raise SystemExit("audit: no transcript given and no video/whisperModel/ffmpeg to make one")
 
-    rows, narration, scene_rows = [], [], []
+    rows, narration, scene_rows, alignment = [], [], [], []
     for scene in data["scenes"]:
         heard = words if words is not None else transcriber(
             data["video"], data["whisperModel"], data["ffmpeg"], start=max(0.0, scene["start"] - PRE_ROLL_SEC), end=scene["end"])
-        forced = _forced_times(data, scene, aligner)
+        forced, report = _forced_times(data, scene, aligner)
+        if report is not None:
+            alignment.append({"scene": scene["id"], "phrases": report})
         speech = SceneSpeech(scene, heard, data.get("allowList") or [], forced=forced)
         rows += audit_scene(scene, speech, rules)
         scene_row = audit_scene_row(scene, rules)
@@ -636,6 +684,7 @@ def run(data, transcriber=transcribe, aligner=align_phrases):
         "moments": rows,
         "scenes": scene_rows,
         "narration": narration,
+        "alignment": alignment,
         "frames": frames,
         "contactSheet": sheet,
     }

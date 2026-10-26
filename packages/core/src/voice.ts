@@ -9,13 +9,21 @@ export interface VoiceTimeline {
     {
       /** Seconds; the scene's voice clip length. */
       duration: number;
-      phrases: { text: string; start: number; end: number }[];
-      words: { w: string; start: number; end: number }[];
+      /** `onset`: seconds from the phrase start to its first word's sound, measured on the clean clip (absent when
+       * the phrase's alignment fell back). */
+      phrases: { text: string; start: number; end: number; onset?: number }[];
+      /** `from`: where the time came from (forced alignment, the speech onset, the free transcript, or the
+       * character position); absent in timelines made before v1.1. */
+      words: { w: string; start: number; end: number; from?: WordSource }[];
     }
   >;
 }
 
 export type SceneVoice = VoiceTimeline['scenes'][string];
+export type WordSource = 'forced' | 'onset' | 'free' | 'position';
+
+/** Bumped whenever the Python word timing changes, so cached voice timelines are re-made (it is in the cache key). */
+export const VOICE_ALIGN_VERSION = 2;
 
 const MAX_PHRASE = 140;
 /** A clause split needs at least this many words on each side, so a list like "speed; care" stays one phrase. */
