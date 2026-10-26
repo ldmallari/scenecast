@@ -106,8 +106,8 @@ export function appPlanScene(scene: Scene, voice: SceneVoice, scheduled: Schedul
       const hold = (step.ms ?? ZOOM_HOLD_MS) / 1000;
       zooms.push({ start: t, end: Math.min(duration, t + DEFAULTS.video.zoomEaseSec + hold), box: e.target });
     }
-    // `ring: true` on a non-ring step: the composer draws it (the recorder draws `do: ring` itself).
-    if (step.ring && e.kind !== 'ring' && e.target) {
+    // `ring: true` on a non-ring step: the composer draws it. The recorder draws `do: ring` and `ringSel` rings itself.
+    if (step.ring && step.ringSel === undefined && e.kind !== 'ring' && e.target) {
       const end = t + (RING_HOLD_MS + 2 * RING_FADE_MS) / 1000;
       rings.push({ start: t, end: Math.min(duration, end), box: padBox(e.target, step.pad ?? 0) });
     }

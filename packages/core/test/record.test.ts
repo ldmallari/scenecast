@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { findUv, uvEnv } from '../src/toolchain.js';
 import { DEFAULT_TRAVEL_SEC, recordScene, travelSecFor, type TakeEvent } from '../src/record/record.js';
 import { DEFAULTS, type AppConn, type Scene, type Step } from '../src/scene/schema.js';
-import { schedule, spotPoint, type ScheduledStep } from '../src/schedule.js';
+import { actionAt, schedule, spotPoint, type ScheduledStep } from '../src/schedule.js';
 
 const APP_DIR = fileURLToPath(new URL('../../../examples/demo-app/', import.meta.url));
 const TYPES: Record<string, string> = {
@@ -342,6 +342,138 @@ describe('recordScene', () => {
     expect(without.events[0]!.panels).toEqual([]);
     const take = await recordScene(scene('filters', '/dashboard', steps), plan, { ...app, panels: ['.filters-pop'] }, path.join(work, 'takes'));
     expect(take.events[0]!.panels.length).toBe(1);
+  }, 60_000);
+
+  it('ringSel rings another element than the pointer target', async () => {
+    const steps: Step[] = [{ do: 'click', sel: '#agree', ringSel: '#name', pad: 6 }];
+    const take = await recordScene(scene('ringsel', '/form', steps), sched(steps, [0.5]), app, path.join(work, 'takes'));
+    const ev = take.events[0]!;
+    const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
+    // The pointer target is #agree (a small checkbox) and lies inside its logged box.
+    expect(ev.target!.w).toBeLessThan(60);
+    // The ring is #name grown by 6; the element as measured at the ring's peak is logged as ringTarget.
+    const name = ev.ringTarget!;
+    expect(name.w).toBeGreaterThan(100);
+    for (const [k, v] of Object.entries({ x: name.x - 6, y: name.y - 6, w: name.w + 12, h: name.h + 12 }))
+      near(ev.ringBox![k as keyof typeof name], v);
+    expect(ev.busyUntil! - ev.at).toBeCloseTo((1200 + 300) / 1000, 6);
+  }, 60_000);
+
+  it('ringMs sets the ring hold', async () => {
+    const steps: Step[] = [{ do: 'click', sel: '#agree', ringSel: '#name', ringMs: 600 }];
+    const take = await recordScene(scene('ringms', '/form', steps), sched(steps, [0.5]), app, path.join(work, 'takes'));
+    const ev = take.events[0]!;
+    expect(Math.abs(ev.busyUntil! - ev.at - (600 + 300) / 1000)).toBeLessThanOrEqual(0.05);
+  }, 60_000);
+
+  it('check ticks a box once and leaves a ticked box alone', async () => {
+    const steps: Step[] = [
+      { do: 'check', sel: '#agree' },
+      { do: 'check', sel: '#agree' },
+      { do: 'ring', sel: '#agree:checked', ms: 300 },
+    ];
+    const plan = sched(steps, [0.5, 1.6, 2.6]);
+    const take = await recordScene(scene('check', '/form', steps), plan, app, path.join(work, 'takes'));
+    expect(take.events.map((e) => e.kind)).toEqual(['check', 'check', 'ring']);
+    expect(take.events[0]!.clicked).toBe(true);
+    expect(take.events[1]!.clicked).toBe(false);
+    expect(take.events[2]!.clicked).toBeUndefined();
+    // A check glides like a click and lands on its time.
+    for (const i of [0, 1]) {
+      const late = take.events[i]!.at - (plan[i]!.startAt + DEFAULT_TRAVEL_SEC);
+      expect(late, `event ${i} late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
+      expect(late, `event ${i} late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
+    }
+  }, 60_000);
+
+  it('a check that does not tick fails the take', async () => {
+    const steps: Step[] = [{ do: 'check', sel: '#name' }];
+    await expect(recordScene(scene('nocheck', '/form', steps), sched(steps, [0.5]), app, path.join(work, 'takes'))).rejects.toThrow(
+      'scene "nocheck" step 0: #name is not checked after the click',
+    );
+  }, 60_000);
+
+  it('scroll by pixels and to a position', async () => {
+    // The init script runs before the page has its <html> element, so it makes the page tall once the DOM is in.
+    const tall: AppConn = {
+      ...app,
+      initScript: "document.addEventListener('DOMContentLoaded', () => { document.documentElement.style.minHeight = '4000px'; })",
+    };
+    const steps: Step[] = [
+      { do: 'scroll', by: 400 },
+      { do: 'scroll', to: 0 },
+    ];
+    const take = await recordScene(scene('scrollby', '/dashboard', steps), sched(steps, [0.3, 2.0]), tall, path.join(work, 'takes'));
+    expect(take.events[0]!.scrollY).toBeCloseTo(400, 0);
+    expect(take.events[1]!.scrollY).toBeCloseTo(0, 0);
+  }, 60_000);
+
+  it('a zoom hold is not busy; an unzoom logs its time only', async () => {
+    const steps: Step[] = [
+      { do: 'zoom', sel: '.worklist', ms: 3000 },
+      { do: 'unzoom' },
+    ];
+    const take = await recordScene(scene('zoomhold', '/dashboard', steps), sched(steps, [0.3, 1.2]), app, path.join(work, 'takes'));
+    const [zoom, unzoom] = take.events as [TakeEvent, TakeEvent];
+    expect(zoom.busyUntil).toBeUndefined();
+    expect(unzoom.kind).toBe('unzoom');
+    expect(Math.abs(unzoom.at - 1.2)).toBeLessThanOrEqual(0.15);
+    expect(unzoom.target).toBeUndefined();
+    expect(unzoom.busyUntil).toBeUndefined();
+  }, 60_000);
+
+  it('scene zoom is measured before the flash', async () => {
+    // A later zoom step on the same element logs the same padded box (nothing on the page moves in between).
+    const steps: Step[] = [{ do: 'zoom', sel: '.worklist', pad: 16 }];
+    const zoomed = { ...scene('initzoom', '/dashboard', steps), zoom: { sel: '.worklist', pad: 16 } } as Scene;
+    const take = await recordScene(zoomed, sched(steps, [0.3]), app, path.join(work, 'takes'));
+    const ref = take.events[0]!.target!;
+    expect(ref.w).toBeGreaterThan(32);
+    for (const k of ['x', 'y', 'w', 'h'] as const) expect(Math.abs(take.initialZoom![k] - ref[k])).toBeLessThanOrEqual(1);
+    expect(JSON.parse(fs.readFileSync(path.join(work, 'takes', 'initzoom.boxes.json'), 'utf8')).initialZoom).toEqual(take.initialZoom);
+  }, 60_000);
+
+  it('a missing initial-zoom selector fails with the scene name', async () => {
+    const steps: Step[] = [{ do: 'wait', ms: 200 }];
+    const zoomed = { ...scene('s1', '/dashboard', steps), zoom: { sel: '.nope' } } as Scene;
+    await expect(recordScene(zoomed, sched(steps, [0.3]), app, path.join(work, 'takes'))).rejects.toThrow(
+      'scene "s1" zoom selector ".nope" not found',
+    );
+  }, 60_000);
+
+  it('a park step glides to its spot and lands on its cue', async () => {
+    const steps: Step[] = [
+      { do: 'click', sel: '#menu-button', cue: 'menu' },
+      { do: 'park', at: 'left', cue: 'aside' },
+      { do: 'park', cue: 'again' },
+    ];
+    const voice = {
+      duration: 5,
+      phrases: [],
+      words: [
+        { w: 'The', start: 0.6, end: 0.8 },
+        { w: 'menu,', start: 1.0, end: 1.4 },
+        { w: 'aside,', start: 2.2, end: 2.6 },
+        { w: 'again.', start: 3.4, end: 3.8 },
+      ],
+    };
+    const s = { ...scene('parkstep', '/dashboard', steps), narration: 'The menu, aside, again.' } as Scene;
+    const plan = schedule(s, voice, { travelSec: travelSecFor });
+    expect(plan[1]).toMatchObject({ startAt: expect.closeTo(2.2 - DEFAULT_TRAVEL_SEC, 6), travel: DEFAULT_TRAVEL_SEC });
+    // cursor.park 'off': an explicit park with no `at` still goes to the right spot.
+    const take = await recordScene(s, plan, app, path.join(work, 'takes'), { cursor: { start: 'center', park: 'off', parkAfterSec: 2.5 } });
+    const vp = { width: DEFAULTS.video.width, height: DEFAULTS.video.height };
+    for (const [i, spot] of [[1, 'left'], [2, 'right']] as const) {
+      const e = take.events[i]!;
+      expect(e.kind).toBe('park');
+      const late = e.at - actionAt(plan[i]!);
+      expect(late, `park ${i} late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
+      expect(late, `park ${i} late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
+      const p = spotPoint(spot, vp);
+      expect(Math.abs(e.cursorTo!.x + 3 - p.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(e.cursorTo!.y + 2 - p.y)).toBeLessThanOrEqual(1);
+      expect(e.target).toBeUndefined();
+    }
   }, 60_000);
 
   it('an invalid app.panels selector is named, not logged as a spinner', async () => {

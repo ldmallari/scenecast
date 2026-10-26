@@ -35,6 +35,8 @@ const SHORT_SETTLE_MS = 1500;
 /** Round trips used to measure the page clock against Node's. */
 const CLOCK_SAMPLES = 5;
 const TYPE_DELAY_MS = 35;
+/** After a check step's click, the element has this long to show as checked (an app may re-render it). */
+const CHECKED_WAIT_MS = 1000;
 /** How long the recorder's ring holds at full strength when the step sets no `ms`. */
 export const RING_HOLD_MS = 1200;
 /** The recorder's ring fades in (and out) over this long; it is at full strength after it. */
@@ -79,14 +81,23 @@ export interface TakeEvent {
    * (no pad), re-measured at the ring's peak, so it can be checked against `ringBox`.
    */
   target?: Box;
-  /** Ring steps: the box the ring was drawn around at the cue (the element plus `pad`). */
+  /**
+   * Ring steps, and pointer steps with `ringSel`: the box the ring was drawn around at the cue (the element plus
+   * `pad`; for `ringSel`, the union of its elements plus `pad`).
+   */
   ringBox?: Box;
+  /** Pointer steps with `ringSel`: the union of the `ringSel` elements' own boxes (no pad), re-measured at the ring's peak. */
+  ringTarget?: Box;
   /** Box covered by the cursor graphic at its destination. */
   cursorTo?: Box;
   /** Seconds after the flash when the cursor set off to park, after this pointer step (see `ScheduledStep.park`). */
   parkedAt?: number;
   /** Box covered by the cursor graphic where it parked (tip-anchored, like `cursorTo`). */
   parkTo?: Box;
+  /** Check steps: whether the step clicked (false when the element was already checked). */
+  clicked?: boolean;
+  /** Scroll steps: the page's `scrollY` once the scroll came to rest. */
+  scrollY?: number;
   /** Open panels right after the action. */
   panels: Box[];
   /** A loading indicator was visible right after the action. */
@@ -97,7 +108,8 @@ export interface TakeEvent {
   settleTimedOut?: boolean;
   /**
    * Seconds after the flash until the action itself is over: typing finished, the recorder's ring faded out,
-   * or the step's `ms` hold ended. Absent when the action is instant. Retime never cuts inside it.
+   * or the step's `ms` hold ended. Absent when the action is instant. Retime never cuts inside it. Zoom and
+   * unzoom events never set it: the composer draws the zoom, so its hold may be trimmed.
    */
   busyUntil?: number;
 }
@@ -110,6 +122,8 @@ export interface Take {
   viewport?: 'phone';
   /** The declared navs (`app.nav`) that were visible when the take started, with their boxes. */
   navs?: { edge: 'left' | 'top'; box: Box }[];
+  /** The scene's `zoom.sel` (union of all selectors) measured before the flash, plus its `pad`: the scene starts zoomed on it. */
+  initialZoom?: Box;
   events: TakeEvent[];
 }
 
@@ -138,10 +152,14 @@ const toBox = (b: { x: number; y: number; width: number; height: number }): Box 
   w: round(b.width),
   h: round(b.height),
 });
-const selectors = (step: Step): string[] => (step.sel === undefined ? [] : Array.isArray(step.sel) ? step.sel : [step.sel]);
+const asList = (sel: string | string[] | undefined): string[] => (sel === undefined ? [] : Array.isArray(sel) ? sel : [sel]);
+const selectors = (step: Step): string[] => asList(step.sel);
+/** What a selector belongs to, for error messages: a step's index, or the scene's initial zoom. */
+type SelOwner = number | 'zoom';
+const ownerName = (at: SelOwner) => (at === 'zoom' ? 'zoom' : `step ${at}`);
 
 /** First visible match of `sel` (never the overlay), waiting up to SELECTOR_TIMEOUT_MS. */
-async function findVisible(page: Page, sceneId: string, index: number, sel: string): Promise<Locator> {
+async function findVisible(page: Page, sceneId: string, index: SelOwner, sel: string): Promise<Locator> {
   const deadline = epoch() + SELECTOR_TIMEOUT_MS;
   const loc = page.locator(sel);
   let cause: unknown;
@@ -157,7 +175,7 @@ async function findVisible(page: Page, sceneId: string, index: number, sel: stri
     }
     await sleep(50);
   } while (epoch() < deadline);
-  throw new Error(`scene "${sceneId}" step ${index} selector "${sel}" not found`, { cause });
+  throw new Error(`scene "${sceneId}" ${ownerName(index)} selector "${sel}" not found`, { cause });
 }
 
 interface Measured {
@@ -167,11 +185,11 @@ interface Measured {
 }
 
 /** Boxes of already-resolved elements: the first one's, and the union of all. */
-async function boxesOf(els: Locator[], sels: string[], sceneId: string, index: number): Promise<Measured> {
+async function boxesOf(els: Locator[], sels: string[], sceneId: string, index: SelOwner): Promise<Measured> {
   const boxes: Box[] = [];
   for (const [i, el] of els.entries()) {
     const b = await el.boundingBox();
-    if (!b) throw new Error(`scene "${sceneId}" step ${index} selector "${sels[i]}" not found`);
+    if (!b) throw new Error(`scene "${sceneId}" ${ownerName(index)} selector "${sels[i]}" not found`);
     boxes.push(toBox(b));
   }
   const x = Math.min(...boxes.map((b) => b.x));
@@ -182,7 +200,7 @@ async function boxesOf(els: Locator[], sels: string[], sceneId: string, index: n
 }
 
 /** Resolve every selector, scroll the first into view, and measure. */
-async function measure(page: Page, sceneId: string, index: number, sels: string[]): Promise<Measured> {
+async function measure(page: Page, sceneId: string, index: SelOwner, sels: string[]): Promise<Measured> {
   const els: Locator[] = [];
   for (const sel of sels) els.push(await findVisible(page, sceneId, index, sel));
   await els[0]!.scrollIntoViewIfNeeded().catch(() => {});
@@ -233,6 +251,30 @@ async function clockOffset(page: Page): Promise<number> {
 }
 
 const padBox = (b: Box, pad = 0): Box => ({ x: b.x - pad, y: b.y - pad, w: b.w + 2 * pad, h: b.h + 2 * pad });
+
+/** Whether a checkbox or switch shows as checked: `:checked`, or `aria-checked="true"`. */
+const isChecked = (el: Locator): Promise<boolean> =>
+  el.evaluate((e) => e.matches(':checked') || e.getAttribute('aria-checked') === 'true');
+
+/** Waits up to CHECKED_WAIT_MS for the element to show as checked. */
+async function becomesChecked(el: Locator): Promise<boolean> {
+  const deadline = epoch() + CHECKED_WAIT_MS;
+  for (;;) {
+    if (await isChecked(el).catch(() => false)) return true;
+    if (epoch() >= deadline) return false;
+    await sleep(50);
+  }
+}
+
+/** The scene's initial zoom: its `zoom.sel` scrolled into view and measured (union of all), plus `pad`. */
+async function measureInitialZoom(page: Page, scene: Scene, zoom: NonNullable<Scene['zoom']>): Promise<Box> {
+  return padBox((await measure(page, scene.id, 'zoom', asList(zoom.sel))).union, zoom.pad);
+}
+
+/** Where a park step glides to: its `at`, else `cursor.park`, else (when parking is off) the right spot. */
+function parkPoint(step: Step, where: { viewport: { width: number; height: number }; parkSpot: CursorCfg['park'] }): Point {
+  return spotPoint(step.at ?? (where.parkSpot === 'off' ? 'right' : where.parkSpot), where.viewport);
+}
 
 /**
  * Open panels (elements matching `panelSel`) and loading state, ignoring the overlay. Retries once if a
@@ -406,7 +448,8 @@ export async function recordScene(
       page = await context.newPage();
       const videoStart = epoch();
       const start = spotPoint(scene.cursor ?? opts.cursor?.start ?? DEFAULTS.cursor.start, viewport);
-      take = await runTake(page, scene, scheduled, app, videoStart, start);
+      const parkSpot = opts.cursor?.park ?? DEFAULTS.cursor.park;
+      take = await runTake(page, scene, scheduled, app, videoStart, start, { viewport, parkSpot });
     } finally {
       await context.close(); // finishes the video file
     }
@@ -417,6 +460,7 @@ export async function recordScene(
       flashAt: take.flashAt,
       ...(phone ? { viewport: 'phone' as const } : {}),
       ...(take.navs ? { navs: take.navs } : {}),
+      ...(take.initialZoom ? { initialZoom: take.initialZoom } : {}),
       events: take.events,
     };
     fs.writeFileSync(path.join(out, `${scene.id}.boxes.json`), JSON.stringify(result, null, 2) + '\n');
@@ -434,6 +478,7 @@ async function runTake(
   app: AppConn,
   videoStart: number,
   start: Point,
+  where: { viewport: { width: number; height: number }; parkSpot: CursorCfg['park'] },
 ): Promise<Omit<Take, 'file'>> {
   const url = (p: string) => new URL(p, app.baseUrl).href;
   await checkPanels(page, app);
@@ -453,6 +498,7 @@ async function runTake(
   await page.goto(url(scene.route ?? '/'));
   await settleTake();
   const navs = await navBoxes(page, app);
+  const initialZoom = scene.zoom && (await measureInitialZoom(page, scene, scene.zoom));
 
   const steps = [...scheduled].sort((a, b) => a.index - b.index);
   // The start spot, unless a pre-positioned step needs the cursor already on its target.
@@ -464,6 +510,8 @@ async function runTake(
   // spent finding the target again (the aim check still re-measures it just before the action).
   const readyM = ready && (await measure(page, scene.id, ready.index, selectors(ready.step)));
   if (readyM) cursor = centre(readyM.first);
+  // A pre-positioned park waits at its spot.
+  if (first?.prePosition && first.step.do === 'park') cursor = parkPoint(first.step, where);
   await page.evaluate(([x, y]) => window.__scenecast.cursor(x, y), [cursor.x, cursor.y] as const);
 
   // t = 0 is the flash's first painted frame. The page stamps it on its own epoch clock; we convert it
@@ -481,6 +529,54 @@ async function runTake(
   const peakMeasures: Promise<void>[] = [];
   /** Park glides in flight: each is fired at its time without holding up the steps in between. */
   const parks: Promise<void>[] = [];
+
+  /**
+   * Sets the drawn cursor gliding to `p`, to arrive `travel` s after `due` (Node epoch ms), and returns the arrival.
+   * Setting off late (the step's prep ran past `due`, e.g. a shortened glide right after the previous action)
+   * compresses the glide, down to half its travel, so the action still lands on its cue.
+   */
+  const glideTo = async (p: Point, due: number, travel: number): Promise<number> => {
+    await sleepUntil(due);
+    const arrive = Math.max(due + travel * 1000, epoch() + travel * 500);
+    cursor = { ...p };
+    // A short glide (a small glideMs, or one shortened to follow a close previous action) keeps most of its
+    // time moving: the still lead before the action is at most 30% of it.
+    const lead = Math.min(GLIDE_LEAD_MS, (arrive - epoch()) * 0.3);
+    const glide = [p.x, p.y, arrive - lead + offset] as const;
+    quiet(page.evaluate(([x, y, end]) => window.__scenecast.moveTo(x, y, end), glide));
+    return arrive;
+  };
+
+  /**
+   * Draws the recorder's ring around `box` now (the event's action time), held `hold` ms. The ringed elements
+   * (`m`) are measured again at the ring's peak, without holding up the next step, and handed to `atPeak`
+   * (undefined when they are gone by then).
+   */
+  const drawRing = (
+    ev: Partial<TakeEvent>,
+    at: number,
+    box: Box,
+    hold: number,
+    m: Measured,
+    sels: string[],
+    index: number,
+    atPeak: (b: Box | undefined) => void,
+  ) => {
+    quiet(page.evaluate(([b, ms]) => window.__scenecast.ring(b, ms), [box, hold] as const));
+    const end = epoch() + hold + 2 * RING_FADE_MS;
+    ev.ringBox = box;
+    ev.busyUntil = Math.max(ev.busyUntil ?? at, at + (hold + 2 * RING_FADE_MS) / 1000);
+    holdUntil = Math.max(holdUntil, end);
+    ringGoneAt = Math.max(ringGoneAt, end + 50);
+    const peakAt = epoch() + ringPeakSec(hold) * 1000;
+    peakMeasures.push(
+      sleepUntil(peakAt)
+        .then(() => boxesOf(m.els, sels, scene.id, index))
+        .then((now) => atPeak(now.union))
+        .catch(() => atPeak(undefined)),
+    );
+  };
+
   for (const [k, { index, step, startAt, travel, park }] of steps.entries()) {
     const sels = selectors(step);
     const due = flashEpoch + startAt * 1000;
@@ -498,23 +594,22 @@ async function runTake(
 
     if (onTarget(step.do)) {
       let m = readyM && index === ready?.index ? readyM : await measure(page, scene.id, index, sels);
+      // `ringSel`: the recorder rings these elements at the action. They are found and measured before the glide,
+      // after the pointer target was scrolled into view (they are never scrolled to themselves).
+      const ringSels = asList(step.ringSel);
+      let ringM: Measured | undefined;
+      if (ringSels.length) {
+        const els: Locator[] = [];
+        for (const sel of ringSels) els.push(await findVisible(page, scene.id, index, sel));
+        ringM = await boxesOf(els, ringSels, scene.id, index);
+      }
       // Each step glides for its own travel. With none (pre-positioned) the cursor is already on the
       // target: no glide and no lead, and the action fires at `due`.
-      let arrive = due;
-      if (travel > 0) {
-        await sleepUntil(due);
-        // Setting off late (the step's prep ran past `due`, e.g. a shortened glide right after the previous
-        // action) compresses the glide, down to half its travel, so the action still lands on its cue.
-        arrive = Math.max(due + travel * 1000, epoch() + travel * 500);
-        cursor = centre(m.first);
-        // A short glide (a small glideMs, or one shortened to follow a close previous action) keeps most of its
-        // time moving: the still lead before the action is at most 30% of it.
-        const lead = Math.min(GLIDE_LEAD_MS, (arrive - epoch()) * 0.3);
-        const glide = [cursor.x, cursor.y, arrive - lead + offset] as const;
-        quiet(page.evaluate(([x, y, end]) => window.__scenecast.moveTo(x, y, end), glide));
-      }
+      const arrive = travel > 0 ? await glideTo(centre(m.first), due, travel) : due;
       await sleepUntil(arrive - AIM_CHECK_MS);
       m = await aim(m, sels, scene.id, index);
+      // A check step presses only an element that isn't checked yet (seeded data may have it ticked already).
+      const wasChecked = step.do === 'check' ? await isChecked(m.els[0]!) : undefined;
       ev.loadingBefore = (await snapshot(page, panelSel)).loading;
       const aimed = centre(m.first);
       await page.mouse.move(aimed.x, aimed.y); // the real pointer moves ahead so the action itself is one press
@@ -526,15 +621,37 @@ async function runTake(
       }
       ev.target = m.union;
       ev.cursorTo = cursorBox(cursor);
-      if (step.do === 'click' || step.do === 'type') {
+      const at = ev.at;
+      if (ringM) drawRing(ev, at, padBox(ringM.union, step.pad), step.ringMs ?? RING_HOLD_MS, ringM, ringSels, index, (b) => {
+        if (b) ev.ringTarget = b;
+      });
+      if (step.do === 'click' || step.do === 'type' || (step.do === 'check' && !wasChecked)) {
         quiet(page.evaluate(([x, y]) => window.__scenecast.ripple(x, y), [cursor.x, cursor.y] as const));
         await page.mouse.down();
         await page.mouse.up();
         if (step.do === 'type' && step.text) {
           await page.keyboard.type(step.text, { delay: TYPE_DELAY_MS });
-          ev.busyUntil = sinceFlash();
+          ev.busyUntil = Math.max(ev.busyUntil ?? at, sinceFlash());
         }
       }
+      if (step.do === 'check') {
+        ev.clicked = !wasChecked;
+        if (!(await becomesChecked(m.els[0]!)))
+          throw new Error(`scene "${scene.id}" step ${index}: ${sels[0]} is not checked after the click`);
+      }
+    } else if (step.do === 'park') {
+      // Glides the drawn cursor to its spot, landing on the cue like any pointer step. (The real mouse stays,
+      // as with the automatic park, so a hover menu stays open.)
+      const to = parkPoint(step, where);
+      ev.loadingBefore = (await snapshot(page, panelSel)).loading;
+      const arrive = travel > 0 ? await glideTo(to, due, travel) : due;
+      await sleepUntil(arrive);
+      ev.at = sinceFlash();
+      if (travel === 0 && (Math.abs(to.x - cursor.x) > 1 || Math.abs(to.y - cursor.y) > 1)) {
+        cursor = { ...to }; // no time to glide: the cursor is placed on the spot
+        quiet(page.evaluate(([x, y]) => window.__scenecast.cursor(x, y), [to.x, to.y] as const));
+      }
+      ev.cursorTo = cursorBox(to);
     } else if (step.do === 'ring' || step.do === 'zoom') {
       const m = await measure(page, scene.id, index, sels);
       const box = padBox(m.union, step.pad);
@@ -542,20 +659,11 @@ async function runTake(
       await sleepUntil(due);
       ev.at = sinceFlash();
       if (step.do === 'ring') {
-        const hold = step.ms ?? RING_HOLD_MS;
-        quiet(page.evaluate(([b, ms]) => window.__scenecast.ring(b, ms), [box, hold] as const));
-        ev.busyUntil = ev.at + (hold + 2 * RING_FADE_MS) / 1000;
-        holdUntil = Math.max(holdUntil, epoch() + hold + 2 * RING_FADE_MS);
-        ringGoneAt = Math.max(ringGoneAt, epoch() + hold + 2 * RING_FADE_MS + 50);
-        ev.ringBox = box;
-        // The element as it is when the ring peaks, measured without holding up the next step.
-        const peakAt = epoch() + ringPeakSec(hold) * 1000;
-        peakMeasures.push(
-          sleepUntil(peakAt)
-            .then(() => boxesOf(m.els, sels, scene.id, index))
-            .then((now) => void (ev.target = now.union))
-            .catch(() => void delete ev.target), // gone by the peak: the audit fails the ring for it
-        );
+        // The element as it is when the ring peaks; gone by then, the audit fails the ring for it.
+        drawRing(ev, ev.at, box, step.ms ?? RING_HOLD_MS, m, sels, index, (b) => {
+          if (b) ev.target = b;
+          else delete ev.target;
+        });
       } else ev.target = box;
     } else {
       const el = sels.length ? await findVisible(page, scene.id, index, sels[0]!) : undefined;
@@ -563,11 +671,15 @@ async function runTake(
       await sleepUntil(due);
       ev.at = sinceFlash();
       switch (step.do) {
-        case 'scroll':
+        case 'scroll': {
           if (el) await el.evaluate((e) => e.scrollIntoView({ behavior: 'smooth', block: 'center' }));
-          else await page.evaluate(() => window.scrollBy({ top: innerHeight * 0.8, behavior: 'smooth' }));
+          else if (step.to !== undefined) await page.evaluate((top) => window.scrollTo({ top, behavior: 'smooth' }), step.to);
+          else await page.evaluate((by) => window.scrollBy({ top: by ?? innerHeight * 0.8, behavior: 'smooth' }), step.by ?? null);
           await scrollRest(page);
+          const y = await page.evaluate(() => scrollY).catch(() => undefined);
+          if (y !== undefined) ev.scrollY = round(y);
           break;
+        }
         case 'press':
           await page.keyboard.press(step.text ?? 'Enter');
           break;
@@ -575,14 +687,14 @@ async function runTake(
           await page.goto(url(step.text ?? sels[0] ?? '/'), { waitUntil: 'domcontentloaded' });
           break;
         default:
-          break; // wait: the schedule already spaced it
+          break; // wait, and unzoom (the composer eases the zoom out; the step logs its time only): the schedule spaced it
       }
       if (sels.length && step.do !== 'goto') ev.target = (await measure(page, scene.id, index, sels)).union;
     }
 
     Object.assign(ev, await snapshot(page, panelSel));
-    // A step held with `ms` is busy until the hold ends.
-    if (step.ms && ev.at !== undefined) ev.busyUntil = Math.max(ev.busyUntil ?? ev.at, ev.at + step.ms / 1000);
+    // A step held with `ms` is busy until the hold ends. Not a zoom: the composer draws it, and retime may trim its hold.
+    if (step.ms && ev.at !== undefined && step.do !== 'zoom' && step.do !== 'unzoom') ev.busyUntil = Math.max(ev.busyUntil ?? ev.at, ev.at + step.ms / 1000);
     if (park && onTarget(step.do) && ev.at !== undefined) {
       // Glide off to the park spot once the action is over and the park time has come. Skipped when the glide
       // would still be running as the next pointer step sets off (two glides would fight over the cursor).
@@ -615,7 +727,12 @@ async function runTake(
   if (ringGoneAt) await ringsGone(page);
   await sleepUntil(epoch() + TAIL_SEC * 1000);
   await Promise.all(peakMeasures);
-  return { flashAt: Math.round(flashEpoch - videoStart) / 1000, ...(navs.length ? { navs } : {}), events };
+  return {
+    flashAt: Math.round(flashEpoch - videoStart) / 1000,
+    ...(navs.length ? { navs } : {}),
+    ...(initialZoom ? { initialZoom } : {}),
+    events,
+  };
 }
 
 /** Boxes of the declared navs that are visible now (first visible match of each selector). */

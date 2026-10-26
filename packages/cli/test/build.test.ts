@@ -63,6 +63,19 @@ describe('buildVideo', () => {
     expect(v.plan.scenes[0]!.card!.title).toBe('ch');
   });
 
+  it('ring: true gets a composer ring; a ringSel ring is the recorder\'s, so the composer draws none', () => {
+    const rings = (extra: Record<string, unknown>) => {
+      const app = appInput('a');
+      app.scheduled[0] = { ...app.scheduled[0]!, step: { ...app.scheduled[0]!.step, ...extra } };
+      return buildVideo(spec, [app], { cards: false }).plan.scenes[0]!.rings;
+    };
+    expect(rings({ ring: true, pad: 4 })).toEqual([
+      { start: expect.closeTo(1.5, 1), end: expect.any(Number), box: { x: 96, y: 496, w: 208, h: 48 } },
+    ]);
+    expect(rings({ ring: true, ringSel: '#other' })).toBeUndefined();
+    expect(rings({ ringSel: '#other' })).toBeUndefined();
+  });
+
   it('a late action lands on its scheduled output time', () => {
     const app = appInput('a', { late: 0.4 });
     const v = buildVideo(spec, [app], { cards: false });

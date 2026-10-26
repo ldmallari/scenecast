@@ -5,7 +5,7 @@ import path from 'node:path';
 import { audit, buildAuditInput, type AuditOpts, type AuditPlan, type HeardWord } from '../src/audit.js';
 import { clampZoom, phoneFrame, phoneToFrame } from '../src/frame.js';
 import { runFfmpeg } from '../src/ffmpeg.js';
-import type { Box, Take } from '../src/record/record.js';
+import { ringPeakSec, type Box, type Take } from '../src/record/record.js';
 import { VideoSpecSchema, type Scene } from '../src/scene/schema.js';
 import { travelSecFor, type ScheduledStep } from '../src/schedule.js';
 import { ensureToolchain, findUv } from '../src/toolchain.js';
@@ -173,6 +173,30 @@ describe('buildAuditInput', () => {
     const ringMoment = build(o).scenes[1]!.moments[1]!;
     expect(ringMoment.ring).toBeNull();
     expect(ringMoment.problems).toEqual(['no ring box was logged for this ring step']);
+  });
+
+  it('a ringSel ring is checked as the recorder\'s ring, against the ringed element at its peak', () => {
+    const TOTALS_AT_PEAK = box(1200, 600, 300, 80);
+    const withRingSel = (ev: Partial<Take['events'][number]>) => {
+      const o = opts();
+      const scheduled = o.scenes[0]!.scheduled!.map((s, i) =>
+        i === 0 ? { ...s, step: { ...s.step, ringSel: '#totals', ringMs: 600, pad: 8 } } : s,
+      );
+      const events = deskTake.events.map((e, i) => (i === 0 ? { ...e, ...ev } : e));
+      // A composer ring near the action must not be picked up: the recorder owns ringSel rings.
+      const p: AuditPlan = { ...plan, scenes: plan.scenes.map((s, i) => (i === 1 ? { ...s, rings: [{ start: 0.9, end: 2.4, box: box(0, 0, 10, 10) }] } : s)) };
+      o.scenes[0] = { ...o.scenes[0]!, scheduled, take: { ...deskTake, events } };
+      return build({ ...o, plan: p }).scenes[0]!.moments[0]!;
+    };
+    const m = withRingSel({ ringBox: box(1192, 592, 316, 96), ringTarget: TOTALS_AT_PEAK });
+    expect(m.ring).toEqual({ box: box(1192, 592, 316, 96), peak: expect.closeTo(3.9 + ringPeakSec(600), 9), by: 'recorder' });
+    expect(m.target).toEqual(TOTALS_AT_PEAK); // not the click's own target
+    expect(m.problems).toEqual([]);
+    const gone = withRingSel({ ringBox: box(1192, 592, 316, 96) }); // the element was gone by the peak
+    expect(gone.target).toBeNull();
+    const none = withRingSel({});
+    expect(none.ring).toBeNull();
+    expect(none.problems).toEqual(['no ring box was logged for this ringSel ring']);
   });
 
   it('loading is judged on the sample taken just before the action', () => {

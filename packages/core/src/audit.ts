@@ -176,6 +176,7 @@ export function buildAuditInput(
         let actionTime = mapped;
         let zoom = null;
         let ring = null;
+        let target = ev.target;
         if (s.step.do === 'zoom') {
           // The zoom is the composer's: it starts when the plan says.
           const z = nearest(zooms, ref);
@@ -186,11 +187,14 @@ export function buildAuditInput(
             zoom = { box: z.box, start: round(start + z.start), end: round(start + z.end), hold: round(start + hold) };
           } else problems.push(`no zoom in the plan within ${MATCH_SEC} s of the action`);
         }
-        if (s.step.do === 'ring') {
+        // A `ringSel` ring is the recorder's too: drawn at the action, its target is the ringed element, not the pointer's.
+        const ringSel = s.step.do !== 'ring' && s.step.ringSel !== undefined;
+        if (ringSel) target = ev.ringTarget;
+        if (s.step.do === 'ring' || ringSel) {
           // The ring drawn at the cue, checked against the element as it was at the ring's peak.
-          if (!ev.ringBox) problems.push('no ring box was logged for this ring step');
-          else if (mapped !== null)
-            ring = { box: toFrame(ev.ringBox), peak: round(start + mapped + ringPeakSec(s.step.ms ?? RING_HOLD_MS)), by: 'recorder' };
+          const hold = (ringSel ? s.step.ringMs : s.step.ms) ?? RING_HOLD_MS;
+          if (!ev.ringBox) problems.push(`no ring box was logged for this ${ringSel ? 'ringSel ring' : 'ring step'}`);
+          else if (mapped !== null) ring = { box: toFrame(ev.ringBox), peak: round(start + mapped + ringPeakSec(hold)), by: 'recorder' };
         } else {
           const r = nearest(rings, ref);
           if (r) ring = { box: r.box, peak: round(start + Math.min(r.start + RING_FADE_SEC, (r.start + r.end) / 2)), by: 'composer' };
@@ -205,7 +209,7 @@ export function buildAuditInput(
           actionTime: global(actionTime),
           planWordTime: round(start + (s.cueTime ?? 0)),
           cueWord: cueWordIndex(narrationWords, s.step.cue!, s.step.occ ?? 1),
-          target: ev.target ? toFrame(ev.target) : null,
+          target: target ? toFrame(target) : null,
           // A spinner the action itself brings up is its result; only one up before it counts.
           loading: ev.loadingBefore ?? ev.loading,
           settleTimedOut: !!ev.settleTimedOut,
