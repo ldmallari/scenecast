@@ -1,6 +1,7 @@
 // Pure wiring between the stages: retimed takes, zooms, rings and captions become a ComposePlan;
 // the plan's scene starts give the voice placements, chapters and the final-time captions.
 import {
+  actionAt,
   DEFAULTS,
   layoutCaptions,
   onScreen,
@@ -9,7 +10,6 @@ import {
   RING_FADE_MS,
   RING_HOLD_MS,
   toSrt,
-  travelSecFor,
   type BlankRange,
   type Box,
   type Cue,
@@ -80,7 +80,7 @@ export function eventTimes(rec: Recorded, scheduled: ScheduledStep[], segments: 
   for (const e of rec.take.events) {
     const sch = scheduled.find((s) => s.index === e.index);
     if (!sch) throw new Error(`take event ${e.index} has no scheduled step`);
-    out.set(e.index, outputTimeOf(segments, rec.flashTime + e.at) ?? sch.startAt + travelSecFor(sch.step));
+    out.set(e.index, outputTimeOf(segments, rec.flashTime + e.at) ?? actionAt(sch));
   }
   return out;
 }

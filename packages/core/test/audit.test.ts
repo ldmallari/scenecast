@@ -7,7 +7,7 @@ import { clampZoom, phoneFrame, phoneToFrame } from '../src/frame.js';
 import { runFfmpeg } from '../src/ffmpeg.js';
 import type { Box, Take } from '../src/record/record.js';
 import { VideoSpecSchema, type Scene } from '../src/scene/schema.js';
-import type { ScheduledStep } from '../src/schedule.js';
+import { travelSecFor, type ScheduledStep } from '../src/schedule.js';
 import { ensureToolchain, findUv } from '../src/toolchain.js';
 
 const FRAME = { x: 0, y: 0, w: 1920, h: 1080 };
@@ -33,7 +33,7 @@ const spec = VideoSpecSchema.parse({
 const [desk, mob] = spec.scenes as [(typeof spec.scenes)[0], (typeof spec.scenes)[0]];
 
 const sched = (scene: typeof desk, cueTimes: number[], startAts: number[]): ScheduledStep[] =>
-  scene.steps.map((step, index) => ({ index, step, cueTime: cueTimes[index]!, startAt: startAts[index]! }));
+  scene.steps.map((step, index) => ({ index, step, cueTime: cueTimes[index]!, startAt: startAts[index]!, travel: travelSecFor(step) }));
 
 const TOTALS = box(1200, 600, 300, 80);
 const MENU = box(10, 100, 100, 40); // phone take px

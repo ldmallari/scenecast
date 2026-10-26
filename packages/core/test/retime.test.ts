@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { blankRanges, detectFlash, scanBlank } from '../src/ffmpeg.js';
 import { DEFAULT_TRAVEL_SEC, type Take, type TakeEvent } from '../src/record/record.js';
 import { outputTimeOf, retime, type Segment } from '../src/retime.js';
-import type { ScheduledStep } from '../src/schedule.js';
+import { travelSecFor, type ScheduledStep } from '../src/schedule.js';
 import { ensureToolchain } from '../src/toolchain.js';
 import type { SceneVoice } from '../src/voice.js';
 
@@ -19,8 +19,8 @@ const take = (events: (Pick<TakeEvent, 'index' | 'kind' | 'at'> & { busyUntil?: 
   flashAt: FLASH,
   events: events.map((e) => ({ ...e, panels: [], loading: false })),
 });
-const sched = (items: { index: number; do: 'click' | 'zoom' | 'type' | 'ring' | 'wait'; startAt: number }[]): ScheduledStep[] =>
-  items.map((i) => ({ index: i.index, step: { do: i.do } as never, cueTime: null, startAt: i.startAt }));
+const sched = (items: { index: number; do: 'click' | 'zoom' | 'type' | 'ring' | 'wait'; startAt: number; travel?: number }[]): ScheduledStep[] =>
+  items.map((i) => ({ index: i.index, step: { do: i.do } as never, cueTime: null, startAt: i.startAt, travel: i.travel ?? travelSecFor({ do: i.do }) }));
 const opts = { sceneId: 's', flashTime: FLASH, flashEnd: FLASH_END };
 afterEach(() => vi.restoreAllMocks());
 
@@ -60,9 +60,34 @@ describe('retime', () => {
     expect(outTimeOf(segs, FLASH + 0.8)).toBeCloseTo(2.0 + DEFAULT_TRAVEL_SEC, 1);
   });
 
+  it("uses each step's own travel", () => {
+    // A pre-positioned click: no glide, so it shows at its startAt, not startAt + 0.52.
+    const segs = retime(take([{ index: 0, kind: 'click', at: 0.8 }]), sched([{ index: 0, do: 'click', startAt: 2.0, travel: 0 }]), voice(4), opts);
+    expect(Math.abs(outTimeOf(segs, FLASH + 0.8) - 2.0)).toBeLessThanOrEqual(FRAME);
+    const h = segs.find((g) => g.hold)!;
+    expect(h.srcIn).toBeCloseTo(FLASH + 0.8 - 0.15, 6); // the hold protects only travel + 0.15
+  });
+
+  it('an early-arrival hold protects a long glide (travel + 0.15)', () => {
+    const segs = retime(take([{ index: 0, kind: 'click', at: 2.0 }]), sched([{ index: 0, do: 'click', startAt: 2.2, travel: 0.8 }]), voice(4), opts);
+    const h = segs.find((g) => g.hold)!;
+    expect(h.srcIn).toBeCloseTo(FLASH + 2.0 - (0.8 + 0.15), 6);
+    expect(outTimeOf(segs, FLASH + 2.0)).toBeCloseTo(3.0, 1);
+  });
+
+  it('a late action never cuts inside its own long glide', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const segs = retime(take([{ index: 0, kind: 'click', at: 4.0 }]), sched([{ index: 0, do: 'click', startAt: 1.4, travel: 1.0 }]), voice(4), opts);
+    const clips = segs.filter((g) => g.hold === undefined);
+    // The last 1.15 s before the click plays straight through.
+    expect(clips.some((g) => g.srcIn <= FLASH + 4.0 - 1.15 + 1e-6 && g.srcOut >= FLASH + 4.0 - FRAME)).toBe(true); // up to a frame of rounding
+    expect(outTimeOf(segs, FLASH + 4.0)).toBeCloseTo(2.4, 1);
+  });
+
   it('scene length = voice + breath, first frame is after the flash', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const segs = retime(take([{ index: 0, kind: 'zoom', at: 1.5 }]), sched([{ index: 0, do: 'zoom', startAt: 1.0 }]), voice(4), opts);
+    // A click shown at 1.0 s: too little room to cut 0.4 s outside its protected glide, so retime warns.
+    const segs = retime(take([{ index: 0, kind: 'click', at: 1.5 }]), sched([{ index: 0, do: 'click', startAt: 1.0 - DEFAULT_TRAVEL_SEC }]), voice(4), opts);
     expect(Math.abs(sceneLen(segs) - 4.45)).toBeLessThanOrEqual(0.5 / 30 + 1e-9);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('quiet window'));
     expect(Math.min(...segs.map((g) => g.srcIn))).toBeGreaterThanOrEqual(FLASH_END);
@@ -136,14 +161,15 @@ describe('retime', () => {
         const got = outTimeOf(segs, FLASH + e.at);
         expect(Math.abs(got - want)).toBeLessThanOrEqual(FRAME);
       });
-      // the 0.67 s before every action plays 1:1 (as far back as the previous event)
+      // each action's travel + 0.15 s before it plays 1:1 (as far back as the previous event): 0.67 s for a click, 0.15 s for a zoom
       events.forEach((e, i) => {
         const sT = FLASH + e.at;
         const prev = i ? FLASH + events[i - 1]!.at : FLASH_END;
         const tOut = (j: number) => items[j]!.startAt + (events[j]!.kind === 'click' ? DEFAULT_TRAVEL_SEC : 0);
-        if (tOut(i) - (i ? tOut(i - 1) : 0) < 0.67) return; // too little output time between events to keep it
+        const protect = (e.kind === 'click' ? DEFAULT_TRAVEL_SEC : 0) + 0.15;
+        if (tOut(i) - (i ? tOut(i - 1) : 0) < protect) return; // too little output time between events to keep it
         const base = outTimeOf(segs, sT);
-        for (let t = Math.max(sT - 0.67, prev + 0.05); t < sT - 0.05; t += 0.01)
+        for (let t = Math.max(sT - protect, prev + 0.05); t < sT - 0.05; t += 0.01)
           expect(Math.abs(outTimeInside(segs, t) - (base - (sT - t)))).toBeLessThanOrEqual(FRAME);
       });
       // 1:1 speed, contiguous

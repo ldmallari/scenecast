@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { findUv, uvEnv } from '../src/toolchain.js';
 import { DEFAULT_TRAVEL_SEC, recordScene, travelSecFor, type TakeEvent } from '../src/record/record.js';
 import { DEFAULTS, type AppConn, type Scene, type Step } from '../src/scene/schema.js';
-import type { ScheduledStep } from '../src/schedule.js';
+import { schedule, spotPoint, type ScheduledStep } from '../src/schedule.js';
 
 const APP_DIR = fileURLToPath(new URL('../../../examples/demo-app/', import.meta.url));
 const TYPES: Record<string, string> = {
@@ -69,7 +69,7 @@ function scene(id: string, route: string, steps: Step[]): Scene {
   return { id, kind: 'app', route, viewport: 'desktop', narration: 'x', steps } as Scene;
 }
 function sched(steps: Step[], startAts: number[]): ScheduledStep[] {
-  return steps.map((step, index) => ({ index, step, cueTime: null, startAt: startAts[index]! }));
+  return steps.map((step, index) => ({ index, step, cueTime: null, startAt: startAts[index]!, travel: travelSecFor(step) }));
 }
 /** The ffmpeg that ships with the toolchain (imageio-ffmpeg), else one on PATH. */
 function ffmpegBin(): string {
@@ -111,7 +111,10 @@ describe('recordScene', () => {
       { do: 'ring', sel: '#signed', pad: 8, ms: 600 },
     ];
     const s = scene('sign', '/form', steps);
-    const plan = sched(steps, [1.0, 2.0, 3.2, 4.0]);
+    // Each pointer step needs its prep (settle, find and measure the target) done before its glide sets off, or
+    // it sets off late by the overrun. The click after the typing gets 0.65 s for that: typing 10 characters
+    // ends about 0.45 s after the type action (2.52 s), and the click's glide starts at 3.6 s.
+    const plan = sched(steps, [1.0, 2.0, 3.6, 4.4]);
     const out = path.join(work, 'takes');
     const take = await recordScene(s, plan, app, out);
 
@@ -128,11 +131,16 @@ describe('recordScene', () => {
       const e = take.events[i]!;
       expect(inFrame(e.target!)).toBe(true);
       expect(e.cursorTo).toBeDefined();
-      expect(Math.abs(e.at - (plan[i]!.startAt + DEFAULT_TRAVEL_SEC))).toBeLessThanOrEqual(0.15);
+      // Never early. Late only by the final checks (aim, loading snapshot, pointer move), which start 40 ms before
+      // arrival and measured 13-28 ms on the loaded test PC. The bound is the glide lead (0.15 s): a late action
+      // at most doubles the designed rest of the cursor on the target, and retime anchors on the logged time.
+      const late = e.at - (plan[i]!.startAt + DEFAULT_TRAVEL_SEC);
+      expect(late, `event ${i} late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
+      expect(late, `event ${i} late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
     }
     // ring fires on its own time (no travel); it logs the box it drew (padded) and the element at its peak
     const ringEv = take.events[3]!;
-    expect(Math.abs(ringEv.at - 4.0)).toBeLessThanOrEqual(0.15);
+    expect(Math.abs(ringEv.at - 4.4)).toBeLessThanOrEqual(0.15);
     expect(inFrame(ringEv.target!)).toBe(true);
     const el = ringEv.target!;
     for (const [k, v] of Object.entries({ x: el.x - 8, y: el.y - 8, w: el.w + 16, h: el.h + 16 }))
@@ -157,6 +165,37 @@ describe('recordScene', () => {
     expect(signedAt).toBeGreaterThan(magenta);
     const videoGap = (signedAt - magenta) / VIDEO_FPS;
     expect(Math.abs(videoGap - take.events[2]!.at)).toBeLessThanOrEqual(2 / VIDEO_FPS);
+  }, 60_000);
+
+  it('pre-positioned click on the first word lands within 0.10 s of its cue', async () => {
+    const steps: Step[] = [{ do: 'click', sel: '#menu-button', cue: 'Open' }];
+    const voice = { duration: 3, phrases: [], words: [{ w: 'Open', start: 0.15, end: 0.4 }, { w: 'it.', start: 0.45, end: 0.7 }] };
+    const plan = schedule({ ...scene('prepos', '/dashboard', steps), narration: 'Open it.' } as Scene, voice, { travelSec: travelSecFor });
+    expect(plan[0]).toMatchObject({ startAt: 0.15, travel: 0, prePosition: true });
+    const take = await recordScene(scene('prepos', '/dashboard', steps), plan, app, path.join(work, 'takes'));
+    const e = take.events[0]!;
+    expect(Math.abs(e.at - 0.15)).toBeLessThanOrEqual(0.1);
+    expect(e.cursorTo).toBeDefined();
+  }, 60_000);
+
+  it('parks the cursor after a lone click', async () => {
+    const steps: Step[] = [{ do: 'click', sel: '#menu-button', cue: 'menu' }];
+    const voice = { duration: 5, phrases: [], words: [{ w: 'The', start: 0.6, end: 0.8 }, { w: 'menu.', start: 1.0, end: 1.4 }] };
+    const to = spotPoint('right', { width: DEFAULTS.video.width, height: DEFAULTS.video.height });
+    const plan = schedule({ ...scene('park', '/dashboard', steps), narration: 'The menu.' } as Scene, voice, {
+      travelSec: travelSecFor,
+      park: { to, afterSec: DEFAULTS.cursor.parkAfterSec },
+      sceneEnd: voice.duration,
+    });
+    expect(plan[0]!.park).toEqual({ at: expect.closeTo(1.6, 6), to });
+    const take = await recordScene(scene('park', '/dashboard', steps), plan, app, path.join(work, 'takes'));
+    const e = take.events[0]!;
+    expect(e.parkedAt!).toBeGreaterThan(e.at + 0.5);
+    // parkTo is the drawn cursor box, like cursorTo: its tip sits at (3, 2) inside it.
+    expect(Math.abs(e.parkTo!.x + 3 - 1824)).toBeLessThanOrEqual(2);
+    expect(Math.abs(e.parkTo!.y + 2 - 486)).toBeLessThanOrEqual(2);
+    // The park glide counts as part of the action, so retime never cuts it.
+    expect(e.busyUntil!).toBeCloseTo(e.parkedAt! + DEFAULT_TRAVEL_SEC, 3);
   }, 60_000);
 
   it('slow route still lands on cue', async () => {

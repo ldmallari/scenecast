@@ -1,7 +1,7 @@
 import { DEFAULTS } from './scene/schema.js';
 import type { BlankRange } from './ffmpeg.js';
-import { DEFAULT_TRAVEL_SEC, travelSecFor, type Take } from './record/record.js';
-import type { ScheduledStep } from './schedule.js';
+import type { Take } from './record/record.js';
+import { actionAt, type ScheduledStep } from './schedule.js';
 import type { SceneVoice } from './voice.js';
 
 /**
@@ -39,8 +39,8 @@ export interface RetimeOpts {
 /** Frame period of the webm the recorder produces; the last decodable frame is this far before the end. */
 const SRC_FRAME = 1 / 25;
 const EPS = 1e-6;
-/** Never cut or freeze inside this long a stretch before an action: the cursor glide plus a margin. */
-const PROTECT_BEFORE = DEFAULT_TRAVEL_SEC + 0.15;
+/** Never cut or freeze inside a step's own travel (its cursor glide) plus this margin before its action. */
+const PROTECT_MARGIN = 0.15;
 /** Never cut this soon after the previous event, so its visible result plays out. */
 const KEEP_AFTER = 0.8;
 /** After an action that lasts (typing, a ring, a held step), keep this long past its end before cutting. */
@@ -53,10 +53,10 @@ type Range = [number, number];
 /**
  * Source ranges to remove from [p, n] so that `excess` seconds go, quietest places first. `busy` is when the
  * previous action is over (typing done, ring gone, `ms` hold ended); nothing inside [p, busy] is cut unless every
- * other place is used up.
+ * other place is used up. `protect` is the stretch before `n` (the next action's glide plus a margin) cut last.
  */
-function cutRanges(p: number, n: number, excess: number, label: string, busy: number = p): Range[] {
-  const g = Math.max(p, n - PROTECT_BEFORE);
+function cutRanges(p: number, n: number, excess: number, label: string, busy: number, protect: number): Range[] {
+  const g = Math.max(p, n - protect);
   const done = Math.min(Math.max(p, busy), n);
   const winLo = Math.max(p + KEEP_AFTER, done > p ? done + KEEP_AFTER_BUSY : -Infinity);
   const w = g - winLo;
@@ -114,7 +114,7 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
   const anchors = take.events.map((e) => {
     const sch = byIndex.get(e.index);
     if (!sch) throw new Error(`scene "${sceneId}": take event ${e.index} has no scheduled step`);
-    return { out: sch.startAt + travelSecFor(sch.step), src: flash + e.at };
+    return { out: actionAt(sch), src: flash + e.at, protect: sch.travel + PROTECT_MARGIN };
   });
   anchors.forEach((a, i) => {
     const idx = take.events[i]!.index;
@@ -186,13 +186,13 @@ export function retime(take: Take, scheduled: ScheduledStep[], voice: SceneVoice
     const span = Math.max(0, a.src - srcT);
     if (span > d) {
       let from = srcT;
-      for (const [lo, hi] of cutRanges(srcT, a.src, span - d, `event ${take.events[k]!.index}`, busyBefore(a.src))) {
+      for (const [lo, hi] of cutRanges(srcT, a.src, span - d, `event ${take.events[k]!.index}`, busyBefore(a.src), a.protect)) {
         play(from, lo - from);
         from = hi;
       }
       play(from, a.src - from);
     } else {
-      const h = Math.max(srcT, a.src - PROTECT_BEFORE);
+      const h = Math.max(srcT, a.src - a.protect);
       play(srcT, h - srcT);
       hold(h, d - span);
       play(h, a.src - h);

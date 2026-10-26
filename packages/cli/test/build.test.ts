@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { clampZoom, DEFAULTS, parseSrt, phoneToFrame, type Box, type Scene, type SceneVoice, type ScheduledStep, type Take, type VideoSpec } from '@scenecast/core';
+import { clampZoom, DEFAULTS, parseSrt, phoneToFrame, travelSecFor, type Box, type Scene, type SceneVoice, type ScheduledStep, type Take, type VideoSpec } from '@scenecast/core';
 import { buildVoiceTrack, readWav, writeWav } from '../src/audio.js';
 import { buildVideo, captionEvents, chaptersTxt, eventTimes, finalSrt, INTRO_SEC, OUTRO_SEC, onScreen, toFrames, type Recorded } from '../src/build.js';
 
@@ -19,7 +19,7 @@ function voice(duration: number, text = 'Click the button now.'): SceneVoice {
 function appInput(id: string, opts: { late?: number; zoom?: boolean; phone?: boolean } = {}) {
   const scene = { id, kind: 'app', title: `Title ${id}`, viewport: opts.phone ? 'phone' : 'desktop', narration: 'Click the button now.', steps: [] } as unknown as Scene;
   const steps: ScheduledStep[] = [
-    { index: 0, step: { do: 'click', sel: '#b', cue: 'button' }, cueTime: 1.5, startAt: 1.5 - 0.52 },
+    { index: 0, step: { do: 'click', sel: '#b', cue: 'button' }, cueTime: 1.5, startAt: 1.5 - 0.52, travel: travelSecFor({ do: 'click' }) },
   ];
   const at = 1.5 + (opts.late ?? 0.4);
   const take: Take = {
@@ -29,7 +29,7 @@ function appInput(id: string, opts: { late?: number; zoom?: boolean; phone?: boo
     events: [{ index: 0, kind: 'click', at, target: { x: 100, y: 500, w: 200, h: 40 }, cursorTo: { x: 197, y: 518, w: 28, h: 28 }, panels: [], loading: false }],
   };
   if (opts.zoom) {
-    steps.push({ index: 1, step: { do: 'zoom', sel: '#z', cue: 'now', ms: 1000 }, cueTime: 2.0, startAt: 2.0 });
+    steps.push({ index: 1, step: { do: 'zoom', sel: '#z', cue: 'now', ms: 1000 }, cueTime: 2.0, startAt: 2.0, travel: travelSecFor({ do: 'zoom' }) });
     take.events.push({ index: 1, kind: 'zoom', at: 2.0 + (opts.late ?? 0.4), target: { x: 860, y: 780, w: 200, h: 60 }, panels: [], loading: false });
   }
   const recorded: Recorded = { take, flashTime: 0.5, flashEnd: 0.6, srcDuration: 20 };

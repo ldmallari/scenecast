@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Cue } from './captions.js';
 import { clampZoom, phoneFrame, phoneToFrame, type NavBox } from './frame.js';
-import { RING_FADE_MS, RING_HOLD_MS, ringPeakSec, travelSecFor, type Box, type Take } from './record/record.js';
+import { RING_FADE_MS, RING_HOLD_MS, ringPeakSec, type Box, type Take } from './record/record.js';
 import { outputTimeOf, type Segment } from './retime.js';
 import { DEFAULTS, type Brand, type Scene } from './scene/schema.js';
-import { cueWordIndex, type ScheduledStep } from './schedule.js';
+import { actionAt, cueWordIndex, type ScheduledStep } from './schedule.js';
 import { ensureToolchain, runPy } from './toolchain.js';
 import type { SceneVoice } from './voice.js';
 
@@ -171,7 +171,7 @@ export function buildAuditInput(
         const ev = take.events.find((e) => e.index === s.index);
         if (!ev) throw new Error(`audit: scene "${scene.id}" step ${s.index} has no take event`);
         const mapped = sceneTimeOf(ev.at);
-        const ref = mapped ?? s.startAt + travelSecFor(s.step);
+        const ref = mapped ?? actionAt(s);
         const problems: string[] = [];
         let actionTime = mapped;
         let zoom = null;

@@ -19,6 +19,7 @@ import {
   schedule,
   sessionStoragePath,
   splitPhrases,
+  spotPoint,
   travelSecFor,
   type AuditCounts,
   type Scene,
@@ -186,12 +187,21 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
       inputs.push({ scene, voice });
       continue;
     }
-    const scheduled: ScheduledStep[] = schedule(scene, voice, { travelSec: travelSecFor });
+    // Desktop scenes park the cursor between distant pointer steps; phone scenes never do (the touch indicator fades).
+    const parkSpot = scene.viewport === 'phone' || spec.cursor.park === 'off' ? undefined : spec.cursor.park;
+    const scheduled: ScheduledStep[] = schedule(scene, voice, {
+      travelSec: (step) => travelSecFor(step),
+      park: parkSpot && {
+        to: spotPoint(parkSpot, { width: DEFAULTS.video.width, height: DEFAULTS.video.height }),
+        afterSec: spec.cursor.parkAfterSec,
+      },
+      sceneEnd: voice.duration,
+    });
     const app = spec.app;
     const seedFile = app.seed && path.isAbsolute(app.seed) && fs.existsSync(app.seed) ? app.seed : undefined;
     const { result: recorded } = await cache.run<Recorded>({
       name: `record/${scene.id}`,
-      input: { scene, scheduled, app },
+      input: { scene, scheduled, app, cursor: spec.cursor },
       files: [...appFiles(app), ...(seedFile ? [seedFile] : [])],
       run: async (dir) => {
         if (app.seed && !seeded) {
@@ -210,7 +220,7 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
         };
         process.once('exit', removeSession);
         try {
-          take = await recordScene(scene, scheduled, app, dir);
+          take = await recordScene(scene, scheduled, app, dir, { cursor: spec.cursor });
         } finally {
           removeSession();
           process.removeListener('exit', removeSession);

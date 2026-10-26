@@ -1,7 +1,7 @@
 import { clampZoom, phoneFrame, phoneToFrame } from './frame.js';
-import { travelSecFor, type Box, type Take } from './record/record.js';
+import type { Box, Take } from './record/record.js';
 import { DEFAULTS, type Scene } from './scene/schema.js';
-import type { ScheduledStep } from './schedule.js';
+import { actionAt, type ScheduledStep } from './schedule.js';
 import type { SceneVoice } from './voice.js';
 
 export interface Cue {
@@ -36,7 +36,7 @@ export function eventsForCaptions(take: Take, scheduled: ScheduledStep[], opts: 
   for (const e of take.events) {
     const sch = scheduled.find((s) => s.index === e.index);
     if (!sch) throw new Error(`captions: no scheduled step for take event ${e.index}`);
-    times.set(e.index, sch.startAt + travelSecFor(sch.step));
+    times.set(e.index, actionAt(sch));
   }
   return zoomedCaptionEvents(take, times, [], opts.sceneEnd);
 }

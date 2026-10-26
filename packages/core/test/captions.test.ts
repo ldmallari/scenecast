@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { eventsForCaptions, layoutCaptions, parseSrt, toSrt, zoomedCaptionEvents, type CaptionEvent } from '../src/captions.js';
 import { phoneToFrame } from '../src/frame.js';
 import type { Take } from '../src/record/record.js';
-import type { ScheduledStep } from '../src/schedule.js';
+import { travelSecFor, type ScheduledStep } from '../src/schedule.js';
 import type { SceneVoice } from '../src/voice.js';
 
 const scene = { id: 's' };
@@ -158,7 +158,7 @@ describe('captions', () => {
         { index: 1, kind: 'click', at: 2, cursorTo: box(0, 0), panels: [box(5, 5)], loading: false },
       ],
     };
-    const sched: ScheduledStep[] = [0, 1].map((i) => ({ index: i, step: { do: 'click' } as never, cueTime: null, startAt: 1 + i * 2 }));
+    const sched: ScheduledStep[] = [0, 1].map((i) => ({ index: i, step: { do: 'click' } as never, cueTime: null, startAt: 1 + i * 2, travel: travelSecFor({ do: 'click' }) }));
     const ev = eventsForCaptions(take, sched, { sceneEnd: 9 });
     expect(ev[0]!.end).toBe(ev[1]!.start);
     expect(ev[1]!.end).toBe(9);
@@ -176,7 +176,7 @@ describe('captions', () => {
       flashAt: 0,
       events: [{ index: 0, kind: 'ring', at: 1, target: box(100, 100), ringBox: box(90, 90, 220, 80), panels: [], loading: false }],
     };
-    const sched: ScheduledStep[] = [{ index: 0, step: { do: 'ring' } as never, cueTime: null, startAt: 1 }];
+    const sched: ScheduledStep[] = [{ index: 0, step: { do: 'ring' } as never, cueTime: null, startAt: 1, travel: travelSecFor({ do: 'ring' }) }];
     expect(eventsForCaptions(take, sched, { sceneEnd: 5 })[0]!.boxes).toEqual([box(100, 100), box(90, 90, 220, 80)]);
   });
 
@@ -189,7 +189,7 @@ describe('captions', () => {
         { index: 0, kind: 'click', at: 1, target: box(10, 10), panels: [], loading: false },
       ],
     };
-    const sched: ScheduledStep[] = [0, 1].map((i) => ({ index: i, step: { do: 'click' } as never, cueTime: null, startAt: 1 + i * 2 }));
+    const sched: ScheduledStep[] = [0, 1].map((i) => ({ index: i, step: { do: 'click' } as never, cueTime: null, startAt: 1 + i * 2, travel: travelSecFor({ do: 'click' }) }));
     const ev = eventsForCaptions(take, sched, { sceneEnd: 9 });
     expect(ev.map((e) => e.boxes[0]!.x)).toEqual([10, 300]);
     expect(ev[0]!.end).toBe(ev[1]!.start);

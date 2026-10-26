@@ -2,17 +2,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
-import { DEFAULTS, type AppConn, type Scene, type Step } from '../scene/schema.js';
-import type { ScheduledStep } from '../schedule.js';
+import { DEFAULTS, type AppConn, type CursorCfg, type Scene, type Step } from '../scene/schema.js';
+import { DEFAULT_TRAVEL_SEC, POINTER, spotPoint, type Point, type ScheduledStep } from '../schedule.js';
 import { applyAppContext, captureSessionStorage, panelSelector } from './context.js';
 import { LOADING_SELECTOR, settle, trackNetwork } from './settle.js';
 
-/** Every cursor move takes exactly this long, whatever the distance, so the scheduler's arithmetic holds. */
-export const DEFAULT_TRAVEL_SEC = 0.52;
+// The pointer timing rules live in the pure scheduler; re-exported here, where v1 defined them.
+export { DEFAULT_TRAVEL_SEC, travelSecFor } from '../schedule.js';
 /** A selector must match a visible element within this long. */
 export const SELECTOR_TIMEOUT_MS = 2500;
 
-const POINTER = new Set<Step['do']>(['click', 'hover', 'type']);
+/** Pointer steps that glide onto a target (`sel`). A `do: park` step glides to a spot instead (recorded by its own branch). */
+const onTarget = (d: Step['do']) => POINTER.has(d) && d !== 'park';
+/** The automatic park glide takes the default travel time. */
+const PARK_GLIDE_MS = DEFAULT_TRAVEL_SEC * 1000;
 const CURSOR_PX = 28;
 /** Where the arrow's tip sits inside its 28 px box (see overlay.js). */
 const CURSOR_TIP = { x: 3, y: 2 };
@@ -58,11 +61,6 @@ export function ringPeakSec(holdMs: number = RING_HOLD_MS): number {
   return (RING_FADE_MS + Math.min(RING_PEAK_LAG_MS, holdMs / 2)) / 1000;
 }
 
-/** Seconds the cursor travels before a step's action fires. */
-export function travelSecFor(step: Step): number {
-  return POINTER.has(step.do) ? DEFAULT_TRAVEL_SEC : 0;
-}
-
 /** A box in the take's frame pixels. */
 export interface Box {
   x: number;
@@ -85,6 +83,10 @@ export interface TakeEvent {
   ringBox?: Box;
   /** Box covered by the cursor graphic at its destination. */
   cursorTo?: Box;
+  /** Seconds after the flash when the cursor set off to park, after this pointer step (see `ScheduledStep.park`). */
+  parkedAt?: number;
+  /** Box covered by the cursor graphic where it parked (tip-anchored, like `cursorTo`). */
+  parkTo?: Box;
   /** Open panels right after the action. */
   panels: Box[];
   /** A loading indicator was visible right after the action. */
@@ -188,6 +190,8 @@ async function measure(page: Page, sceneId: string, index: number, sels: string[
 }
 
 const centre = (b: Box) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
+/** The box the cursor graphic covers with its tip at `p`. */
+const cursorBox = (p: Point): Box => ({ x: round(p.x - CURSOR_TIP.x), y: round(p.y - CURSOR_TIP.y), w: CURSOR_PX, h: CURSOR_PX });
 
 /**
  * Re-measure the target just before the pointer lands and check the element at its centre is the
@@ -362,13 +366,20 @@ async function loginStep(page: Page, app: AppConn, step: Step, i: number): Promi
 }
 
 /**
- * Record one scene as one take: open the route, settle, park the cursor, flash, then run each
+ * Record one scene as one take: open the route, settle, place the cursor, flash, then run each
  * scheduled step at its time (relative to the flash), logging where everything was. Writes
- * `<out>/<scene>.webm` and `<out>/<scene>.boxes.json`.
+ * `<out>/<scene>.webm` and `<out>/<scene>.boxes.json`. `opts.cursor.start` is where the cursor starts when the
+ * scene sets no `cursor` and no step is pre-positioned.
  */
-export async function recordScene(scene: Scene, scheduled: ScheduledStep[], app: AppConn, out: string): Promise<Take> {
+export async function recordScene(
+  scene: Scene,
+  scheduled: ScheduledStep[],
+  app: AppConn,
+  out: string,
+  opts: { cursor?: CursorCfg } = {},
+): Promise<Take> {
   for (const { index, step } of scheduled)
-    if ((POINTER.has(step.do) || step.do === 'ring' || step.do === 'zoom') && selectors(step).length === 0)
+    if ((onTarget(step.do) || step.do === 'ring' || step.do === 'zoom') && selectors(step).length === 0)
       throw new Error(`scene "${scene.id}" step ${index}: ${step.do} needs sel`);
   fs.mkdirSync(out, { recursive: true });
   const phone = scene.viewport === 'phone';
@@ -394,7 +405,8 @@ export async function recordScene(scene: Scene, scheduled: ScheduledStep[], app:
     try {
       page = await context.newPage();
       const videoStart = epoch();
-      take = await runTake(page, scene, scheduled, app, viewport, videoStart);
+      const start = spotPoint(scene.cursor ?? opts.cursor?.start ?? DEFAULTS.cursor.start, viewport);
+      take = await runTake(page, scene, scheduled, app, videoStart, start);
     } finally {
       await context.close(); // finishes the video file
     }
@@ -420,8 +432,8 @@ async function runTake(
   scene: Scene,
   scheduled: ScheduledStep[],
   app: AppConn,
-  viewport: { width: number; height: number },
   videoStart: number,
+  start: Point,
 ): Promise<Omit<Take, 'file'>> {
   const url = (p: string) => new URL(p, app.baseUrl).href;
   await checkPanels(page, app);
@@ -443,12 +455,13 @@ async function runTake(
   const navs = await navBoxes(page, app);
 
   const steps = [...scheduled].sort((a, b) => a.index - b.index);
-  let cursor = { x: viewport.width / 2, y: viewport.height / 2 };
-  const parked = steps.find((s) => s.prePosition && selectors(s.step).length > 0);
-  if (parked) {
-    const { first } = await measure(page, scene.id, parked.index, selectors(parked.step));
-    cursor = { x: first.x + first.w / 2, y: first.y + first.h / 2 };
-  }
+  // The start spot, unless a pre-positioned step needs the cursor already on its target.
+  let cursor: Point = { ...start };
+  const ready = steps.find((s) => s.prePosition && onTarget(s.step.do) && selectors(s.step).length > 0);
+  // Measured before the flash and reused at its cue, so the little time between the flash and an early cue isn't
+  // spent finding the target again (the aim check still re-measures it just before the action).
+  const readyM = ready && (await measure(page, scene.id, ready.index, selectors(ready.step)));
+  if (readyM) cursor = centre(readyM.first);
   await page.evaluate(([x, y]) => window.__scenecast.cursor(x, y), [cursor.x, cursor.y] as const);
 
   // t = 0 is the flash's first painted frame. The page stamps it on its own epoch clock; we convert it
@@ -464,11 +477,16 @@ async function runTake(
   /** When the latest ring is removed (Node epoch ms); a later step first waits for the page to show it gone. */
   let ringGoneAt = 0;
   const peakMeasures: Promise<void>[] = [];
-  for (const { index, step, startAt } of steps) {
+  /** Park glides in flight: each is fired at its time without holding up the steps in between. */
+  const parks: Promise<void>[] = [];
+  for (const [k, { index, step, startAt, travel, park }] of steps.entries()) {
     const sels = selectors(step);
     const due = flashEpoch + startAt * 1000;
     const ev: Partial<TakeEvent> & { index: number; kind: Step['do'] } = { index, kind: step.do };
-    if (step.settle !== false && !(await settleTake())) ev.settleTimedOut = true;
+    // The pre-positioned first step was found on a settled page just before the flash: settling again would
+    // only spend the short time before its early cue.
+    const prePlaced = k === 0 && readyM !== undefined && index === ready?.index;
+    if (step.settle !== false && !prePlaced && !(await settleTake())) ev.settleTimedOut = true;
     // A ring that ends before this step must be off screen in the take before it goes ahead. (One that
     // ends just before the step needs no wait: the step's own glide or ring repaints the page anyway.)
     if (ringGoneAt && ringGoneAt + RINGS_GONE_MARGIN_MS <= due) {
@@ -476,13 +494,18 @@ async function runTake(
       ringGoneAt = 0;
     }
 
-    if (POINTER.has(step.do)) {
-      let m = await measure(page, scene.id, index, sels);
-      await sleepUntil(due);
-      const arrive = Math.max(epoch(), due) + DEFAULT_TRAVEL_SEC * 1000;
-      cursor = centre(m.first);
-      const glide = [cursor.x, cursor.y, arrive - GLIDE_LEAD_MS + offset] as const;
-      quiet(page.evaluate(([x, y, end]) => window.__scenecast.moveTo(x, y, end), glide));
+    if (onTarget(step.do)) {
+      let m = readyM && index === ready?.index ? readyM : await measure(page, scene.id, index, sels);
+      // Each step glides for its own travel. With none (pre-positioned) the cursor is already on the
+      // target: no glide and no lead, and the action fires at `due`.
+      let arrive = due;
+      if (travel > 0) {
+        await sleepUntil(due);
+        arrive = Math.max(epoch(), due) + travel * 1000;
+        cursor = centre(m.first);
+        const glide = [cursor.x, cursor.y, arrive - GLIDE_LEAD_MS + offset] as const;
+        quiet(page.evaluate(([x, y, end]) => window.__scenecast.moveTo(x, y, end), glide));
+      }
       await sleepUntil(arrive - AIM_CHECK_MS);
       m = await aim(m, sels, scene.id, index);
       ev.loadingBefore = (await snapshot(page, panelSel)).loading;
@@ -495,7 +518,7 @@ async function runTake(
         quiet(page.evaluate(([x, y]) => window.__scenecast.cursor(x, y), [cursor.x, cursor.y] as const));
       }
       ev.target = m.union;
-      ev.cursorTo = { x: round(cursor.x - CURSOR_TIP.x), y: round(cursor.y - CURSOR_TIP.y), w: CURSOR_PX, h: CURSOR_PX };
+      ev.cursorTo = cursorBox(cursor);
       if (step.do === 'click' || step.do === 'type') {
         quiet(page.evaluate(([x, y]) => window.__scenecast.ripple(x, y), [cursor.x, cursor.y] as const));
         await page.mouse.down();
@@ -553,9 +576,32 @@ async function runTake(
     Object.assign(ev, await snapshot(page, panelSel));
     // A step held with `ms` is busy until the hold ends.
     if (step.ms && ev.at !== undefined) ev.busyUntil = Math.max(ev.busyUntil ?? ev.at, ev.at + step.ms / 1000);
+    if (park && onTarget(step.do) && ev.at !== undefined) {
+      // Glide off to the park spot once the action is over and the park time has come. Skipped when the glide
+      // would still be running as the next pointer step sets off (two glides would fight over the cursor).
+      // The park delay counts from the action as it happened, so a late action still rests before the cursor leaves.
+      const delaySec = park.at - (startAt + travel);
+      const setOff = flashEpoch + 1000 * Math.max(park.at, ev.at + delaySec, ev.busyUntil ?? ev.at, sinceFlash());
+      const next = steps.slice(k + 1).find((s) => POINTER.has(s.step.do));
+      if (!next || setOff + PARK_GLIDE_MS <= flashEpoch + next.startAt * 1000) {
+        ev.parkTo = cursorBox(park.to);
+        ev.parkedAt = Math.round((setOff - flashEpoch) * 10) / 10000;
+        ev.busyUntil = ev.parkedAt + PARK_GLIDE_MS / 1000;
+        holdUntil = Math.max(holdUntil, setOff + PARK_GLIDE_MS);
+        const to = park.to;
+        parks.push(
+          sleepUntil(setOff).then(() => {
+            cursor = { ...to };
+            const glide = [to.x, to.y, setOff + PARK_GLIDE_MS + offset] as const;
+            quiet(page.evaluate(([x, y, end]) => window.__scenecast.moveTo(x, y, end), glide));
+          }),
+        );
+      }
+    }
     events.push(ev as TakeEvent);
     holdUntil = Math.max(holdUntil, due + (step.ms ?? 0));
   }
+  await Promise.all(parks);
   await sleepUntil(Math.max(holdUntil, epoch()));
   if (ringGoneAt) await ringsGone(page);
   await sleepUntil(epoch() + TAIL_SEC * 1000);
