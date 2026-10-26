@@ -95,12 +95,26 @@ def words_from_tokens(text, token_words):
     return out
 
 
+def is_lexical(word):
+    """A word with a letter or a digit in it. Punctuation-only words (" — ", "-") are usually silent: the aligner can
+    give them no frames, so they may share a start with their neighbour."""
+    return re.search(r"[^\W_]", word) is not None
+
+
 def check_times(words):
-    """Why the word times can't be trusted, or None: every start must come strictly after the one before it (all
-    zeros, or several words on one frame, means the aligner had nothing to go on)."""
+    """Why the word times can't be trusted, or None: no start may come before the one before it, and each word with
+    a letter or digit must start strictly after the previous such word (all zeros, or two spoken words on one frame,
+    means the aligner had nothing to go on). Punctuation-only words may tie."""
+    last = None
     for a, b in zip(words, words[1:]):
-        if not b["start"] > a["start"]:
-            return f'"{b["w"]}" does not start after "{a["w"]}" ({b["start"]:.3f} s vs {a["start"]:.3f} s)'
+        if b["start"] < a["start"]:
+            return f'"{b["w"]}" starts before "{a["w"]}" ({b["start"]:.3f} s vs {a["start"]:.3f} s)'
+    for w in words:
+        if not is_lexical(w["w"]):
+            continue
+        if last is not None and not w["start"] > last["start"]:
+            return f'"{w["w"]}" does not start after "{last["w"]}" ({w["start"]:.3f} s vs {last["start"]:.3f} s)'
+        last = w
     return None
 
 
@@ -195,9 +209,10 @@ def finish_alignment(text, pieces, onset, offset):
     first = out[0]
     if len(out) > 1:  # never at or after the second word: at most one alignment frame before it
         onset = min(onset, out[1]["start"] - ALIGN_FRAME_SEC)
-    first["start"] = max(first["start"], onset)
+    if onset > first["start"]:  # the aligner's own start is pinned to the clip start; the onset is later and wins
+        first["start"] = onset
+        first["from"] = "onset"
     first["end"] = max(first["end"], first["start"])
-    first["from"] = "onset"
     for w in out:
         w["start"] += offset
         w["end"] += offset

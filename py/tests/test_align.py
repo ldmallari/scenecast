@@ -87,6 +87,29 @@ def test_the_first_word_starts_at_the_onset_but_never_after_the_second_word():
     assert finish_alignment("Done.", _pieces((" Done", 0.0, 0.4), (".", 0.4, 0.4)), 0.3, 1.0)[0]["start"] == pytest.approx(1.3)
 
 
+def test_the_first_word_is_labelled_onset_only_when_the_onset_was_used():
+    # The aligner's own start (0.25) is later than the onset (0.10): it stands, and says so.
+    out = finish_alignment("To sign it", _pieces((" To", 0.25, 0.3), (" sign", 0.32, 0.5), (" it", 0.5, 0.7)), 0.10, 0.0)
+    assert out[0]["start"] == pytest.approx(0.25) and out[0]["from"] == "forced"
+
+
+def test_a_silent_punctuation_word_may_share_a_start_with_its_neighbour():
+    # " — " gets no frames of its own: it starts where "then" does. That is not a sign of a bad alignment.
+    text = "Press Save — then wait."
+    pieces = _pieces((" Press", 0.0, 0.3), (" Save", 0.3, 0.7), (" —", 0.9, 0.9), (" then", 0.9, 1.1), (" wait", 1.1, 1.4),
+                     (".", 1.4, 1.4))
+    out = finish_alignment(text, pieces, 0.05, 0.0)
+    assert [w["w"] for w in out] == text.split()
+    assert [w["start"] for w in out] == pytest.approx([0.05, 0.3, 0.9, 0.9, 1.1])
+    # Two spoken words on one frame are still rejected, and so is a start going backwards.
+    with pytest.raises(AlignmentError, match='"then" does not start after "Save"'):
+        finish_alignment(text, _pieces((" Press", 0.0, 0.3), (" Save", 0.9, 0.9), (" —", 0.9, 0.9), (" then", 0.9, 1.1),
+                                       (" wait", 1.1, 1.4), (".", 1.4, 1.4)), 0.05, 0.0)
+    from scenecast_py.align import check_times
+
+    assert "starts before" in check_times([{"w": "a", "start": 1.0}, {"w": "—", "start": 0.9}, {"w": "b", "start": 1.2}])
+
+
 def test_finish_alignment_rejects_an_empty_result():
     with pytest.raises(AlignmentError, match="no words"):
         finish_alignment("Open the menu", [], 0.1, 0.0)
@@ -268,3 +291,21 @@ def test_align_phrases_times_each_phrase_start_on_a_joined_voice_track():
         lo = round(p["start"] * 16000)
         onset = (lo + first_sample_over(pcm[lo:], 0.02)) / 16000
         assert abs(w["start"] - onset) <= 0.15, (w, p, onset)
+
+
+@E2E
+def test_a_phrase_with_an_em_dash_is_forced_not_a_fallback(capsys):
+    """The punctuation-only word " — " may tie with the next word; the phrase must still be aligned, not fall back."""
+    from scenecast_py.kokoro import Kokoro
+    from scenecast_py.voice import build_scene, forced_words
+
+    tts = Kokoro(str(CACHE / "kokoro-v1.0.onnx"), str(CACHE / "voices-v1.0.bin"))
+    text = "Press Save — then wait for the check."
+    audio, tl = build_scene([text], tts, 0.2, speed=0.9)
+    words = forced_words(whisper(), audio, tl["phrases"], heard=lambda: pytest.fail("fell back to the free transcript"))
+    with capsys.disabled():
+        print("em dash words:", [(w["w"], round(w["start"], 3), w["from"]) for w in words])
+    assert [w["w"] for w in words] == text.split()
+    assert {w["from"] for w in words} <= {"onset", "forced"}
+    assert "onset" in tl["phrases"][0]
+    assert "falls back" not in capsys.readouterr().err

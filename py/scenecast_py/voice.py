@@ -179,9 +179,10 @@ def _forced_phrase(model, audio, p, pad):
     words = []
     for w in got:
         start = min(max(w["start"], p["start"]), p["end"])
-        if words and not start > words[-1]["start"]:
-            raise align.AlignmentError(f'"{w["w"]}" does not start after "{words[-1]["w"]}" inside the phrase')
         words.append({"w": w["w"], "start": start, "end": min(max(w["end"], start), p["end"]), "from": w["from"]})
+    reason = align.check_times(words)  # again after keeping the words inside the phrase
+    if reason:
+        raise align.AlignmentError(f"{reason} inside the phrase")
     return words
 
 
@@ -222,7 +223,7 @@ def forced_words(model, audio, phrases, pad=ALIGN_PAD_SEC, heard=None):
         if words and got and got[0]["start"] < words[-1]["start"]:
             got[0]["start"] = words[-1]["start"]
             got[0]["end"] = max(got[0]["end"], got[0]["start"])
-        if got and got[0]["from"] == "onset":
+        if got and got[0]["from"] in ("onset", "forced"):  # aligned on the clean clip (not a fallback)
             p["onset"] = got[0]["start"] - p["start"]
         words += got
     return words
