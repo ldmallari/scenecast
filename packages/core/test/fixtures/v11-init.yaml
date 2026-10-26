@@ -1,0 +1,17 @@
+id: demo
+title: Demo walkthrough
+output: out/demo.mp4
+brand:
+  primary: "#2255cc"
+  accent: "#ffaa00"
+  font: Inter
+  introTitle: Demo
+app:
+  baseUrl: http://localhost:3000
+  initScript:
+    - ./init.js
+    - "window.__inline = 1;"
+scenes:
+  - id: s1
+    kind: app
+    narration: Open the menu now.

@@ -38,6 +38,15 @@ export async function loadScene(file: string): Promise<VideoSpec> {
   if (spec.app.storageState) spec.app.storageState = rel(spec.app.storageState);
   if (spec.app.loginHook) spec.app.loginHook = rel(spec.app.loginHook);
   if (spec.app.seed) spec.app.seed = resolveSeed(spec.app.seed, dir);
+  const init = spec.app.initScript;
+  if (init !== undefined)
+    spec.app.initScript = (Array.isArray(init) ? init : [init]).map((i) => resolveInitScript(i, dir));
+  if (spec.app.routes)
+    for (const r of spec.app.routes) if (r.module) r.module = rel(r.module);
+  const bg = spec.brand.background;
+  if (bg && typeof bg === 'object' && 'image' in bg) bg.image = rel(bg.image)!;
+  if (spec.cards.introPage) spec.cards.introPage = rel(spec.cards.introPage);
+  if (spec.cards.outroPage) spec.cards.outroPage = rel(spec.cards.outroPage);
   for (const scene of spec.scenes) if (scene.page) scene.page = rel(scene.page);
   return spec;
 }
@@ -57,4 +66,18 @@ export function resolveSeed(seed: string, sceneDir: string): string {
   if (/[\\/]/.test(s) || /\.(m?js|cjs|ts|sh|py|rb)$/i.test(s))
     throw new Error(`app.seed: no such file: ${abs} (a seed is a script path relative to the scene file, or a shell command)`);
   return seed;
+}
+
+/**
+ * An `app.initScript` item is a file path only when it is a single token naming a file that exists, relative to
+ * the scene file's folder (made absolute). Anything with whitespace is inline code and kept verbatim. A single
+ * token that looks like a path (slash or script extension) but names no file is an error.
+ */
+export function resolveInitScript(item: string, sceneDir: string): string {
+  const s = item.trim();
+  if (/\s/.test(s)) return item;
+  const abs = path.isAbsolute(s) ? s : path.resolve(sceneDir, s);
+  if (existsSync(abs)) return abs;
+  if (/[\\/]/.test(s) || /\.(m?js|cjs)$/i.test(s)) throw new Error(`app.initScript: no such file: ${abs}`);
+  return item;
 }

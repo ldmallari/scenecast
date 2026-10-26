@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadScene, parseScene, DEFAULTS, VideoSpecSchema } from '../src/index.js';
+import { loadScene, parseScene, sceneWarnings, DEFAULTS, VideoSpecSchema } from '../src/index.js';
 
 const fx = (n: string) =>
   path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', n);
@@ -101,5 +101,96 @@ describe('scene file strictness', () => {
   it('the demo scene file loads under the strict schema', async () => {
     const demo = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../examples/demo-app/video.yaml');
     await expect(loadScene(demo)).resolves.toBeDefined();
+  });
+});
+
+describe('v1.1 scene fields', () => {
+  const base = {
+    id: 'demo',
+    title: 'Demo',
+    output: 'out/demo.mp4',
+    brand: { primary: '#2255cc', accent: '#ffaa00', font: 'Inter', introTitle: 'Demo' },
+    app: { baseUrl: 'http://localhost:3000' },
+  };
+  const one = (steps: unknown[], sceneExtra: Record<string, unknown> = {}) => ({
+    ...base,
+    scenes: [{ id: 's1', kind: 'app', narration: 'Open the menu now.', steps, ...sceneExtra }],
+  });
+  const withApp = (appExtra: Record<string, unknown>) => ({
+    ...one([]),
+    app: { ...base.app, ...appExtra },
+  });
+
+  it('a v1 scene file loads unchanged and gets the v1.1 defaults', async () => {
+    const s = await loadScene(fx('minimal.yaml'));
+    expect(s.cards).toEqual({ introSec: 3, outroSec: 3, entrance: 'reveal' });
+    expect(s.cursor).toEqual({ start: 'center', park: 'right', parkAfterSec: 2.5 });
+    expect(s.phone).toEqual({ align: 'left' });
+    expect(s.voice.clauseGapSec).toBe(0.15);
+  });
+  it('the v1 demo scene file still loads', async () => {
+    const demo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../examples/demo-app/video.yaml');
+    await expect(loadScene(demo)).resolves.toBeDefined();
+  });
+  it('unzoom needs a zoom before it', () => {
+    expect(() => parseScene(one([{ cue: 'menu', do: 'unzoom' }]))).toThrow('scene "s1" step 0: unzoom with no zoom before it');
+  });
+  it('a scene zoom counts as the zoom an unzoom ends', () => {
+    expect(() => parseScene(one([{ cue: 'menu', do: 'unzoom' }], { zoom: { sel: '.a' } }))).not.toThrow();
+  });
+  it('a zoom ended by unzoom takes no ms', () => {
+    expect(() => parseScene(one([{ cue: 'open', do: 'zoom', sel: '.a', ms: 900 }, { cue: 'menu', do: 'unzoom' }])))
+      .toThrow('scene "s1" step 0: zoom has ms and is ended by the unzoom at step 1; drop one');
+  });
+  it('a zoom with ms is fine when nothing unzooms it', () => {
+    expect(() => parseScene(one([{ cue: 'open', do: 'zoom', sel: '.a', ms: 900 }]))).not.toThrow();
+  });
+  it('scroll takes one of sel, by, to', () => {
+    expect(() => parseScene(one([{ do: 'scroll', by: 400, to: 0 }]))).toThrow('scene "s1" step 0: scroll takes one of sel, by, to');
+    expect(() => parseScene(one([{ do: 'scroll', by: 400 }]))).not.toThrow();
+  });
+  it('step fields are checked against their step kind', () => {
+    expect(() => parseScene(one([{ cue: 'open', do: 'zoom', sel: '.a', glideMs: 300 }]))).toThrow('glideMs is for click, type, hover, check and park steps');
+    expect(() => parseScene(one([{ cue: 'open', do: 'ring', sel: '.a', ringSel: '.b' }]))).toThrow('ringSel and ringMs are for click, type, hover and check steps');
+    expect(() => parseScene(one([{ cue: 'open', do: 'click', sel: '.a', at: 'left' }]))).toThrow('at is for park steps');
+  });
+  it('park and check steps and their fields are accepted; ringSel does not set ring', () => {
+    const s = parseScene(one([
+      { cue: 'open', do: 'park', at: { x: 10, y: 20 }, glideMs: 300 },
+      { cue: 'menu', do: 'check', sel: '#c', ringSel: ['.a', '.b'], ringMs: 800 },
+    ]));
+    expect(s.scenes[0]!.steps[1]!.ring).toBeUndefined();
+  });
+  it('a route uses one of json, body, module', () => {
+    expect(() => parseScene(withApp({ routes: [{ url: '**/x', json: {}, body: 'y' }] }))).toThrow('app.routes[0]: use one of json, body, module');
+    expect(() => parseScene(withApp({ routes: [{ url: '**/x', json: { a: 1 }, status: 201 }] }))).not.toThrow();
+  });
+  it('initScript resolves a file and keeps inline code', async () => {
+    const s = await loadScene(fx('v11-init.yaml'));
+    expect(s.app.initScript).toEqual([fx('init.js'), 'window.__inline = 1;']);
+    await expect(loadScene(fx('v11-init-missing.yaml'))).rejects.toThrow(`app.initScript: no such file: ${fx('missing.js')}`);
+  });
+  it('parseScene alone leaves initScript as written', () => {
+    expect(parseScene(withApp({ initScript: 'x.js' })).app.initScript).toBe('x.js');
+  });
+  it('cards.introSec is 0 or at least 1', () => {
+    expect(() => parseScene({ ...one([]), cards: { introSec: 0.5 } })).toThrow('cards.introSec: 0 (no card) or at least 1');
+    expect(() => parseScene({ ...one([]), cards: { outroSec: 0.5 } })).toThrow('cards.outroSec: 0 (no card) or at least 1');
+    expect(parseScene({ ...one([]), cards: { introSec: 0 } }).cards.introSec).toBe(0);
+  });
+  it('page on an app scene is kept and warned', () => {
+    const s = parseScene(one([], { page: 'p.html' }));
+    expect(s.scenes[0]!.page).toBe('p.html');
+    expect(sceneWarnings(s)).toEqual(['scene "s1": page is used only on title scenes; ignored']);
+  });
+  it('brand background forms parse', () => {
+    for (const background of ['#123456', { from: '#111', to: '#222', angle: 90 }, { image: 'bg.png', dim: 0.5 }])
+      expect(() => parseScene({ ...one([]), brand: { ...base.brand, background, cardFont: 'Serif' } })).not.toThrow();
+  });
+  it('DEFAULTS carries the v1.1 values', () => {
+    expect(DEFAULTS.cursor).toMatchObject({ parkDelaySec: 0.6, marginPx: 96, spotY: 0.45 });
+    expect(DEFAULTS.phone).toMatchObject({ touchPx: 34, touchLeadSec: 0.25, centreShare: 0.3 });
+    expect(DEFAULTS.captions.fullFrameShare).toBe(0.9);
+    expect(DEFAULTS.video.takeTailSec).toBe(0.5);
   });
 });
