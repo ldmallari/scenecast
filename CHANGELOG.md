@@ -1,0 +1,89 @@
+# Changelog
+
+All notable changes to scenecast are listed here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and scenecast uses
+[semantic versioning](https://semver.org/): a scene file that renders on 1.x keeps rendering on later 1.x releases.
+`scenecast --version` prints the version you have.
+
+## [Unreleased]
+
+## [1.1.0] - 2026-10-28
+
+### Added
+
+- `scenecast --version` (and `-v`) prints the version.
+- Scene file fields for real apps: `app.routes` answers network requests (feature flags, slow third parties, an API
+  that is not running), `app.initScript` runs before the app's own scripts, `app.panels` names the app's own pop-overs
+  and drawers, and a sign-in kept in sessionStorage is saved and restored.
+- New steps and step options: `check` (ticks a checkbox or switch only when it is not ticked), `park` (moves the
+  cursor out of the way), `unzoom` (ends a zoom on a cue word), `scroll` by or to a position, `ringSel` and `ringMs`
+  (ring another element during a click, type, hover or check), and `glideMs` per step.
+- A scene can start zoomed (`zoom` on the scene), and its cursor can start at a chosen spot (`cursor`).
+- The cursor parks by itself between distant steps (`cursor.park`, `cursor.parkAfterSec`).
+- The first pointer step of a scene that comes too soon for a glide is pre-positioned: the cursor is on its target
+  from the first frame and the action still fires on its cue.
+- Phone scenes (`viewport: phone`): touch input with a touch indicator in the brand accent, a phone outline on the
+  brand stage, the phone on the left, centre or right, and captions beside it.
+- Configurable cards: a gradient or image background, a card font, an entrance animation, an outro "next" line, and
+  your own HTML page as a card.
+- Captions break at the narration's clauses, never end a line on a function word, and can use the frame's corners.
+  The voice pauses briefly at `:` and `;` (`voice.clauseGapSec`).
+- Word times come from forced alignment of the known script against the voice, so every narration word gets exactly
+  one time. The audit shows where each word time came from.
+- A warning when a zoom becomes the full frame because it holds a declared nav.
+- A render locks its work dir, so a second render of the same video stops at once and names the render that holds it.
+- A website (GitHub Pages), a logo, and a section on using scenecast with an AI coding agent.
+
+### Changed
+
+- PyAV is no longer installed; nothing GPL-only is installed or loaded.
+- The README demo is a smoother 25 fps render, and the README shows current render times.
+
+### Fixed
+
+- The final render's Chromium runs without its sandbox on Linux, as the recording already did. This fixes
+  "No usable sandbox!" on Ubuntu 23.10 and later, and on CI runners.
+- Blank frames that start right after an action (a page painting blank after a click) no longer reach the video.
+- A phone scene's `brand.accent` may be any CSS colour; one that is not a colour warns and uses the default.
+- Hover rings wait for the hovered element to stop moving before they are drawn.
+- The CLI loads again on Node's type stripping.
+- Recorder timing: the video clock, page offsets after a navigation, and the take margin after a late last action.
+- Takes always cover the whole narration, and retime never reads past the last frame.
+- An initial zoom is re-measured after the first step's scroll, and a `scroll` by or to a position fails when the
+  window does not move.
+- Image cards keep text readable (4.5:1) with a scrim, and card pages never reach the network.
+- Takes recorded before a fix to the record stage are recorded again, while the voice and music are kept.
+
+## [1.0.0] - 2026-10-26
+
+The first release.
+
+### Added
+
+- Scene files in YAML (or JSON): narration, steps with cue words, selectors, seed data and sign-in, checked when they
+  load.
+- A toolchain that sets itself up without admin rights (`scenecast doctor`): uv, the Python environment, ffmpeg and
+  the Kokoro and Whisper models.
+- A narrated voice from Kokoro, phrase by phrase, with word times.
+- A scheduler that times each step to land on its cue word, and a per-scene recorder that drives Chromium with
+  Playwright.
+- Retime: each take is fitted to the voice clock by holding or trimming quiet frames, so slow pages do not make
+  actions late.
+- Captions placed clear of what is being clicked, typed into or highlighted.
+- A Revideo composer with zoom, highlight rings, captions, and intro, outro and chapter cards.
+- A synthesised music bed (or your own track) and a loudness pass to −16 LUFS.
+- An audit of every cued moment in the finished video (sync, target, captions, crop, loading, loudness, blank frames,
+  narration), with a table, frames, a contact sheet and an exit code.
+- The `render`, `preview`, `login` and `doctor` commands, and a demo app with its video.
+- A Claude Code skill with scene format, audit and troubleshooting references, and a licence check for every
+  dependency.
+
+### Fixed
+
+- Fixes made before the first release: no GPL dependencies, the scheduler's handling of missing cues, recorder clock
+  sync, retime cuts, caption overlaps, the composer's render worker, audit target checks, seed commands that run as
+  written, and strict scene files that reject unknown keys.
+
+[Unreleased]: https://github.com/ldmallari/scenecast/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/ldmallari/scenecast/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/ldmallari/scenecast/releases/tag/v1.0.0

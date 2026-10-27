@@ -15,12 +15,16 @@ import { prepare, render } from './render.js';
 export { render, prepare, runSeed, type RenderOptions, type RenderResult } from './render.js';
 export { StageCache, hashFile } from './cache.js';
 
+/** The scenecast version, from this package's package.json. */
+export const VERSION: string = (JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
+
 const USAGE = `Usage:
   scenecast doctor                      check the toolchain (uv, Python, ffmpeg, Chromium, models)
   scenecast login <video.yaml>          sign in by hand and save app.storageState
   scenecast render <video.yaml> [--only <sceneId>] [--no-audit] [--keep-work] [--fresh]
                                 [--out <dir>] [--work <dir>]
   scenecast preview <video.yaml>        open the composed video in the Revideo player
+  scenecast --version                   print the version
 
 render writes <out>/<output>.mp4, .srt, chapters.txt and audit/; its exit code is the audit verdict.
 Stages whose inputs did not change are reused from <work>/<id>/; --fresh redoes them all (for
@@ -118,9 +122,14 @@ export async function main(argv: string[]): Promise<number> {
       out: { type: 'string' },
       work: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
+      version: { type: 'boolean', short: 'v' },
     },
   });
   const [command, file] = positionals;
+  if (values.version) {
+    console.log(`scenecast ${VERSION}`);
+    return 0;
+  }
   if (values.help || !command) {
     console.log(USAGE);
     return command || values.help ? 0 : 2;

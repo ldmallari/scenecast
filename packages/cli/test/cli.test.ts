@@ -213,4 +213,14 @@ describe('the scenecast binary', () => {
     const { stdout } = await promisify(execFile)(process.execPath, [bin, '--help'], { timeout: 30_000 });
     expect(stdout).toMatch(/^Usage:/);
   }, 40_000);
+
+  it('prints the version from the cli package.json with --version and -v', async () => {
+    const bin = fileURLToPath(new URL('../bin/scenecast.js', import.meta.url));
+    const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+    expect(pkg.version).toBe('1.1.0');
+    for (const flag of ['--version', '-v']) {
+      const { stdout } = await promisify(execFile)(process.execPath, [bin, flag], { timeout: 30_000 });
+      expect(stdout.trim()).toBe(`scenecast ${pkg.version}`);
+    }
+  }, 60_000);
 });

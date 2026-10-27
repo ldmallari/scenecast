@@ -105,6 +105,7 @@ scenecast login <video.yaml>          sign in by hand and save app.storageState
 scenecast render <video.yaml> [--only <sceneId>] [--no-audit] [--keep-work] [--fresh]
                               [--out <dir>] [--work <dir>]
 scenecast preview <video.yaml>        open the composed video in the Revideo player
+scenecast --version                   print the version
 ```
 
 `render` exits with 0 when the audit passes and 1 when any moment FAILs, so it can gate a CI job. Stages whose inputs
@@ -140,6 +141,9 @@ pnpm test                                      # unit tests (TypeScript)
 node scripts/check-licences.mjs                # every dependency's licence is allowed and listed
 SCENECAST_E2E=1 pnpm -C packages/cli exec vitest run -t e2e   # the whole demo render (slow)
 ```
+
+Releases follow [semantic versioning](https://semver.org/); every change is listed in
+[CHANGELOG.md](CHANGELOG.md).
 
 The repository is a pnpm workspace: `packages/core` (scene format, voice, scheduling, recording, captions, mix,
 audit), `packages/compose` (the Revideo composer), `packages/cli`, and `py/` (the Python side: voice, music, audit).
