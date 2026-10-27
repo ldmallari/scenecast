@@ -190,9 +190,15 @@ export function zoomCaptionWarnings(scene: Scene, take: Take, scheduled: Schedul
   const navs = (take.navs ?? []).map((n) => ({ ...n, box: toFrame(n.box) }));
   const same = (a: Box, b: Box) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
   const out: string[] = [];
+  const overlaps = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
   for (const z of plan.zooms ?? []) {
     const held = z.instant ? z.start : z.start + DEFAULTS.video.zoomEaseSec;
-    if (!(plan.cues ?? []).some((c) => c.reason && c.start < z.end && c.end > held)) continue;
+    const target = toFrame(z.box);
+    const region = clampZoom(target, frame, DEFAULTS.audit.zoomPadPx, undefined, phone ? phoneScreen(align).x : 0, navs);
+    // Only when the caption that found no free position lies over the zoomed target as shown: then the zoom is what
+    // blocks it. (A panel, the cursor or a ring in the way is reported by the audit, on its own row.)
+    const shown = onScreen(target, region);
+    if (!(plan.cues ?? []).some((c) => c.reason && c.start < z.end && c.end > held && overlaps(c.box, shown))) continue;
     let owner: string | undefined;
     if (z.instant && scene.zoom) owner = `scene "${scene.id}": zoom on ${selText(scene.zoom.sel)}`;
     else {
@@ -201,8 +207,6 @@ export function zoomCaptionWarnings(scene: Scene, take: Take, scheduled: Schedul
       if (e && step?.sel !== undefined) owner = `scene "${scene.id}" step ${e.index}: zoom on ${selText(step.sel)}`;
     }
     if (!owner) continue;
-    const target = toFrame(z.box);
-    const region = clampZoom(target, frame, DEFAULTS.audit.zoomPadPx, undefined, phone ? phoneScreen(align).x : 0, navs);
     const share = Math.round((100 * Math.min(target.h, region.h)) / region.h);
     out.push(`${owner} leaves no caption position free (its target fills ${share}% of the zoomed height); zoom on a smaller element, use a smaller pad, or end the zoom sooner`);
   }

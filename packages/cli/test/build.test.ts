@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { clampZoom, DEFAULTS, parseSrt, schedule, phoneScreen, phoneToFrame, travelSecFor, type Box, type Scene, type SceneVoice, type ScheduledStep, type Take, type VideoSpec } from '@scenecast/core';
 import { buildVoiceTrack, readWav, writeWav } from '../src/audio.js';
-import { appPlanScene, buildVideo, scheduleOptsFor, captionEvents, chaptersTxt, eventTimes, finalSrt, INTRO_SEC, OUTRO_SEC, onScreen, planZooms, toFrames, type Recorded } from '../src/build.js';
+import { appPlanScene, buildVideo, zoomCaptionWarnings, scheduleOptsFor, captionEvents, chaptersTxt, eventTimes, finalSrt, INTRO_SEC, OUTRO_SEC, onScreen, planZooms, toFrames, type Recorded } from '../src/build.js';
 
 const brand = { primary: '#1F3A5F', accent: '#F5C518', font: 'Inter', introTitle: 'Intro' };
 const spec = { id: 'v', title: 'The video', output: 'v', brand, app: { baseUrl: 'http://x' }, voice: DEFAULTS.voice, scenes: [] } as unknown as VideoSpec;
@@ -393,6 +393,19 @@ describe('zoom that leaves no room for captions', () => {
     expect(w[0]).toMatch(
       /^scene "a" step 1: zoom on #z leaves no caption position free \(its target fills \d+% of the zoomed height\); zoom on a smaller element, use a smaller pad, or end the zoom sooner$/,
     );
+  });
+
+  it('no warning when what blocks the caption is not the zoomed target (a panel, the cursor, a ring)', () => {
+    const app = appInput('a', { zoom: true });
+    const z = { start: 2, end: 4, box: { x: 860, y: 780, w: 200, h: 60 } };
+    const cue = (box: Box) => ({ start: 2.8, end: 3.5, lines: ['x'], side: 'bottom' as const, box, reason: 'no free position; bottom overlaps least' });
+    const plan = (box: Box) => ({ kind: 'app' as const, duration: 4.45, zooms: [z], cues: [cue(box)] });
+    const { take } = app.recorded;
+    // The caption sits in the top-left corner, nowhere near the zoomed target: something else blocked it.
+    expect(zoomCaptionWarnings(app.scene, take, app.scheduled, plan({ x: 0, y: 0, w: 300, h: 80 }), 'left')).toEqual([]);
+    // It overlaps the zoomed target as shown: the zoom is to blame.
+    const shown = onScreen(z.box, clampZoom(z.box, FRAME, 24));
+    expect(zoomCaptionWarnings(app.scene, take, app.scheduled, plan({ x: shown.x, y: shown.y + shown.h - 10, w: 700, h: 120 }), 'left')).toHaveLength(1);
   });
 
   it('no warning for a zoom that leaves a caption position free', () => {
