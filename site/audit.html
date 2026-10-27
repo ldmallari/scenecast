@@ -3,28 +3,31 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="light">
   <meta name="description" content="Understand scenecast audit rows, checks and thresholds, then fix timing, caption, crop and loading failures.">
   <title>Audit guide · scenecast</title>
   <link rel="icon" type="image/svg+xml" href="assets/brand/favicon-32.svg" media="(prefers-color-scheme: light)">
   <link rel="icon" type="image/svg+xml" href="assets/brand/favicon-32-dark.svg" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f3f4f3">
+  <link rel="preload" href="assets/fonts/archivo-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/plus-jakarta-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
   <script src="script.js" defer></script>
 </head>
-<body>
+<body class="reading-page">
   <a class="skip-link" href="#main">Skip to content</a>
-  <header class="site-header"><div class="shell header-inner">
-    <a class="wordmark" href="index.html"><picture class="brand-mark" aria-hidden="true"><source srcset="assets/brand/mark-reversed.svg" media="(prefers-color-scheme: dark)"><img src="assets/brand/mark.svg" alt="" width="32" height="32"></picture>scenecast</a>
-    <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="docs.html">Documentation</a><a href="audit.html" aria-current="page">Audit</a><a href="https://github.com/ldmallari/scenecast">GitHub <span aria-hidden="true">↗</span></a></nav>
-  </div></header>
-  <main id="main" class="shell" tabindex="-1"><div class="docs-layout"><aside class="toc"><nav aria-label="On this page"><p class="eyebrow">On this page</p><ul><li><a href="#how-the-audit-works">How the audit works</a></li><li><a href="#files">Files</a></li><li><a href="#the-table">Read the table</a></li><li><a href="#checks">Checks and thresholds</a></li><li><a href="#scene-checks">Scene checks</a></li><li><a href="#word-times">Word times</a></li><li><a href="#what-the-audit-does-not-check">Audit limits</a></li><li><a href="#read-a-fail-row">Read a FAIL row</a></li><li><a href="#fix-failures">Fix failures</a></li><li><a href="#sync-fails">Sync FAILs</a></li><li><a href="#the-cue-word-was-not-heard">Missing cue words</a></li><li><a href="#caption-fails">Caption FAILs</a></li><li><a href="#crop-fails">Crop FAILs</a></li><li><a href="#narration-warns">Narration WARNs</a></li><li><a href="#blank-frame-fails">Blank frame FAILs</a></li><li><a href="#the-cursor">The cursor</a></li><li><a href="#steps-that-fail-while-recording">Recording failures</a></li><li><a href="#loading-fails">Loading FAILs</a></li></ul></nav></aside><article class="prose"><header class="page-heading"><p class="eyebrow">Audit guide</p><h1>Check every moment.</h1><p class="lead">A render is only the start. The audit checks what actually made it into the finished video.</p></header><section aria-labelledby="how-the-audit-works"><h2 id="how-the-audit-works">How the audit works</h2><p>After every render, scenecast audits the finished video moment by moment and writes the result to <code>out/audit/</code>.
+<header class="site-header"><div class="shell header-inner">
+      <div class="brand"><a class="wordmark" href="index.html" aria-label="scenecast home"><img src="assets/brand/logo.svg" alt="scenecast" width="284" height="58"></a><p class="brand-tagline">We make app walkthroughs land on cue.</p></div>
+      <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="docs.html">Docs</a><a href="audit.html" aria-current="page">Audit</a><a class="github-nav" href="https://github.com/ldmallari/scenecast">GitHub <span aria-hidden="true">↗</span><span class="source-chip"> open source</span></a></nav>
+    </div></header>
+  <main id="main" tabindex="-1"><header class="page-heading shell"><h1>Check every moment.</h1><p class="lead">A render is only the start. The audit checks what actually made it into the finished video.</p></header><div class="shell reading-shell"><div class="docs-layout"><aside class="toc"><nav aria-label="On this page"><p class="eyebrow">On this page</p><ul><li><a href="#how-the-audit-works">How the audit works</a></li><li><a href="#files">Files</a></li><li><a href="#the-table">Read the table</a></li><li><a href="#checks">Checks and thresholds</a></li><li><a href="#scene-checks">Scene checks</a></li><li><a href="#word-times">Word times</a></li><li><a href="#what-the-audit-does-not-check">Audit limits</a></li><li><a href="#read-a-fail-row">Read a FAIL row</a></li><li><a href="#fix-failures">Fix failures</a></li><li><a href="#sync-fails">Sync FAILs</a></li><li><a href="#the-cue-word-was-not-heard">Missing cue words</a></li><li><a href="#caption-fails">Caption FAILs</a></li><li><a href="#crop-fails">Crop FAILs</a></li><li><a href="#narration-warns">Narration WARNs</a></li><li><a href="#blank-frame-fails">Blank frame FAILs</a></li><li><a href="#the-cursor">The cursor</a></li><li><a href="#steps-that-fail-while-recording">Recording failures</a></li><li><a href="#loading-fails">Loading FAILs</a></li></ul></nav></aside><article class="prose"><section aria-labelledby="how-the-audit-works"><h2 id="how-the-audit-works">How the audit works</h2><p>After every render, scenecast audits the finished video moment by moment and writes the result to <code>out/audit/</code>.
 <code>scenecast render</code> exits with code 1 when any check FAILs, so a script or CI job can stop on a bad video. A WARN never
 fails the render. <code>--no-audit</code> skips the audit and removes any older <code>out/audit/</code>, so a stale audit is never left next
 to a new video.</p>
 <p>The audit does not trust the plan. It transcribes the final mix with faster-whisper to find when each cue word is
 really heard, and it reads the boxes the recorder measured in the live page.</p>
 </section><div class="callout"><strong>Read the entire result.</strong><p>Read every row of <code>out/audit/audit-table.md</code> and every tile of <code>out/audit/contact-sheet.png</code>. PASS, WARN and FAIL are written as text as well as shown in colour.</p></div><h2 id="files">Files</h2>
-<table>
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
 <thead>
 <tr>
 <th scope="col">File</th>
@@ -49,10 +52,10 @@ really heard, and it reads the boxes the recorder measured in the live page.</p>
 <td>Those frames at full size, named <code>&lt;scene&gt;-&lt;cue&gt;.png</code>.</td>
 </tr>
 </tbody>
-</table>
+</table></div>
 <h2 id="the-table">The table</h2>
 <p>Each cued step is one row:</p>
-<table>
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
 <thead>
 <tr>
 <th scope="col">Column</th>
@@ -93,9 +96,9 @@ really heard, and it reads the boxes the recorder measured in the live page.</p>
 <td>The worst check: PASS, WARN or FAIL.</td>
 </tr>
 </tbody>
-</table>
+</table></div>
 <h2 id="checks">Checks</h2>
-<table class="check-table">
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table class="check-table">
 <thead>
 <tr>
 <th scope="col">Check</th>
@@ -140,9 +143,9 @@ really heard, and it reads the boxes the recorder measured in the live page.</p>
 <td>See <a href="audit.html#the-cue-word-was-not-heard">troubleshooting</a>: for a name, add it to <code>audit.allowList</code>; otherwise choose a more distinct cue word, or listen to how the voice says it.</td>
 </tr>
 </tbody>
-</table>
+</table></div>
 <p>Three checks cover the whole video:</p>
-<table>
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
 <thead>
 <tr>
 <th scope="col">Check</th>
@@ -163,7 +166,7 @@ really heard, and it reads the boxes the recorder measured in the live page.</p>
 <td>Never FAILs. A WARN shows a diff (<code>-&quot;expected&quot; +&quot;heard&quot;</code>) when the transcript differs from the script after normalising numbers, case and punctuation. A word or name in <code>audit.allowList</code> may be heard differently, including as one more word (for example &quot;worklist&quot; heard as &quot;work list&quot;), without a WARN. An allow-listed cue that recognition leaves out entirely is placed by position: at the gap the heard words around it leave.</td>
 </tr>
 </tbody>
-</table>
+</table></div>
 <h3 id="unzoom-rows">Unzoom rows</h3>
 <p>An <code>unzoom</code> step gets a row like any cued step. Its action time is the end of the zoom it closes (the nearest zoom
 end within 0.5 s of it); its target label is empty, and it has sync, captions and loading checks, but no target or
@@ -296,7 +299,8 @@ render goes on with the default yellow; give <code>brand.accent</code> a CSS col
 <p>A spinner or skeleton was visible just before the action. scenecast treats <code>[aria-busy=true]</code>, a
 <code>[role=progressbar]</code> without a value, <code>.is-loading</code>, <code>.skeleton</code> and <code>[data-scenecast-loading]</code> as loading. Seed the
 data, prewarm the route, or wait. A spinner that the action itself brings up is its result and does not fail.</p>
-<div class="next-page"><p>Keep the scene file as the source of truth.</p><a href="docs.html#scene-file-reference">Back to the scene reference <span aria-hidden="true">→</span></a></div></article></div></main>
-  <footer class="site-footer shell"><span>scenecast <span class="footer-separator" aria-hidden="true">/</span> Free and open source. MIT licensed.</span><a href="https://github.com/ldmallari/scenecast">Source on GitHub <span aria-hidden="true">↗</span></a></footer>
+<div class="next-page"><p>Keep the scene file as the source of truth.</p><a href="docs.html#scene-file-reference">Back to the scene reference <span aria-hidden="true">→</span></a></div></article></div></div></main>
+<footer class="site-footer">
+  <div class="shell footer-inner"><div><a href="index.html" class="footer-logo"><img src="assets/brand/logo.svg" alt="scenecast" width="237" height="48"></a><p>Free and open source. MIT licensed.</p></div><nav aria-label="Footer navigation"><a href="docs.html">Documentation</a><a href="audit.html">Audit</a><a href="https://github.com/ldmallari/scenecast">Source on GitHub <span aria-hidden="true">↗</span></a><a href="https://github.com/ldmallari/scenecast/blob/main/LICENSE">Licence</a><a href="https://github.com/ldmallari/scenecast/blob/main/THIRD_PARTY.md">Third-party licences</a></nav><p class="footer-joke"><code>bad takes &gt; /dev/null</code><span>That’s a wrap.</span></p></div></footer>
 </body>
 </html>

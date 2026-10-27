@@ -3,21 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="light">
   <meta name="description" content="Getting started and the complete scene file reference for scenecast.">
   <title>Documentation · scenecast</title>
   <link rel="icon" type="image/svg+xml" href="assets/brand/favicon-32.svg" media="(prefers-color-scheme: light)">
   <link rel="icon" type="image/svg+xml" href="assets/brand/favicon-32-dark.svg" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f3f4f3">
+  <link rel="preload" href="assets/fonts/archivo-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/plus-jakarta-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
   <script src="script.js" defer></script>
 </head>
-<body>
+<body class="reading-page">
   <a class="skip-link" href="#main">Skip to content</a>
-  <header class="site-header"><div class="shell header-inner">
-    <a class="wordmark" href="index.html"><picture class="brand-mark" aria-hidden="true"><source srcset="assets/brand/mark-reversed.svg" media="(prefers-color-scheme: dark)"><img src="assets/brand/mark.svg" alt="" width="32" height="32"></picture>scenecast</a>
-    <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="docs.html" aria-current="page">Documentation</a><a href="audit.html">Audit</a><a href="https://github.com/ldmallari/scenecast">GitHub <span aria-hidden="true">↗</span></a></nav>
-  </div></header>
-  <main id="main" class="shell" tabindex="-1"><div class="docs-layout"><aside class="toc"><nav aria-label="On this page"><p class="eyebrow">On this page</p><ul><li><a href="#getting-started">Getting started</a></li><li><a href="#your-first-scene">Your first scene</a></li><li><a href="#commands">Commands</a></li><li><a href="#scene-file-reference">Scene file reference</a></li><li><a href="#top-level">Top level</a></li><li><a href="#cards">cards</a></li><li><a href="#card-pages">Card pages</a></li><li><a href="#brand">brand</a></li><li><a href="#app">app</a></li><li><a href="#init-scripts-and-routes">Init scripts and routes</a></li><li><a href="#voice">voice</a></li><li><a href="#scenes">scenes</a></li><li><a href="#steps">steps</a></li><li><a href="#cursor">cursor</a></li><li><a href="#phone-scenes">Phone scenes</a></li><li><a href="#captions">Captions</a></li><li><a href="#output">Output</a></li></ul></nav></aside><article class="prose"><header class="page-heading"><p class="eyebrow">Documentation</p><h1>From a scene file<br>to a walkthrough.</h1><p class="lead">Set up the toolchain, record the demo, then describe your own app.</p></header>
+<header class="site-header"><div class="shell header-inner">
+      <div class="brand"><a class="wordmark" href="index.html" aria-label="scenecast home"><img src="assets/brand/logo.svg" alt="scenecast" width="284" height="58"></a><p class="brand-tagline">We make app walkthroughs land on cue.</p></div>
+      <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="docs.html" aria-current="page">Docs</a><a href="audit.html">Audit</a><a class="github-nav" href="https://github.com/ldmallari/scenecast">GitHub <span aria-hidden="true">↗</span><span class="source-chip"> open source</span></a></nav>
+    </div></header>
+  <main id="main" tabindex="-1"><header class="page-heading shell"><h1>From a scene file<br>to a walkthrough.</h1><p class="lead">Set up the toolchain, record the demo, then describe your own app.</p></header><div class="shell reading-shell"><div class="docs-layout"><aside class="toc"><nav aria-label="On this page"><p class="eyebrow">On this page</p><ul><li><a href="#getting-started">Getting started</a></li><li><a href="#your-first-scene">Your first scene</a></li><li><a href="#commands">Commands</a></li><li><a href="#scene-file-reference">Scene file reference</a></li><li><a href="#top-level">Top level</a></li><li><a href="#cards">cards</a></li><li><a href="#card-pages">Card pages</a></li><li><a href="#brand">brand</a></li><li><a href="#app">app</a></li><li><a href="#init-scripts-and-routes">Init scripts and routes</a></li><li><a href="#voice">voice</a></li><li><a href="#scenes">scenes</a></li><li><a href="#steps">steps</a></li><li><a href="#cursor">cursor</a></li><li><a href="#phone-scenes">Phone scenes</a></li><li><a href="#captions">Captions</a></li><li><a href="#output">Output</a></li></ul></nav></aside><article class="prose">
 <section aria-labelledby="getting-started"><h2 id="getting-started">Getting started</h2><p>Use macOS or Linux (WSL works), <strong>Node.js 24</strong> and <strong>pnpm 10</strong>. Allow about 2 GB for the models, Python environment and Chromium.</p><p>Run these commands in a clone of the repository. <code>doctor</code> sets up the local toolchain and models; the first run needs a network connection.</p><pre><code class="language-sh"># in a clone of this repository
 pnpm install
 pnpm -C packages/cli exec playwright install chromium
@@ -127,7 +130,7 @@ scenes:
       - { cue: Requests, do: click, sel: &quot;.nav a[href='/requests']&quot; }
 </code></pre>
 <h2 id="top-level">Top level</h2>
-<table>
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
 <thead>
 <tr>
 <th scope="col">Field</th>
@@ -192,9 +195,9 @@ scenes:
 <td><code>allowList</code>: names and words that speech recognition may spell differently, or leave out, without a narration WARN (for example <code>[worklist]</code>). An allow-listed cue word that is left out is placed by position, in the gap the heard words around it leave.</td>
 </tr>
 </tbody>
-</table>
+</table></div>
 <h2 id="cards">cards</h2>
-<table>
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
 <thead>
 <tr>
 <th scope="col">Field</th>
@@ -239,7 +242,7 @@ scenes:
 <td>The same for the outro card.</td>
 </tr>
 </tbody>
-</table>
+</table></div>
 <h3 id="card-pages">Card pages</h3>
 <p>A card page (<code>cards.introPage</code>, <code>cards.outroPage</code>, or <code>page</code> on a title scene) is an HTML file that Chromium renders
 <strong>once</strong>, at 1920×1080, into the image the card shows. Paths are relative to the scene file. The page gets the brand
@@ -261,7 +264,7 @@ not drawn on it.</li>
 <li>Requests to anything but local files are blocked, and each blocked URL is named in a warning.</li>
 </ul>
 <h2 id="brand">brand</h2>
-<table>
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
 <thead>
 <tr>
 <th scope="col">Field</th>
@@ -316,10 +319,10 @@ not drawn on it.</li>
 <td><code>{ file, licence }</code>: your own music track instead of the synthesised bed. <code>licence</code> is required and is copied into the audit.</td>
 </tr>
 </tbody>
-</table>
+</table></div>
 <p>Without <code>brand.music</code>, scenecast synthesises a quiet music bed, so there is nothing to license.</p>
 <h2 id="app">app</h2>
-<table>
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
 <thead>
 <tr>
 <th scope="col">Field</th>
@@ -374,7 +377,7 @@ not drawn on it.</li>
 <td>Extra CSS selectors for the app's open panels (pop-overs, drawers), added to the built-in list. Captions keep clear of them, and the audit checks that they do.</td>
 </tr>
 </tbody>
-</table>
+</table></div>
 <p>A scene with <code>signedOut: true</code> is recorded without the session.</p>
 <p>When the app keeps its sign-in in <strong>sessionStorage</strong> (not only in cookies), the unattended sign-in and
 <code>scenecast login</code> save it in a second file next to the session (<code>&lt;session&gt;.session-storage.json</code>), and every
@@ -413,7 +416,7 @@ where the video is made.</p>
 </li>
 </ul>
 <h2 id="voice">voice</h2>
-<table>
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
 <thead>
 <tr>
 <th scope="col">Field</th>
@@ -448,7 +451,7 @@ where the video is made.</p>
 <td>Silence after a phrase that ends at <code>:</code> or <code>;</code>. <code>0</code> gives the v1 rhythm.</td>
 </tr>
 </tbody>
-</table>
+</table></div>
 <p>The narration is split into phrases at sentence ends (<code>.</code>, <code>!</code>, <code>?</code>, <code>…</code>), and after <code>:</code> or <code>;</code> when both sides have
 at least 3 words (so &quot;To sign the work agreement: tick the box, …&quot; is two phrases, but a short list such as &quot;speed;
 care&quot; stays whole). A sentence longer than about 140 characters is split again at commas, with <code>phraseGapSec</code> between
@@ -456,7 +459,7 @@ the parts.</p>
 <p>Each word's time comes from forced alignment of the known script against the voice, so every narration word has
 exactly one time, whatever its punctuation, hyphens or numbers (&quot;sign-in&quot;, &quot;$1,500&quot;, &quot;9:30&quot;).</p>
 <h2 id="scenes">scenes</h2>
-<table>
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
 <thead>
 <tr>
 <th scope="col">Field</th>
@@ -531,14 +534,14 @@ exactly one time, whatever its punctuation, hyphens or numbers (&quot;sign-in&qu
 <td>Title scenes: an HTML file shown as the card instead of the drawn one (see <a href="#card-pages">card pages</a>). On an app scene it is ignored, with a warning.</td>
 </tr>
 </tbody>
-</table>
+</table></div>
 <p>The video is an intro card (3 s by default, music only), then every scene in order, then an outro card (3 s) with
 <code>title</code>. See <a href="#cards">cards</a>.
 A render with <code>--only &lt;id&gt;</code> leaves out the intro and outro cards and writes <code>&lt;output&gt;-&lt;id&gt;.mp4</code> and <code>&lt;output&gt;-&lt;id&gt;.srt</code>.</p>
 <h2 id="steps">steps</h2>
 <pre><code class="language-yaml">- { cue: Sign in, occ: 2, do: click, sel: &quot;#signin&quot; }
 </code></pre>
-<table>
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
 <thead>
 <tr>
 <th scope="col">Field</th>
@@ -611,7 +614,7 @@ A render with <code>--only &lt;id&gt;</code> leaves out the intro and outro card
 <td><code>false</code> skips the wait for the page to settle before this step.</td>
 </tr>
 </tbody>
-</table>
+</table></div>
 <p>What each action does:</p>
 <ul>
 <li><strong>click, type, hover.</strong> The cursor glides to the element and the action happens on the cue word. <code>type</code> clicks
@@ -657,7 +660,7 @@ layout, and no visible loading indicator (<code>[aria-busy=true]</code>, <code>[
 <code>.skeleton</code> or <code>[data-scenecast-loading]</code>). Open panels (<code>[role=dialog]</code>, <code>[role=menu]</code>, <code>[role=listbox]</code>,
 <code>[aria-modal=true]</code>, <code>[data-scenecast-panel]</code>, or a selector in <code>app.panels</code>) are measured so captions keep clear of them.</p>
 <h2 id="cursor">cursor</h2>
-<table>
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
 <thead>
 <tr>
 <th scope="col">Field</th>
@@ -682,7 +685,7 @@ layout, and no visible loading indicator (<code>[aria-busy=true]</code>, <code>[
 <td>Park when the next pointer step, or the scene end, is more than this many seconds after a pointer action.</td>
 </tr>
 </tbody>
-</table>
+</table></div>
 <p>A <strong>spot</strong> is <code>center</code>, <code>left</code>, <code>right</code> (96 px in from that edge, at 45% of the height, clear of the caption bands) or
 <code>{ x, y }</code> in viewport CSS pixels. The park glide starts 0.6 s after the action, or when it ends (typing done), whichever is
 later, and never runs into the next glide. Only the drawn cursor parks: the real mouse stays where it was, so a menu
@@ -720,7 +723,8 @@ or top when that column is blocked. The same text is written to <code>&lt;output
 changed. A render (or preview) locks that folder while it runs (<code>work/&lt;id&gt;/.lock</code>, holding its pid): a second render
 of the same video into the same folder stops at once with <code>work dir &lt;dir&gt; is in use by another render (pid &lt;pid&gt;)</code>.
 The lock is removed when the render ends, fails or is stopped; one left by a process that is gone is taken over.</p>
-<div class="next-page"><p>Render complete? Read every moment.</p><a href="audit.html">Read the audit guide <span aria-hidden="true">→</span></a></div></article></div></main>
-  <footer class="site-footer shell"><span>scenecast <span class="footer-separator" aria-hidden="true">/</span> Free and open source. MIT licensed.</span><a href="https://github.com/ldmallari/scenecast">Source on GitHub <span aria-hidden="true">↗</span></a></footer>
+<div class="next-page"><p>Render complete? Read every moment.</p><a href="audit.html">Read the audit guide <span aria-hidden="true">→</span></a></div></article></div></div></main>
+<footer class="site-footer">
+  <div class="shell footer-inner"><div><a href="index.html" class="footer-logo"><img src="assets/brand/logo.svg" alt="scenecast" width="237" height="48"></a><p>Free and open source. MIT licensed.</p></div><nav aria-label="Footer navigation"><a href="docs.html">Documentation</a><a href="audit.html">Audit</a><a href="https://github.com/ldmallari/scenecast">Source on GitHub <span aria-hidden="true">↗</span></a><a href="https://github.com/ldmallari/scenecast/blob/main/LICENSE">Licence</a><a href="https://github.com/ldmallari/scenecast/blob/main/THIRD_PARTY.md">Third-party licences</a></nav><p class="footer-joke"><code>bad takes &gt; /dev/null</code><span>That’s a wrap.</span></p></div></footer>
 </body>
 </html>

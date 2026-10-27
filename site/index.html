@@ -3,58 +3,76 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f3f4f3">
   <meta name="description" content="Turn a short scene file into a narrated walkthrough of your real web app, with actions timed to words and an audit of the finished video.">
   <title>Narrated app walkthroughs · scenecast</title>
-  <link rel="icon" type="image/svg+xml" href="assets/brand/favicon-32.svg" media="(prefers-color-scheme: light)">
-  <link rel="icon" type="image/svg+xml" href="assets/brand/favicon-32-dark.svg" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/svg+xml" href="assets/brand/favicon-32.svg">
+  <link rel="preload" href="assets/fonts/archivo-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/plus-jakarta-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
   <script src="script.js" defer></script>
 </head>
-<body>
-  <a class="skip-link" href="#main">Skip to content</a>
-  <header class="site-header"><div class="shell header-inner">
-    <a class="wordmark" href="index.html"><picture class="brand-mark" aria-hidden="true"><source srcset="assets/brand/mark-reversed.svg" media="(prefers-color-scheme: dark)"><img src="assets/brand/mark.svg" alt="" width="32" height="32"></picture>scenecast</a>
-    <nav aria-label="Main navigation"><a href="index.html" aria-current="page">Overview</a><a href="docs.html">Documentation</a><a href="audit.html">Audit</a><a href="https://github.com/ldmallari/scenecast">GitHub <span aria-hidden="true">↗</span></a></nav>
-  </div></header>
-  <main id="main" class="shell" tabindex="-1"><section class="hero" aria-labelledby="pitch">
-  <p class="eyebrow">Narrated walkthroughs · Rendered locally · Audited moment by moment</p>
-  <h1 id="pitch">Your app.<br>Your script.<br><span>On cue.</span></h1>
-  <p class="lead">scenecast turns a short scene file into a narrated walkthrough video of your real web app.</p>
-  <p class="hero-note">Write the narration. Name the cue words. Record the real app, with every click and keystroke timed to the voice.</p>
-  <div class="actions"><a class="button primary" href="#quick-start">Get started <span aria-hidden="true">→</span></a><a class="button" href="docs.html#scene-file-reference">Read the scene reference</a></div>
-  <p class="small muted">Free and open source. Runs on your machine. No accounts or API keys.</p>
-</section>
-<details class="demo">
-  <summary><span>From scene file to finished video</span><span class="small">Show / hide animation</span></summary>
-  <figure><img src="assets/demo.gif" width="960" height="540" alt="A scenecast walkthrough zooms into a worklist, eases out on a cue word, then ticks, fills in and signs a form while captions follow the narration."><figcaption>Part of the included demo, rendered from <a href="https://github.com/ldmallari/scenecast/blob/main/examples/demo-app/video.yaml">examples/demo-app/video.yaml</a>. This GIF has no sound; the video is narrated. Use the control above to hide the animation.</figcaption></figure>
-</details>
-<section class="section" aria-labelledby="different"><div class="section-heading"><p class="eyebrow">The details that matter</p><h2 id="different">What makes it different</h2></div>
-<div class="features">
-  <section><span class="feature-number" aria-hidden="true">01</span><h3>Actions land on their words.</h3><p>Each step names a cue word in the narration. scenecast uses word timings to land the action on that word, holding or trimming frames to absorb slow pages.</p></section>
-  <section><span class="feature-number" aria-hidden="true">02</span><h3>Scene files you can re-record.</h3><p>Narration, selectors, seed data and sign-in live in YAML. When the app changes, render again. There is no timeline to edit by hand.</p></section>
-  <section><span class="feature-number" aria-hidden="true">03</span><h3>An audit of every moment.</h3><p>The finished video is checked for timing, targets, captions, cropping, loading and loudness. You get a table, a contact sheet and an exit code.</p><a href="audit.html">Understand the audit <span aria-hidden="true">→</span></a></section>
-  <section><span class="feature-number" aria-hidden="true">04</span><h3>Captions that know the UI.</h3><p>Captions move clear of the target, cursor and open panels, including during zooms. On phone scenes, they can sit beside the phone.</p></section>
-  <section><span class="feature-number" aria-hidden="true">05</span><h3>Made for real apps.</h3><p>Use routes for feature flags, init scripts before the app loads, saved sessions for sign-in and touch input for phone scenes.</p></section>
-  <section><span class="feature-number" aria-hidden="true">06</span><h3>Local and free.</h3><p>Voice by Kokoro, recognition by faster-whisper, recording by Playwright and composition by Revideo. All dependencies use open-source licences.</p><a href="https://github.com/ldmallari/scenecast/blob/main/THIRD_PARTY.md">Third-party licences <span aria-hidden="true">↗</span></a></section>
-</div></section>
-<section id="quick-start" class="section install-section" aria-labelledby="install"><div class="section-heading"><p class="eyebrow">Start with the included demo</p><h2 id="install">Install + quick start</h2></div><p>Use macOS or Linux (WSL works), <strong>Node.js 24</strong> and <strong>pnpm 10</strong>. Allow about 2 GB for the models, Python environment and Chromium.</p><p>Run these commands in a clone of the repository. <code>doctor</code> sets up the local toolchain and models; the first run needs a network connection.</p><pre><code class="language-sh"># in a clone of this repository
+<body class="home">
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="shell header-inner">
+      <div class="brand"><a class="wordmark" href="index.html" aria-label="scenecast home"><img src="assets/brand/logo.svg" alt="scenecast" width="284" height="58"></a><p class="brand-tagline">We make app walkthroughs land on cue.</p></div>
+      <nav aria-label="Main navigation"><a href="index.html" aria-current="page">Overview</a><a href="docs.html">Docs</a><a href="audit.html">Audit</a><a class="github-nav" href="https://github.com/ldmallari/scenecast">GitHub <span aria-hidden="true">↗</span><span class="source-chip"> open source</span></a></nav>
+    </div></header>
+<main id="main" tabindex="-1">
+  <section class="hero shell" aria-labelledby="pitch">
+    <div class="hero-copy"><h1 id="pitch">Every click,<br>on cue<span class="period">.</span></h1>
+    <p class="lead">scenecast turns a short scene file into a narrated walkthrough video of your real web app.</p>
+    <div class="actions"><a class="button primary" href="docs.html">Get started <span aria-hidden="true">→</span></a><a class="button secondary" href="https://github.com/ldmallari/scenecast">View on GitHub <span aria-hidden="true">↗</span></a></div>
+    <p class="small hero-free">Free and open source. Runs on your machine.<br>No accounts or API keys.</p>
+    <p class="crew-note">One scene file. Fewer retakes.*</p></div>
+    <div class="hero-stage"><img class="hero-ribbon" src="assets/objects/fold-ribbon.svg" alt="" width="520" height="400" aria-hidden="true">
+      <figure class="demo-monitor"><div class="monitor-bar"><span><span class="record-dot" aria-hidden="true"></span> The real app. The actual take.</span><button type="button" class="demo-toggle" hidden aria-controls="demo-video" aria-pressed="false">Pause demo</button></div>
+      <video id="demo-video" class="demo-video" autoplay muted loop playsinline preload="auto" poster="assets/demo-still.png" width="1920" height="1080" aria-label="A scenecast walkthrough zooms into a worklist, eases out on a cue word, then ticks, fills in and signs a form while captions follow the narration."><source src="assets/demo.webm" type="video/webm"><source src="assets/demo.mp4" type="video/mp4"></video>
+      <figcaption><span>From scene file to finished video</span><span>Video · no sound</span></figcaption></figure>
+      <p class="stage-caption">Part of the included demo, rendered from <a href="https://github.com/ldmallari/scenecast/blob/main/examples/demo-app/video.yaml">examples/demo-app/video.yaml</a>. This clip has no sound; the full video is narrated.</p>
+    </div>
+    <div class="hero-bottom"><p>Narrated walkthroughs · Rendered locally · Audited moment by moment</p><a href="#how-it-works">See the process <span aria-hidden="true">↓</span></a></div>
+  </section>
+  <section class="section workflow shell" aria-labelledby="how-it-works"><div class="section-heading"><div><h2 id="how-it-works">How it works<span class="period">.</span></h2></div><p>Write the narration. Name the cue words. Record the real app, with every click and keystroke timed to the voice.</p></div>
+    <div class="feature-grid"><article class="feature-card feature-describe"><div class="feature-copy"><p class="step-index"><span class="step-number">01</span> / Describe the scenes.</p><h3>Describe</h3><span class="tag-chip">Script: <strong>YAML</strong></span><p>Set the app URL, narration and selectors. Give each visible action a cue word.</p></div><div class="feature-example"><pre><code>- id: sign-form
+  kind: app
+  title: Sign a form
+  route: /form
+  narration: &gt;-
+    To sign the work agreement: tick the box, type your full name, and press Sign.
+    A green note confirms that it is signed.</code></pre></div></article><article class="feature-card feature-voice"><div class="feature-copy"><p class="step-index"><span class="step-number">02</span> / Generate the voice.</p><h3>Voice</h3><span class="tag-chip">Voice: <strong>Local</strong></span><p>Kokoro speaks the script locally. Word timings place each cue in the narration.</p></div><div class="feature-example"><p class="snippet-label">Narration / sign-form</p><p class="voice-quote">“To sign the work agreement: <mark>tick</mark> the box, type your <mark>full name</mark>, and press <mark>Sign</mark>.”</p><p class="snippet-foot">Kokoro · local text-to-speech</p></div></article><article class="feature-card feature-record"><div class="feature-copy"><p class="step-index"><span class="step-number">03</span> / Record the app.</p><h3>Record</h3><span class="tag-chip">Timing: <strong>On cue</strong></span><p>Playwright drives Chromium through the steps. The recording is retimed to keep actions on their words.</p></div><div class="feature-example"><p class="snippet-label">steps / sign-form</p><pre><code>- { cue: tick, do: click, sel: "#agree" }
+- { cue: full name, do: type, sel: "#name", text: Sam Rivera }
+- { cue: Sign, occ: 2, do: click, sel: "#sign" }</code></pre></div></article><article class="feature-card feature-compose"><div class="feature-copy"><p class="step-index"><span class="step-number">04</span> / Compose the video.</p><h3>Compose</h3><span class="tag-chip">Timeline: <strong>Automated</strong></span><p>Revideo adds zooms, rings, captions, cards and music, with a loudness-normalised mix.</p></div><div class="feature-example"><p class="snippet-label">steps / worklist</p><pre><code>- { cue: worklist, do: ring, sel: ".worklist", pad: 10 }
+- { cue: due, do: zoom, sel: ".worklist", pad: 16 }
+- { cue: first, do: unzoom }</code></pre></div></article><article class="feature-card feature-audit"><div class="feature-copy"><p class="step-index"><span class="step-number">05</span> / Audit the result.</p><h3>Audit</h3><span class="tag-chip">Checks: <strong>Audited</strong></span><p>Speech recognition checks the final mix. Read every audit row and contact-sheet tile, fix failures and render again.</p></div><div class="feature-example"><p class="snippet-label">Documented demo verdicts / selected columns</p><table class="mini-audit"><thead><tr><th scope="col">scene</th><th scope="col">cue</th><th scope="col">verdict</th></tr></thead><tbody><tr><td>sign-form</td><td>tick</td><td><span class="verdict">PASS</span></td></tr><tr><td>sign-form</td><td>full name</td><td><span class="verdict">PASS</span></td></tr></tbody></table><p class="snippet-foot">Review every row and contact-sheet tile.</p></div></article></div>
+    <p class="asterisk">* There may still be another take. At least you won’t be clicking through it.</p>
+    <details class="production-notes"><summary id="different">What makes it different <span class="small">The details that matter</span></summary><div class="original-features">
+  <section><h3>Actions land on their words.</h3><p>Each step names a cue word in the narration. scenecast uses word timings to land the action on that word, holding or trimming frames to absorb slow pages.</p></section>
+  <section><h3>Scene files you can re-record.</h3><p>Narration, selectors, seed data and sign-in live in YAML. When the app changes, render again. There is no timeline to edit by hand.</p></section>
+  <section><h3>An audit of every moment.</h3><p>The finished video is checked for timing, targets, captions, cropping, loading and loudness. You get a table, a contact sheet and an exit code.</p><a href="audit.html">Understand the audit <span aria-hidden="true">→</span></a></section>
+  <section><h3>Captions that know the UI.</h3><p>Captions move clear of the target, cursor and open panels, including during zooms. On phone scenes, they can sit beside the phone.</p></section>
+  <section><h3>Made for real apps.</h3><p>Use routes for feature flags, init scripts before the app loads, saved sessions for sign-in and touch input for phone scenes.</p></section>
+  <section><h3>Local and free.</h3><p>Voice by Kokoro, recognition by faster-whisper, recording by Playwright and composition by Revideo. All dependencies use open-source licences.</p><a href="https://github.com/ldmallari/scenecast/blob/main/THIRD_PARTY.md">Third-party licences <span aria-hidden="true">↗</span></a></section>
+</div></details>
+  </section>
+  <section class="on-word" aria-labelledby="on-the-word"><div class="shell"><div class="section-heading"><div><h2 id="on-the-word">On the word<span class="period">.</span></h2></div><p>Each visible action gets a cue word.<br>The browser takes its cue. Literally.</p></div>
+    <p class="cue-narration"><span>To sign the work agreement:</span> <span class="cue"><span class="cue-action">click #agree</span><mark>tick</mark></span> the box, type your <span class="nobr"><span class="cue"><span class="cue-action">type #name</span><mark>full name</mark></span>,</span> and press <span class="nobr"><span class="cue"><span class="cue-action">click #sign · occ: 2</span><mark>Sign</mark></span>.</span> A green note <span class="cue"><span class="cue-action">ring #signed</span><mark>confirms</mark></span> that it is signed.</p>
+    <div class="cue-bottom"><p><code>sign-form</code> / <a href="https://github.com/ldmallari/scenecast/blob/main/examples/demo-app/video.yaml">examples/demo-app/video.yaml</a></p><a href="docs.html#steps">Read the scene reference <span aria-hidden="true">→</span></a></div>
+  </div></section>
+  <section class="section shell audit-section" aria-labelledby="the-audit"><div class="audit-panel"><div class="audit-intro"><div><h2 id="the-audit">The audit.</h2><span class="tag-chip">Checks: <strong>Audited</strong></span><p>The finished video is checked for timing, targets, captions, cropping, loading and loudness. You get a table, a contact sheet and an exit code.</p></div></div>
+    <div class="table-scroll" role="region" aria-label="Demo audit excerpt, scroll horizontally for all columns" tabindex="0"><table class="audit-excerpt"><caption>Demo verdicts · selected sign-form steps (excerpt).</caption><thead><tr><th scope="col">scene</th><th scope="col">cue</th><th scope="col">target label</th><th scope="col">verdict</th></tr></thead><tbody><tr><td>sign-form</td><td>tick</td><td><code>#agree</code></td><td><span class="verdict">PASS</span></td></tr><tr><td>sign-form</td><td>full name</td><td><code>#name</code></td><td><span class="verdict">PASS</span></td></tr><tr><td>sign-form</td><td>Sign</td><td><code>#sign</code></td><td><span class="verdict">PASS</span></td></tr></tbody></table></div>
+    <div class="audit-facts"><p>Each action is checked against a <strong>0.30 s</strong> sync tolerance. The included demo passes every cued moment, with a median gap of about <strong>0.01 s</strong> between word and action and a largest gap of <strong>0.030 s</strong>, over five cold renders.</p><a class="button primary" href="audit.html">Understand the audit <span aria-hidden="true">→</span></a></div><p class="audit-legend"><span class="verdict">PASS</span> <span class="verdict warn">WARN</span> <span class="verdict fail">FAIL</span> <span>A WARN never fails the render. Any FAIL exits with code 1.</span></p>
+  </div></section>
+  <div class="shell"><section id="quick-start" class="section install-section" aria-labelledby="install"><div class="section-heading"><h2 id="install">Open source,<br>runs on your machine.</h2></div><p>Use macOS or Linux (WSL works), <strong>Node.js 24</strong> and <strong>pnpm 10</strong>. Allow about 2 GB for the models, Python environment and Chromium.</p><p>Run these commands in a clone of the repository. <code>doctor</code> sets up the local toolchain and models; the first run needs a network connection.</p><pre><code class="language-sh"># in a clone of this repository
 pnpm install
 pnpm -C packages/cli exec playwright install chromium
 node packages/cli/bin/scenecast.js doctor
 
 # start the demo app (an invented product, included in the repo), then render its video
 node examples/demo-app/server.mjs &amp;
-node packages/cli/bin/scenecast.js render examples/demo-app/video.yaml</code></pre><p>The render writes <code>out/demo.mp4</code>, <code>out/demo.srt</code>, <code>out/chapters.txt</code> and <code>out/audit/</code>. Open <code>out/audit/audit-table.md</code> to see every moment checked.</p><p>To make your own video, copy <code>examples/demo-app/video.yaml</code>, point <code>app.baseUrl</code> at your app, then write your narration and steps.</p><a href="docs.html">Continue to the documentation <span aria-hidden="true">→</span></a></section>
-<section class="section" aria-labelledby="how-it-works"><div class="section-heading"><p class="eyebrow">One scene file, end to end</p><h2 id="how-it-works">How it works</h2></div>
-<ol class="process">
-<li><h3>Describe the scenes.</h3><p>Set the app URL, narration and selectors. Give each visible action a cue word.</p></li>
-<li><h3>Generate the voice.</h3><p>Kokoro speaks the script locally. Word timings place each cue in the narration.</p></li>
-<li><h3>Record the app.</h3><p>Playwright drives Chromium through the steps. The recording is retimed to keep actions on their words.</p></li>
-<li><h3>Compose the video.</h3><p>Revideo adds zooms, rings, captions, cards and music, with a loudness-normalised mix.</p></li>
-<li><h3>Audit the result.</h3><p>Speech recognition checks the final mix. Read every audit row and contact-sheet tile, fix failures and render again.</p></li>
-</ol></section>
-<div class="next-page"><div><p class="eyebrow">Make your own walkthrough</p><p>Start with a scene. Refine it with the audit.</p></div><a class="button" href="docs.html">Open the documentation <span aria-hidden="true">→</span></a></div></main>
-  <footer class="site-footer shell"><span>scenecast <span class="footer-separator" aria-hidden="true">/</span> Free and open source. MIT licensed.</span><a href="https://github.com/ldmallari/scenecast">Source on GitHub <span aria-hidden="true">↗</span></a></footer>
-</body>
-</html>
+node packages/cli/bin/scenecast.js render examples/demo-app/video.yaml</code></pre><p>The render writes <code>out/demo.mp4</code>, <code>out/demo.srt</code>, <code>out/chapters.txt</code> and <code>out/audit/</code>. Open <code>out/audit/audit-table.md</code> to see every moment checked.</p><p>To make your own video, copy <code>examples/demo-app/video.yaml</code>, point <code>app.baseUrl</code> at your app, then write your narration and steps.</p><a href="docs.html">Continue to the documentation <span aria-hidden="true">→</span></a></section><div class="next-page"><div><p>Start with a scene. Refine it with the audit.</p></div><a class="button primary" href="docs.html">Open the documentation <span aria-hidden="true">→</span></a></div></div>
+</main>
+<footer class="site-footer">
+  <div class="shell footer-inner"><div><a href="index.html" class="footer-logo"><img src="assets/brand/logo.svg" alt="scenecast" width="237" height="48"></a><p>Free and open source. MIT licensed.</p></div><nav aria-label="Footer navigation"><a href="docs.html">Documentation</a><a href="audit.html">Audit</a><a href="https://github.com/ldmallari/scenecast">Source on GitHub <span aria-hidden="true">↗</span></a><a href="https://github.com/ldmallari/scenecast/blob/main/LICENSE">Licence</a><a href="https://github.com/ldmallari/scenecast/blob/main/THIRD_PARTY.md">Third-party licences</a></nav><p class="footer-joke"><code>bad takes &gt; /dev/null</code><span>That’s a wrap.</span></p></div></footer>
+</body></html>
