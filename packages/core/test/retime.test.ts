@@ -94,6 +94,13 @@ describe('retime', () => {
     expect(segs[0]!.outStart).toBe(0);
   });
 
+  it('says nothing about a cut too small to show (0.00 s)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // 3 ms late, with no quiet window before it: the cut is made, without a "0.00 s to cut" line.
+    retime(take([{ index: 0, kind: 'click', at: 0.623 }]), sched([{ index: 0, do: 'click', startAt: 0 }]), voice(4), opts);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it('late action keeps 0.8 s after the previous result and the glide before the action', () => {
     const segs = retime(
       take([{ index: 0, kind: 'click', at: 1.0 }, { index: 1, kind: 'click', at: 7.0 }]),

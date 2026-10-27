@@ -68,7 +68,9 @@ function cutRanges(p: number, n: number, excess: number, label: string, busy: nu
     const mid = (winLo + g) / 2;
     return [[mid - excess / 2, mid + excess / 2]];
   }
-  console.warn(`scenecast: retime: ${label}: quiet window (${Math.max(0, w).toFixed(2)} s) is shorter than the ${excess.toFixed(2)} s to cut`);
+  // A cut under 5 ms (0.00 s at the precision shown) is not worth a line.
+  if (excess >= 0.005)
+    console.warn(`scenecast: retime: ${label}: quiet window (${Math.max(0, w).toFixed(2)} s) is shorter than the ${excess.toFixed(2)} s to cut`);
   const cuts: Range[] = [];
   let left = excess;
   const take = (lo: number, hi: number) => {
@@ -84,7 +86,8 @@ function cutRanges(p: number, n: number, excess: number, label: string, busy: nu
   take(Math.max(p, done), Math.min(after, g));
   take(Math.max(g, done), n); // the cursor glide: only if everything quieter is used up
   if (left > EPS) {
-    console.warn(`scenecast: retime: ${label}: cutting ${left.toFixed(2)} s inside the previous action (it is still playing out)`);
+    if (left >= 0.005)
+      console.warn(`scenecast: retime: ${label}: cutting ${left.toFixed(2)} s inside the previous action (it is still playing out)`);
     take(p, done);
   }
   return cuts.sort((x, y) => x[0] - y[0]);
