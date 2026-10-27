@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -42,6 +42,7 @@ export async function loadScene(file: string): Promise<VideoSpec> {
     spec.app.seedInputs = spec.app.seedInputs.map((f) => {
       const abs = rel(f)!;
       if (!existsSync(abs)) throw new Error(`app.seedInputs: no such file: ${abs}`);
+      if (!statSync(abs).isFile()) throw new Error(`app.seedInputs: ${abs} is a folder; list the files in it instead`);
       return abs;
     });
   const init = spec.app.initScript;
@@ -59,7 +60,10 @@ export async function loadScene(file: string): Promise<VideoSpec> {
     steps?.forEach((step, i) => {
       if (step.file === undefined) return;
       step.file = (Array.isArray(step.file) ? step.file : [step.file]).map((f) => rel(f)!);
-      for (const f of step.file) if (!existsSync(f)) throw new Error(`${where(i)}: upload file not found: ${f}`);
+      for (const f of step.file) {
+        if (!existsSync(f)) throw new Error(`${where(i)}: upload file not found: ${f}`);
+        if (!statSync(f).isFile()) throw new Error(`${where(i)}: upload file is a folder, not a file: ${f}`);
+      }
     });
   uploads(spec.app.login, (i) => `app.login step ${i}`);
   for (const scene of spec.scenes) uploads(scene.steps, (i) => `scene "${scene.id}" step ${i}`);

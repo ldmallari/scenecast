@@ -243,6 +243,11 @@ describe('upload steps', () => {
       await expect(loadScene(path.join(dir, 'video.json'))).rejects.toThrow(
         `scene "s1" step 0: upload file not found: ${path.join(dir, 'nope.pdf')}`,
       );
+      fs.mkdirSync(path.join(dir, 'files'));
+      write('./files');
+      await expect(loadScene(path.join(dir, 'video.json'))).rejects.toThrow(
+        `scene "s1" step 0: upload file is a folder, not a file: ${path.join(dir, 'files')}`,
+      );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -307,6 +312,11 @@ describe('app.seedInputs', () => {
       expect((await loadScene(path.join(dir, 'video.json'))).app.seedInputs).toEqual([path.join(dir, 'people.json')]);
       write(['./nope.json']);
       await expect(loadScene(path.join(dir, 'video.json'))).rejects.toThrow(`app.seedInputs: no such file: ${path.join(dir, 'nope.json')}`);
+      fs.mkdirSync(path.join(dir, 'seed'));
+      write(['./seed/']);
+      await expect(loadScene(path.join(dir, 'video.json'))).rejects.toThrow(
+        `app.seedInputs: ${path.join(dir, 'seed')} is a folder; list the files in it instead`,
+      );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
