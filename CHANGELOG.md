@@ -7,8 +7,12 @@ All notable changes to scenecast are listed here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-28
+
 ### Added
 
+- `scenecast --version` (and `-v`) prints the version. Every package, and the Python part, carries the release
+  version.
 - An `upload` step: `{ cue: attach, do: upload, sel: ".dropzone", file: ./quote.pdf }` clicks the button, label or
   drop zone on its cue and answers the file chooser with the file (or files). Files are checked when the scene file
   loads, and their contents are part of the recording's cache key. The demo app has a New request drawer with a drop
@@ -64,7 +68,6 @@ All notable changes to scenecast are listed here. The format follows
 
 ### Added
 
-- `scenecast --version` (and `-v`) prints the version.
 - Scene file fields for real apps: `app.routes` answers network requests (feature flags, slow third parties, an API
   that is not running), `app.initScript` runs before the app's own scripts, `app.panels` names the app's own pop-overs
   and drawers, and a sign-in kept in sessionStorage is saved and restored.
@@ -137,6 +140,7 @@ The first release.
   sync, retime cuts, caption overlaps, the composer's render worker, audit target checks, seed commands that run as
   written, and strict scene files that reject unknown keys.
 
-[Unreleased]: https://github.com/ldmallari/scenecast/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/ldmallari/scenecast/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/ldmallari/scenecast/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ldmallari/scenecast/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ldmallari/scenecast/releases/tag/v1.0.0
