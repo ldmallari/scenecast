@@ -48,6 +48,15 @@ export async function loadScene(file: string): Promise<VideoSpec> {
   if (spec.cards.introPage) spec.cards.introPage = rel(spec.cards.introPage);
   if (spec.cards.outroPage) spec.cards.outroPage = rel(spec.cards.outroPage);
   for (const scene of spec.scenes) if (scene.page) scene.page = rel(scene.page);
+  // Upload files: made absolute (always a list), and checked now rather than mid-recording.
+  const uploads = (steps: VideoSpec['app']['login'], where: (i: number) => string) =>
+    steps?.forEach((step, i) => {
+      if (step.file === undefined) return;
+      step.file = (Array.isArray(step.file) ? step.file : [step.file]).map((f) => rel(f)!);
+      for (const f of step.file) if (!existsSync(f)) throw new Error(`${where(i)}: upload file not found: ${f}`);
+    });
+  uploads(spec.app.login, (i) => `app.login step ${i}`);
+  for (const scene of spec.scenes) uploads(scene.steps, (i) => `scene "${scene.id}" step ${i}`);
   return spec;
 }
 

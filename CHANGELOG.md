@@ -7,6 +7,13 @@ All notable changes to scenecast are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- An `upload` step: `{ cue: attach, do: upload, sel: ".dropzone", file: ./quote.pdf }` clicks the button, label or
+  drop zone on its cue and answers the file chooser with the file (or files). Files are checked when the scene file
+  loads, and their contents are part of the recording's cache key. The demo app has a New request drawer with a drop
+  zone to try it on.
+
 ### Fixed
 
 - Forced alignment no longer drops a whole phrase to the free transcript when two adjacent words get the same start:

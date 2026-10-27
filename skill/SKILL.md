@@ -30,8 +30,8 @@ mobile apps, or Windows without WSL.
    **box**", "open the **account menu**". Those words become cues. Keep one idea per scene.
 
 3. **Write `video.yaml`.** Use [references/scene-format.md](references/scene-format.md). For each action, add a step
-   with `cue` (the word from the narration), `do` (click, type, check, zoom, unzoom, ring, park, …) and `sel` (a CSS
-   selector). Also:
+   with `cue` (the word from the narration), `do` (click, type, check, upload, zoom, unzoom, ring, park, …) and `sel`
+   (a CSS selector). Also:
    - declare the app's sidebar and top bar in `app.nav`, and its own pop-overs or drawers in `app.panels`;
    - make sign-in unattended (`app.login`, `app.storageState` or `app.loginHook`); a sign-in kept in sessionStorage
      is saved and restored too;

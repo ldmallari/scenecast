@@ -552,6 +552,37 @@ describe('recordScene', () => {
     );
   }, 60_000);
 
+  it('upload clicks the drop zone on its time and answers the file chooser with the file', async () => {
+    const file = path.join(work, 'quote.pdf');
+    fs.writeFileSync(file, '%PDF-1.4 quote');
+    const steps: Step[] = [
+      { do: 'click', sel: '#new-request' },
+      { do: 'click', sel: '#wizard-next' },
+      { do: 'upload', sel: '.dropzone', file: [file] },
+      // Found only once the app has listed the chosen file.
+      { do: 'ring', sel: ".attached .file-name:text-is('quote.pdf')", ms: 300 },
+    ];
+    const plan = sched(steps, [0.4, 1.3, 2.2, 3.4]);
+    const take = await recordScene(scene('upload', '/requests', steps), plan, app, path.join(work, 'takes'));
+    expect(take.events.map((e) => e.kind)).toEqual(['click', 'click', 'upload', 'ring']);
+    const up = take.events[2]!;
+    expect(up.cursorTo).toBeDefined();
+    expect(inFrame(up.target!)).toBe(true);
+    const late = fired(up) - (plan[2]!.startAt + DEFAULT_TRAVEL_SEC);
+    expect(late, `upload late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
+    expect(late, `upload late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
+    expect(take.events[3]!.target).toBeDefined();
+  }, 60_000);
+
+  it('an upload whose sel opens no file chooser fails, saying what to point it at', async () => {
+    const file = path.join(work, 'quote.pdf');
+    fs.writeFileSync(file, '%PDF-1.4 quote');
+    const steps: Step[] = [{ do: 'upload', sel: '#new-request', file: [file] }];
+    await expect(recordScene(scene('nochooser', '/requests', steps), sched(steps, [0.5]), app, path.join(work, 'takes'))).rejects.toThrow(
+      'scene "nochooser" step 0: clicking "#new-request" opened no file chooser; point sel at the button, label or drop zone that opens it',
+    );
+  }, 60_000);
+
   it('scroll by pixels and to a position', async () => {
     // The init script runs before the page has its <html> element, so it makes the page tall once the DOM is in.
     const tall: AppConn = {

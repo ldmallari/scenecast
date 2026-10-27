@@ -162,7 +162,7 @@ Without `brand.music`, scenecast synthesises a quiet music bed, so there is noth
 | Field | Required | Meaning |
 |---|---|---|
 | `baseUrl` | yes | Where the app runs, for example `http://127.0.0.1:4310`. Routes and `goto` paths are relative to it. The app must already be running when you render. |
-| `login` | no | Steps that sign in, run before each signed-in scene is recorded (scenes reused from the cache don't sign in), untimed and not recorded. They use the same step format as scenes (`goto`, `type`, `click`, `press`, `hover`, `wait`). |
+| `login` | no | Steps that sign in, run before each signed-in scene is recorded (scenes reused from the cache don't sign in), untimed and not recorded. They use the same step format as scenes (`goto`, `type`, `click`, `upload`, `press`, `hover`, `wait`). |
 | `storageState` | no | A saved Playwright session file. When set, it is used instead of `login`. `scenecast login <video.yaml>` opens a browser, lets you sign in by hand, and saves the session to this path (useful for SSO or two-factor sign-in). |
 | `loginHook` | no | A JavaScript module whose default export is `async (page, context) => {}` and signs in. It is used when there are no `login` steps and no `storageState`. |
 | `seed` | no | Runs once before the first recording, in the scene file's folder, with `SCENECAST_BASE_URL` set. A single word naming a file that exists (relative to the scene file), such as `./seed.mjs`, is a script: `.js`, `.mjs`, `.cjs` and `.ts` run with `node`, `.sh` with `sh`, anything else directly. Anything else, such as `node scripts/seed.mjs` or `python db/seed.py`, runs as a shell command. A single word that looks like a path but names no file (`./nope.mjs`) is an error when the scene file loads. Seeding is skipped when every recording is reused from the cache. |
@@ -259,18 +259,19 @@ A render with `--only <id>` leaves out the intro and outro cards and writes `<ou
 
 | Field | Meaning |
 |---|---|
-| `do` | `click`, `type`, `hover`, `check`, `scroll`, `press`, `zoom`, `unzoom`, `ring`, `park`, `wait` or `goto`. |
+| `do` | `click`, `type`, `hover`, `check`, `upload`, `scroll`, `press`, `zoom`, `unzoom`, `ring`, `park`, `wait` or `goto`. |
 | `cue` | A word or phrase from the narration (case-insensitive, whole words). The step lands on its first word. |
 | `occ` | Which occurrence of the cue, counting from 1 (default 1). Use it when the cue appears more than once: in "To sign in, … and press Sign in", the button is `occ: 2`. |
 | `offset` | Seconds added to the cue time (negative is earlier). |
-| `sel` | A CSS selector, or a list of them. `click`, `type`, `hover`, `zoom` and `ring` need one. With a list, the box is the union of all matches and the pointer aims at the first. |
+| `sel` | A CSS selector, or a list of them. `click`, `type`, `hover`, `check`, `upload`, `zoom` and `ring` need one. With a list, the box is the union of all matches and the pointer aims at the first. |
 | `text` | What `type` types, the key `press` presses (default `Enter`), or the path `goto` opens. |
+| `file` | `upload`: the file to choose, or a list of files, relative to the scene file. A file that does not exist is a load error (`scene "<id>" step <i>: upload file not found: <path>`). |
 | `ms` | `zoom`: how long it holds after easing in (default 2000). `ring`: how long it holds (default 1200). `wait`: how long to wait. Any step: the minimum time before the next uncued step. |
 | `pad` | Pixels added around the box of a `zoom` or `ring`. |
 | `ring` | `true` on another step (for example a `click`) draws a ring around its target as well. |
-| `ringSel` | `click`, `type`, `hover` and `check`: ring this element instead of the step's target (a selector or a list). Implies `ring: true`. |
+| `ringSel` | `click`, `type`, `hover`, `check` and `upload`: ring this element instead of the step's target (a selector or a list). Implies `ring: true`. |
 | `ringMs` | The same steps: how long that ring holds (default 1200). |
-| `glideMs` | `click`, `type`, `hover`, `check` and `park`: how long the cursor takes to get there (default 520). |
+| `glideMs` | `click`, `type`, `hover`, `check`, `upload` and `park`: how long the cursor takes to get there (default 520). |
 | `by` | `scroll`: scroll the window by this many px (positive is down). |
 | `to` | `scroll`: scroll the window to this `scrollY`. A scroll step takes one of `sel`, `by` and `to`. |
 | `at` | `park`: where the cursor goes (a [spot](#cursor)). Default `cursor.park`, or `right` when that is `off`. |
@@ -290,6 +291,16 @@ What each action does:
   is still unchecked afterwards (`scene "<id>" step <i>: <sel> is not checked after the click`). `sel` must be the
   element that carries the state: the `<input type=checkbox>` itself, or the element with `role="switch"` (or
   `role="checkbox"`) and `aria-checked`, not a label or a wrapper around it.
+- **upload.** Chooses a file the way a viewer would: the cursor glides to `sel` (the button, label or drop zone that
+  opens the file chooser) and clicks it on the cue, and the file chooser that opens is answered with `file` (no
+  dialog shows in the video). `sel` must be something visible that opens the chooser when clicked, not a hidden
+  `<input type=file>`; a click that opens no chooser within 2 s fails the recording (`clicking "<sel>" opened no file
+  chooser; point sel at the button, label or drop zone that opens it`). The files' contents are part of the cache
+  key, so changing a file records the scene again. `upload` works in `app.login` too.
+
+  ```yaml
+  - { cue: attach, do: upload, sel: ".dropzone", file: ./files/quote.pdf }
+  ```
 - **press.** Presses a key (`text`, default `Enter`).
 - **scroll.** With `sel`, scrolls the element into the middle of the view (in whatever container scrolls it). With
   `by` or `to`, scrolls the **window**; with none of them, it scrolls the window down by most of a screen. `by` and

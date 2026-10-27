@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { lockWorkDir, StageCache } from '../src/cache.js';
-import { RECORD_STAGE_VERSION, recordStageInput } from '../src/render.js';
+import { RECORD_STAGE_VERSION, recordStageFiles, recordStageInput } from '../src/render.js';
 
 let work: string;
 beforeEach(() => {
@@ -124,6 +124,16 @@ describe('the record stage version', () => {
     expect(await cache.key('voice', { text: 'Hello there.', voice: 'af_heart' })).toBe('26a107f0522c4d5e7ecff3dc00cd32d3e95c304da06cac1db107291d389df46f');
     await cache.save('music', await cache.key('music', { seconds: 10, seed: 0 }), { wav: 'bed.wav' });
     expect(await cache.lookup('music', '9f37274d5c2edab8549b58e30d9a6a69b586d7a7d014a8202d4a381463ff2ee0')).toEqual({ wav: 'bed.wav' });
+  });
+});
+
+describe('the record stage files', () => {
+  it("include the files a scene's upload steps choose, so a changed file records the scene again", () => {
+    const a = path.join(work, 'a.pdf');
+    const b = path.join(work, 'b.png');
+    for (const f of [a, b]) fs.writeFileSync(f, 'x');
+    const scene = { id: 's', kind: 'app', narration: 'Hi.', steps: [{ do: 'upload', sel: '.d', file: [a, b] }, { do: 'click', sel: '.x' }] } as never;
+    expect(recordStageFiles({ baseUrl: 'http://x' } as never, scene)).toEqual([a, b]);
   });
 });
 

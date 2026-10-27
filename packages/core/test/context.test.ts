@@ -222,5 +222,7 @@ describe('helpers', () => {
     };
     expect(appFiles(app).sort()).toEqual([fx('init.js'), fx('route.mjs'), state, sessionStoragePath(state)].sort());
     expect(appFiles({ baseUrl: 'x', initScript: fx('init.js') })).toEqual([fx('init.js')]);
+    // A login upload's files too.
+    expect(appFiles({ baseUrl: 'x', login: [{ do: 'upload', sel: '#a', file: [fx('init.js')] }] })).toEqual([fx('init.js')]);
   });
 });

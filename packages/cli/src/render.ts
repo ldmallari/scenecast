@@ -23,6 +23,7 @@ import {
   sceneWarnings,
   sessionStoragePath,
   splitPhrases,
+  stepFiles,
   phraseGaps,
   VOICE_ALIGN_VERSION,
   type AuditCounts,
@@ -236,7 +237,7 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
       const { result: recorded } = await cache.run<Recorded>({
         name: `record/${scene.id}`,
         input: recordStageInput(scene, scheduled, app, spec.cursor, minTakeSec, spec.brand.accent),
-        files: [...appFiles(app), ...(seedFile ? [seedFile] : [])],
+        files: [...recordStageFiles(app, scene), ...(seedFile ? [seedFile] : [])],
         run: async (dir) => {
           if (app.seed && !seeded) {
             log(`seed: ${app.seed}`);
@@ -306,6 +307,11 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
  * kept.
  */
 export const RECORD_STAGE_VERSION = 3;
+
+/** The files a scene's take depends on (their contents join the record stage's key): the app's, and the scene's uploads. */
+export function recordStageFiles(app: VideoSpec['app'], scene: Scene): string[] {
+  return [...new Set([...appFiles(app), ...stepFiles(scene.steps)])];
+}
 
 /** Everything a scene's take depends on: the record stage's cache input. */
 export function recordStageInput(

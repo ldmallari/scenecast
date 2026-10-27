@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadScene, parseScene, sceneWarnings, DEFAULTS, VideoSpecSchema } from '../src/index.js';
@@ -150,8 +152,8 @@ describe('v1.1 scene fields', () => {
     expect(() => parseScene(one([{ do: 'scroll', by: 400 }]))).not.toThrow();
   });
   it('step fields are checked against their step kind', () => {
-    expect(() => parseScene(one([{ cue: 'open', do: 'zoom', sel: '.a', glideMs: 300 }]))).toThrow('glideMs is for click, type, hover, check and park steps');
-    expect(() => parseScene(one([{ cue: 'open', do: 'ring', sel: '.a', ringSel: '.b' }]))).toThrow('ringSel and ringMs are for click, type, hover and check steps');
+    expect(() => parseScene(one([{ cue: 'open', do: 'zoom', sel: '.a', glideMs: 300 }]))).toThrow('glideMs is for click, type, hover, check, upload and park steps');
+    expect(() => parseScene(one([{ cue: 'open', do: 'ring', sel: '.a', ringSel: '.b' }]))).toThrow('ringSel and ringMs are for click, type, hover, check and upload steps');
     expect(() => parseScene(one([{ cue: 'open', do: 'click', sel: '.a', at: 'left' }]))).toThrow('at is for park steps');
   });
   it('a park step on a phone scene is rejected, pointing to wait', () => {
@@ -199,5 +201,43 @@ describe('v1.1 scene fields', () => {
     expect(DEFAULTS.phone).toMatchObject({ touchPx: 34, touchLeadSec: 0.25, centreShare: 0.3 });
     expect(DEFAULTS.captions.fullFrameShare).toBe(0.9);
     expect(DEFAULTS.video.takeTailSec).toBe(0.5);
+  });
+});
+
+describe('upload steps', () => {
+  const spec = (steps: unknown[], extra: Record<string, unknown> = {}) => ({
+    id: 'v', title: 'V', output: 'v',
+    brand: { primary: '#000', accent: '#fff', font: 'Inter', introTitle: 'V' },
+    app: { baseUrl: 'http://x', ...extra },
+    scenes: [{ id: 's1', kind: 'app', narration: 'Attach the receipt now.', steps }],
+  });
+
+  it('needs sel and file; file is only for upload', () => {
+    expect(() => parseScene(spec([{ cue: 'Attach', do: 'upload', sel: '.dropzone', file: 'r.pdf' }]))).not.toThrow();
+    expect(() => parseScene(spec([{ cue: 'Attach', do: 'upload', sel: '.dropzone', file: ['a.pdf', 'b.png'], glideMs: 300, ringSel: '.list' }]))).not.toThrow();
+    expect(() => parseScene(spec([{ cue: 'Attach', do: 'upload', sel: '.dropzone' }]))).toThrow('scene "s1" step 0: upload needs file (the file to choose)');
+    expect(() => parseScene(spec([{ cue: 'Attach', do: 'upload', file: 'r.pdf' }]))).toThrow('scene "s1" step 0: upload needs sel');
+    expect(() => parseScene(spec([{ cue: 'Attach', do: 'click', sel: '.a', file: 'r.pdf' }]))).toThrow('scene "s1" step 0: file is for upload steps');
+  });
+
+  it('resolves files against the scene file and names a missing one', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-upload-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'receipt.pdf'), '%PDF-1.4');
+      const write = (file: string) =>
+        fs.writeFileSync(path.join(dir, 'video.json'), JSON.stringify(spec([{ cue: 'Attach', do: 'upload', sel: '.d', file }], {
+          login: [{ do: 'upload', sel: '#avatar', file: './receipt.pdf' }],
+        })));
+      write('./receipt.pdf');
+      const s = await loadScene(path.join(dir, 'video.json'));
+      expect(s.scenes[0]!.steps[0]!.file).toEqual([path.join(dir, 'receipt.pdf')]);
+      expect(s.app.login![0]!.file).toEqual([path.join(dir, 'receipt.pdf')]);
+      write('./nope.pdf');
+      await expect(loadScene(path.join(dir, 'video.json'))).rejects.toThrow(
+        `scene "s1" step 0: upload file not found: ${path.join(dir, 'nope.pdf')}`,
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

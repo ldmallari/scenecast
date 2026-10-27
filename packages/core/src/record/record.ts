@@ -68,6 +68,22 @@ const SHORT_SETTLE_MS = 1500;
 /** Round trips used to measure the page clock against Node's. */
 const CLOCK_SAMPLES = 5;
 const TYPE_DELAY_MS = 35;
+/** After an upload step's click, the file chooser has this long to open. */
+const FILE_CHOOSER_MS = 2000;
+/** The files an upload step chooses (made absolute by loadScene). */
+const uploadFiles = (step: Step): string[] => (step.file === undefined ? [] : Array.isArray(step.file) ? step.file : [step.file]);
+/**
+ * Clicks with `click` and answers the file chooser that opens with the step's files. Playwright handles the chooser
+ * (no native dialog appears); one that does not open within FILE_CHOOSER_MS fails the step.
+ */
+async function clickAndChoose(page: Page, click: () => Promise<void>, step: Step, where: string): Promise<void> {
+  const chooser = page.waitForEvent('filechooser', { timeout: FILE_CHOOSER_MS }).catch(() => null);
+  await click();
+  const fc = await chooser;
+  if (!fc)
+    throw new Error(`${where}: clicking "${selectors(step)[0]}" opened no file chooser; point sel at the button, label or drop zone that opens it`);
+  await fc.setFiles(uploadFiles(step));
+}
 /** After a check step's click, the element has this long to show as checked (an app may re-render it). */
 const CHECKED_WAIT_MS = 1000;
 /**
@@ -457,6 +473,9 @@ async function loginStep(page: Page, app: AppConn, step: Step, i: number): Promi
     case 'click':
       await el?.click();
       break;
+    case 'upload':
+      if (el) await clickAndChoose(page, () => el.click(), step, `login step ${i}`);
+      break;
     case 'hover':
       await el?.hover();
       break;
@@ -778,14 +797,19 @@ async function runTake(
         }
         drawRing(ev, { at: ringAt, box: padBox(ringM.union, step.pad), hold, m: ringM, sels: ringSels, index, atPeak: (b) => void (b && (ev.ringTarget = b)) });
       }
-      if (step.do === 'click' || step.do === 'type' || (step.do === 'check' && !wasChecked)) {
+      if (step.do === 'click' || step.do === 'type' || step.do === 'upload' || (step.do === 'check' && !wasChecked)) {
         // A phone taps (a check too, like any other press there); the indicator's press is its feedback.
-        if (touch) await page.touchscreen.tap(cursor.x, cursor.y);
-        else {
-          quiet(page.evaluate(([x, y]) => window.__scenecast.ripple(x, y), [cursor.x, cursor.y] as const));
-          await page.mouse.down();
-          await page.mouse.up();
-        }
+        const press = async () => {
+          if (touch) await page.touchscreen.tap(cursor.x, cursor.y);
+          else {
+            quiet(page.evaluate(([x, y]) => window.__scenecast.ripple(x, y), [cursor.x, cursor.y] as const));
+            await page.mouse.down();
+            await page.mouse.up();
+          }
+        };
+        // An upload's click opens the file chooser, answered with its files.
+        if (step.do === 'upload') await clickAndChoose(page, press, step, `scene "${scene.id}" step ${index}`);
+        else await press();
         if (step.do === 'type' && step.text) {
           await page.keyboard.type(step.text, { delay: TYPE_DELAY_MS });
           ev.busyUntil = Math.max(ev.busyUntil ?? at, videoNow());

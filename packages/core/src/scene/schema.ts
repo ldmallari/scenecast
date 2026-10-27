@@ -107,9 +107,11 @@ const StepSchema = z.object({
   cue: z.string().min(1).optional(),
   occ: z.number().int().min(1).optional(),
   offset: z.number().optional(),
-  do: z.enum(['click', 'type', 'hover', 'scroll', 'press', 'zoom', 'ring', 'wait', 'goto', 'unzoom', 'park', 'check']),
+  do: z.enum(['click', 'type', 'hover', 'scroll', 'press', 'zoom', 'ring', 'wait', 'goto', 'unzoom', 'park', 'check', 'upload']),
   sel: z.union([z.string(), z.array(z.string())]).optional(),
   text: z.string().optional(),
+  /** `upload`: the file (or files) to choose, relative to the scene file; made absolute (always a list) on load. */
+  file: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
   ms: z.number().nonnegative().optional(),
   pad: z.number().nonnegative().optional(),
   settle: z.boolean().optional(),
@@ -211,6 +213,9 @@ export const VideoSpecSchema = z
   })
   .strict()
   .superRefine((spec, ctx) => {
+    spec.app.login?.forEach((step, i) =>
+      checkUpload(step, (message) => ctx.addIssue({ code: 'custom', path: ['app', 'login', i], message: `app.login step ${i}: ${message}` })),
+    );
     spec.app.routes?.forEach((r, k) => {
       const n = [r.json !== undefined, r.body !== undefined, r.module !== undefined].filter(Boolean).length;
       if (n > 1)
@@ -244,6 +249,16 @@ export const VideoSpecSchema = z
 
 type SceneIn = z.infer<typeof SceneSchema>;
 
+/** An upload names what it clicks (`sel`) and what it chooses (`file`); `file` is for upload steps only. */
+function checkUpload(step: z.infer<typeof StepSchema>, bad: (message: string) => void): void {
+  if (step.do !== 'upload') {
+    if (step.file !== undefined) bad('file is for upload steps');
+    return;
+  }
+  if (step.sel === undefined) bad('upload needs sel (the button, label or drop zone that opens the file chooser)');
+  if (step.file === undefined) bad('upload needs file (the file to choose)');
+}
+
 /** Per-step checks that need the step kind or the steps around it (unzoom pairing, field/kind fit). */
 function checkStepFields(scene: SceneIn, si: number, ctx: z.RefinementCtx): void {
   let zoomed = scene.zoom !== undefined;
@@ -252,11 +267,12 @@ function checkStepFields(scene: SceneIn, si: number, ctx: z.RefinementCtx): void
     const where = `scene "${scene.id}" step ${i}`;
     const path = ['scenes', si, 'steps', i];
     const bad = (message: string) => ctx.addIssue({ code: 'custom', path, message: `${where}: ${message}` });
-    const pointer = ['click', 'type', 'hover', 'check'];
+    const pointer = ['click', 'type', 'hover', 'check', 'upload'];
     if (step.glideMs !== undefined && ![...pointer, 'park'].includes(step.do))
-      bad('glideMs is for click, type, hover, check and park steps');
+      bad('glideMs is for click, type, hover, check, upload and park steps');
     if ((step.ringSel !== undefined || step.ringMs !== undefined) && !pointer.includes(step.do))
-      bad('ringSel and ringMs are for click, type, hover and check steps');
+      bad('ringSel and ringMs are for click, type, hover, check and upload steps');
+    checkUpload(step, bad);
     if (step.at !== undefined && step.do !== 'park') bad('at is for park steps');
     if (step.do === 'park' && scene.viewport === 'phone')
       bad('park has no effect on a phone scene (there is no cursor; the touch indicator fades by itself); use wait to hold');

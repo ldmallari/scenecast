@@ -28,7 +28,7 @@ export interface ScheduleOpts {
 }
 
 /** Steps that move the cursor to act. Every one gets travel before its action; every other step gets none. */
-export const POINTER: ReadonlySet<Step['do']> = new Set<Step['do']>(['click', 'hover', 'type', 'check', 'park']);
+export const POINTER: ReadonlySet<Step['do']> = new Set<Step['do']>(['click', 'hover', 'type', 'check', 'upload', 'park']);
 
 /** Default cursor travel: every glide takes this long, whatever the distance, so the scheduler's arithmetic holds. */
 export const DEFAULT_TRAVEL_SEC = 0.52;

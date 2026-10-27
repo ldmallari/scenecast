@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { BrowserContext, Frame, Page, Request, Route } from 'playwright';
-import type { AppConn, RouteDecl } from '../scene/schema.js';
+import type { AppConn, RouteDecl, Step } from '../scene/schema.js';
 
 /** Visible elements matching this are open panels (captions keep clear of them). `app.panels` adds to it. */
 export const PANEL_SELECTOR = '[role=dialog],[role=menu],[role=listbox],[aria-modal=true],[data-scenecast-panel]';
@@ -169,13 +169,22 @@ export async function applyAppContext(context: BrowserContext, app: AppConn, opt
     await context.addInitScript(isScriptFile(item) ? { path: item } : { content: item });
 }
 
-/** The existing files a recording of this app depends on: init script files, route modules, the session and its sessionStorage, the login hook. */
+/** The files the steps' uploads choose (absolute after loadScene). */
+export function stepFiles(steps: Step[] | undefined): string[] {
+  return (steps ?? []).flatMap((s) => (s.file === undefined ? [] : Array.isArray(s.file) ? s.file : [s.file]));
+}
+
+/**
+ * The existing files a recording of this app depends on: init script files, route modules, the session and its
+ * sessionStorage, the login hook, and the files login uploads choose.
+ */
 export function appFiles(app: AppConn): string[] {
   const files = [
     ...initScripts(app).filter(isScriptFile),
     ...(app.routes ?? []).flatMap((r) => (r.module ? [path.resolve(r.module)] : [])),
     ...(app.storageState ? [app.storageState, sessionStoragePath(app.storageState)] : []),
     ...(app.loginHook ? [app.loginHook] : []),
+    ...stepFiles(app.login),
   ];
   return [...new Set(files)].filter((f) => fs.existsSync(f));
 }

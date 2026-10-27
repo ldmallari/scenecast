@@ -198,11 +198,46 @@
       shell(path, `
         <div class="page-head">
           <div><h1>Requests</h1><p class="muted">Everything you have asked for, newest first.</p></div>
-          <button type="button" class="hide-phone">New request</button>
+          <button id="new-request" type="button" class="hide-phone">New request</button>
         </div>
         <section class="card flush">
           <table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th class="hide-phone">Opened</th></tr></thead><tbody>${rows}</tbody></table>
-        </section>`);
+        </section>
+        <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+          <div class="drawer-head"><h2 id="drawer-title">New request</h2><span class="muted" id="wizard-step">Step 1 of 2</span></div>
+          <div class="wizard-step" data-step="1">
+            <label for="request-title">What do you need?</label>
+            <input id="request-title" type="text" placeholder="For example, a new monitor" />
+            <div class="actions"><button id="wizard-next" type="button">Next</button></div>
+          </div>
+          <div class="wizard-step" data-step="2" hidden>
+            <p>Attach a quote or a receipt, if you have one.</p>
+            <div class="dropzone" tabindex="0">Drop a file here, or <strong>browse</strong><input id="file" type="file" hidden /></div>
+            <ul class="attached"></ul>
+            <div class="actions"><button id="wizard-submit" type="button">Send request</button></div>
+          </div>
+        </aside>`);
+      // The drawer and its wizard step live in memory only: no route opens them (a scene starts there with `setup`).
+      const drawer = root.querySelector('.drawer');
+      const show = (n) => {
+        for (const el of root.querySelectorAll('.wizard-step')) el.hidden = el.dataset.step !== String(n);
+        document.getElementById('wizard-step').textContent = `Step ${n} of 2`;
+      };
+      document.getElementById('new-request').addEventListener('click', () => {
+        drawer.hidden = false;
+        show(1);
+      });
+      document.getElementById('wizard-next').addEventListener('click', () => show(2));
+      document.getElementById('wizard-submit').addEventListener('click', () => (drawer.hidden = true));
+      document.addEventListener('keydown', (e) => e.key === 'Escape' && (drawer.hidden = true));
+      // The dropzone opens the file chooser through its hidden input; the chosen files are listed below it.
+      const input = document.getElementById('file');
+      root.querySelector('.dropzone').addEventListener('click', () => input.click());
+      input.addEventListener('change', () => {
+        root.querySelector('.attached').innerHTML = [...input.files]
+          .map((f) => `<li><span class="file-name">${esc(f.name)}</span><span class="muted">${Math.max(1, Math.round(f.size / 1024))} KB</span></li>`)
+          .join('');
+      });
     },
     '/form'(path) {
       shell(path, `
