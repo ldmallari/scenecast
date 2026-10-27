@@ -1,4 +1,9 @@
-# scenecast
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/logo-reversed.svg">
+    <img alt="scenecast" src="docs/brand/logo.svg" width="300">
+  </picture>
+</h1>
 
 Website: https://ldmallari.github.io/scenecast/
 

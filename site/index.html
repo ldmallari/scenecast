@@ -6,13 +6,15 @@
   <meta name="color-scheme" content="light dark">
   <meta name="description" content="Turn a short scene file into a narrated walkthrough of your real web app, with actions timed to words and an audit of the finished video.">
   <title>Narrated app walkthroughs · scenecast</title>
+  <link rel="icon" type="image/svg+xml" href="assets/brand/favicon-32.svg" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/svg+xml" href="assets/brand/favicon-32-dark.svg" media="(prefers-color-scheme: dark)">
   <link rel="stylesheet" href="styles.css">
   <script src="script.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header"><div class="shell header-inner">
-    <a class="wordmark" href="index.html"><span class="brand-mark" aria-hidden="true">sc</span>scenecast</a>
+    <a class="wordmark" href="index.html"><picture class="brand-mark" aria-hidden="true"><source srcset="assets/brand/mark-reversed.svg" media="(prefers-color-scheme: dark)"><img src="assets/brand/mark.svg" alt="" width="32" height="32"></picture>scenecast</a>
     <nav aria-label="Main navigation"><a href="index.html" aria-current="page">Overview</a><a href="docs.html">Documentation</a><a href="audit.html">Audit</a><a href="https://github.com/ldmallari/scenecast">GitHub <span aria-hidden="true">↗</span></a></nav>
   </div></header>
   <main id="main" class="shell" tabindex="-1"><section class="hero" aria-labelledby="pitch">
