@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { cutsDeclaredNav, DEFAULTS, ensureToolchain, phoneFrame, phoneToFrame, type AuditPlan, type Brand } from '@scenecast/core';
 import { chromium } from 'playwright';
 import { clampZoom, entranceAt, gradientLine, inFramePixels, inkOver, resolveBackground, resolveLook, ringAlpha, sceneOpacity, srcTimeAt, timeline, zoomBoxAt, type ComposePlan } from '../src/plan.js';
-import { ffprobePath, finish, preview, renderVideo, runRevideo } from '../src/render.js';
+import { chromeArgs, ffprobePath, finish, preview, renderVideo, runRevideo } from '../src/render.js';
 
 const run = promisify(execFile);
 
@@ -697,4 +697,17 @@ console.log('started');
       expect(left).toEqual([]);
     }, 60_000);
   }
+});
+
+describe('chromeArgs', () => {
+  it('turns the Chromium sandbox off on Linux, as Playwright does for the recording', () => {
+    expect(chromeArgs('linux', {})).toEqual(['--no-sandbox']);
+  });
+  it('keeps the sandbox on Linux when SCENECAST_CHROME_SANDBOX=1', () => {
+    expect(chromeArgs('linux', { SCENECAST_CHROME_SANDBOX: '1' })).toEqual([]);
+  });
+  it('adds nothing on macOS or Windows', () => {
+    expect(chromeArgs('darwin', {})).toEqual([]);
+    expect(chromeArgs('win32', {})).toEqual([]);
+  });
 });

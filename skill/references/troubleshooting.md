@@ -229,3 +229,10 @@ measures real time. If it is the only failure, run it again on its own:
 ```sh
 pnpm -C packages/core exec vitest run test/record.test.ts
 ```
+
+## The render stops with "No usable sandbox!" (Linux)
+
+Ubuntu 23.10 and later, and CI runners built on it, block the unprivileged user namespaces Chromium's sandbox needs.
+scenecast therefore runs the final render's Chromium without its sandbox on Linux, as Playwright already does for the
+recording; the page it loads is scenecast's own, built locally. Set `SCENECAST_CHROME_SANDBOX=1` to keep the sandbox
+on a system that allows it.

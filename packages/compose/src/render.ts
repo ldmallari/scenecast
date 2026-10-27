@@ -180,6 +180,16 @@ async function coverImage(ffmpeg: string, src: string, dest: string, w: number, 
   ]);
 }
 
+/**
+ * Chromium flags for the Revideo render. On Linux the render runs without Chromium's sandbox, as Playwright already
+ * does for the recording: Ubuntu 23.10+ (and its CI runners) blocks the unprivileged user namespaces the sandbox
+ * needs, and Chromium then refuses to start ("No usable sandbox!"). The page it loads is scenecast's own, built
+ * locally. Set SCENECAST_CHROME_SANDBOX=1 to keep the sandbox where the system allows it.
+ */
+export function chromeArgs(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): string[] {
+  return platform === 'linux' && env.SCENECAST_CHROME_SANDBOX !== '1' ? ['--no-sandbox'] : [];
+}
+
 function chromePath(): string {
   const { chromium } = require('playwright') as typeof import('playwright');
   return chromium.executablePath();
@@ -207,6 +217,7 @@ export async function renderVideo(plan: ComposePlan, out: string, opts: RenderOp
         ffmpeg,
         ffprobe: ffprobePath(),
         chrome: chromePath(),
+        chromeArgs: chromeArgs(),
         width: resolved.width,
         height: resolved.height,
         define: { __SCENECAST_PLAN__: JSON.stringify(resolved) },
