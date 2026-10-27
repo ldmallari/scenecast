@@ -39,8 +39,9 @@ All notable changes to scenecast are listed here. The format follows
   the later word starts one alignment frame on, so the phrase keeps its forced word times.
 - A step without a cue can no longer act before the step above it, which failed the render after recording with
   "action is scheduled before the previous action".
-- A step is no longer late because the page was busy: from just before the step is due, only a document still
-  loading or a visible loading indicator holds it up; data requests and a layout still moving no longer do.
+- A cued step is no longer late because the page was busy: from just before the step is due (and at least 0.35 s
+  after the step before it), only a document still loading or a visible loading indicator holds it up; data requests
+  and a layout still moving no longer do. Steps without a cue still wait for the page to settle.
 - A `ringSel` ring on a click (and on type, check and upload) is measured after the click has had its effect, so an
   element that moves when clicked (a dialog that grows and re-centres) stays inside its ring.
 - A ring fades out early when its element is removed or hidden, instead of floating over what comes next.

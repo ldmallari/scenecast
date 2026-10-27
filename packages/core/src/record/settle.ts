@@ -15,9 +15,10 @@ export interface SettleOpts {
   /** Give up (and carry on) after this long. */
   maxMs?: number;
   /**
-   * When the step that waits is due, in ms from now. From then on only a page that is really not ready holds the
-   * step up (a document loading, or a visible loading indicator); data requests and a layout still moving no longer
-   * do, so a busy page does not make the step late. `onDue` is called when the settle ends early for this reason.
+   * When the step that waits is due, in ms from now (never less than `quietMs`). From then on only a page that is
+   * really not ready holds the step up (a document loading, or a visible loading indicator); data requests and a
+   * layout still moving no longer do, so a busy page does not make the step late. `onDue` is called when the settle
+   * ends early for this reason while the page was still busy.
    */
   dueInMs?: number;
   onDue?: () => void;
@@ -114,15 +115,18 @@ function pendingDocuments(net: NetState, maxMs: number): number {
 export async function settle(page: Page, { quietMs = 350, maxMs = 9000, dueInMs, onDue }: SettleOpts = {}): Promise<boolean> {
   const net = trackNetwork(page);
   const deadline = performance.now() + maxMs;
-  const due = dueInMs === undefined ? Infinity : performance.now() + dueInMs;
+  // Never before a first quiet window has passed: a request the previous action starts a few ms later, or a layout
+  // that has not begun to change, must still be waited for.
+  const due = dueInMs === undefined ? Infinity : performance.now() + Math.max(dueInMs, quietMs);
   while (performance.now() < deadline) {
-    // The step is due: it goes ahead unless a document is still loading or a loading indicator shows.
-    if (performance.now() >= due && pendingDocuments(net, maxMs) === 0 && (await pageIsStill(page, false))) {
-      onDue?.();
-      return true;
-    }
     const quietFor = performance.now() - net.lastActivity;
     const busy = pending(net, maxMs);
+    // The step is due: it goes ahead unless a document is still loading or a loading indicator shows. Only a page
+    // that really is busy (requests in flight or recent, or a layout still moving) counts as cut short.
+    if (performance.now() >= due && pendingDocuments(net, maxMs) === 0 && (await pageIsStill(page, false))) {
+      if (busy > 0 || quietFor < quietMs || !(await pageIsStill(page))) onDue?.();
+      return true;
+    }
     if (busy === 0 && quietFor >= quietMs) {
       if (await pageIsStill(page)) return true;
       await new Promise((r) => setTimeout(r, 30));

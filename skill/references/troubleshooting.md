@@ -207,8 +207,8 @@ movement.
 
 - **`typing "…" runs until …, after step <n> … is due to start`** (a warning). Typing takes 35 ms a character, and the
   next step starts only once it is done. Start typing on an earlier word, or shorten the text.
-- **A step is late after a heavy page change.** A step no longer waits for data requests or a moving layout past its
-  own time; only a document still loading or a visible loading indicator holds it up. If the audit still shows it
+- **A step is late after a heavy page change.** A cued step no longer waits for data requests or a moving layout past
+  its own time; only a document still loading or a visible loading indicator holds it up. If the audit still shows it
   late with a `loading` WARN or FAIL, seed the data or add a `wait` earlier in the scene.
 
 ## Steps that fail while recording

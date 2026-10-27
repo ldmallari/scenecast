@@ -386,9 +386,11 @@ breath), which is not shown.
 
 Before each step the recorder waits for the page to settle: no document, XHR or fetch requests in flight, a stable
 layout, and no visible loading indicator (`[aria-busy=true]`, `[role=progressbar]` without a value, `.is-loading`,
-`.skeleton` or `[data-scenecast-loading]`). The wait never makes a step late for a page that is merely busy: from
-0.15 s before the step is due, only a page still loading a document or showing a loading indicator holds it up, and
-data requests or a layout still moving no longer do. Open panels (`[role=dialog]`, `[role=menu]`, `[role=listbox]`,
+`.skeleton` or `[data-scenecast-loading]`). The wait never makes a cued step late for a page that is merely busy:
+from 0.15 s before the step is due (and at least 0.35 s after the step before it), only a page still loading a document
+or showing a loading indicator holds it up, and data requests or a layout still moving no longer do. A step without a
+cue has no word to be late for, so it always waits for the page to settle (a ring after a click that loads a drawer's
+content is measured on the loaded drawer). Open panels (`[role=dialog]`, `[role=menu]`, `[role=listbox]`,
 `[aria-modal=true]`, `[data-scenecast-panel]`, or a selector in `app.panels`) are measured so captions keep clear of them.
 
 ## cursor

@@ -564,12 +564,38 @@ describe('recordScene', () => {
   it('a step goes ahead on its time while the page is merely busy with data requests', async () => {
     // A page that polls every 100 ms is never network-quiet: the settle used to hold the step for its whole 9 s cap.
     const busy: AppConn = { ...app, initScript: "setInterval(() => fetch('/poll?' + Date.now()).catch(() => {}), 100);" };
-    const steps: Step[] = [{ do: 'wait', ms: 100 }, { do: 'click', sel: '#menu-button' }];
-    const take = await recordScene(scene('busy', '/dashboard', steps), sched(steps, [0.3, 1.0]), busy, path.join(work, 'takes'));
-    const click = take.events[1]!;
+    // Cued: only a step with a word to land on is let go at its time.
+    const steps: Step[] = [{ cue: 'menu', do: 'click', sel: '#menu-button' }];
+    const take = await recordScene(scene('busy', '/dashboard', steps), sched(steps, [1.0]), busy, path.join(work, 'takes'));
+    const click = take.events[0]!;
     expect(click.settleCut).toBe(true);
     const late = fired(click) - (1.0 + DEFAULT_TRAVEL_SEC);
     expect(late, `late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
+  }, 60_000);
+
+  it('an uncued step after a click that loads data waits for it: the ring is measured on the loaded drawer', async () => {
+    // The drawer fetches its options (0.7 s) and grows when they arrive, with no loading indicator.
+    const mod = path.join(work, 'slow-options.mjs');
+    fs.writeFileSync(mod, 'export default async (route) => { await new Promise((r) => setTimeout(r, 700)); await route.fulfill({ json: [1, 2, 3] }); };');
+    const loads: AppConn = {
+      ...app,
+      routes: [{ url: '**/api/options', module: mod }],
+      initScript:
+        "document.addEventListener('click', (e) => { if (e.target && e.target.id === 'new-request') fetch('/api/options')" +
+        ".then((r) => r.json()).then(() => { const d = document.createElement('div'); d.style.height = '300px';" +
+        " d.textContent = 'Options'; document.querySelector('.drawer .wizard-step').appendChild(d); }); }, true);",
+    };
+    const steps: Step[] = [
+      { cue: 'Open', do: 'click', sel: '#new-request' },
+      { do: 'ring', sel: '.drawer .wizard-step:not([hidden])', ms: 300 },
+    ];
+    const take = await recordScene(scene('loads', '/requests', steps), sched(steps, [0.4, 0.92]), loads, path.join(work, 'takes'));
+    const ring = take.events[1]!;
+    // Measured once the options had arrived: the step at the ring's peak (300 px taller) is inside the ring drawn round it.
+    expect(ring.target!.h).toBeGreaterThan(300);
+    expect(ring.target!.y + ring.target!.h).toBeLessThanOrEqual(ring.ringBox!.y + ring.ringBox!.h + 0.5);
+    // Nothing was cut short for this uncued step.
+    expect(ring.settleCut).toBeUndefined();
   }, 60_000);
 
   it('ringMs sets the ring hold', async () => {

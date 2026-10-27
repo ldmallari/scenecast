@@ -813,7 +813,9 @@ async function runTake(
     // The pre-positioned first step was found on a settled page just before the flash: settling again would
     // only spend the short time before its early cue.
     const prePlaced = k === 0 && readyM !== undefined && index === ready?.index;
-    if (step.settle !== false && !prePlaced && !(await settleTake(due, () => (ev.settleCut = true)))) ev.settleTimedOut = true;
+    // Only a cued step has a word to be late for: an uncued one waits for the page as it always has.
+    const settleDue = step.cue !== undefined ? due : undefined;
+    if (step.settle !== false && !prePlaced && !(await settleTake(settleDue, () => (ev.settleCut = true)))) ev.settleTimedOut = true;
     // A ring that ends before this step must be off screen in the take before it goes ahead. (One that
     // ends just before the step needs no wait: the step's own glide or ring repaints the page anyway.)
     if (ringGoneAt && ringGoneAt + RINGS_GONE_MARGIN_MS <= due) {
