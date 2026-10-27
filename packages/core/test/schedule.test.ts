@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { actionAt, checkSchedule, cueWordIndex, FIRST_ACTION_SEC, POINTER, schedule, scheduleWarnings, spotPoint, travelSecFor } from '../src/schedule.js';
+import { actionAt, checkSchedule, cueWordIndex, FIRST_ACTION_SEC, POINTER, SAFE_FIRST_ACTION_SEC, schedule, scheduleWarnings, spotPoint, travelSecFor } from '../src/schedule.js';
 import type { Scene, Step } from '../src/scene/schema.js';
 import type { SceneVoice } from '../src/voice.js';
 
@@ -43,7 +43,7 @@ describe('schedule', () => {
     );
     expect(r[1]!.cueTime).toBeNull();
     expect(r[1]!.startAt).toBeCloseTo(2.0 + 1.5);
-    // After the previous action (the click's arrival), not when its glide set off.
+    // Never before the previous action (the click's arrival).
     expect(r[2]!.startAt).toBeCloseTo(actionAt(r[1]!));
   });
 
@@ -55,14 +55,26 @@ describe('schedule', () => {
       { travelSec: (st) => travelSecFor(st) },
     );
     expect(actionAt(r[0]!)).toBeCloseTo(2.0);
-    expect(r[1]!.startAt).toBeCloseTo(2.0);
-    expect(actionAt(r[1]!)).toBeCloseTo(2.3);
-    expect(actionAt(r[2]!)).toBeCloseTo(2.3);
-    expect(checkSchedule(scene([]), r, 10)).toEqual([]);
+    // It sets off later, so it acts with the cued click, not before it; the ring too.
+    expect(r[1]!.startAt).toBeCloseTo(1.7);
+    expect(actionAt(r[1]!)).toBeCloseTo(2.0);
+    expect(actionAt(r[2]!)).toBeCloseTo(2.0);
+    expect(checkSchedule(scene([]), r)).toEqual([]);
+  });
+
+  it('a chain of uncued clicks after a late cue keeps its 1.1 timing (both act with the cue)', () => {
+    const v1: SceneVoice = { duration: 2.0, phrases: [], words: [{ w: 'Open', start: 0.4, end: 0.7 }, { w: 'now.', start: 1.8, end: 2.0 }] };
+    const sc1 = { id: 'c', kind: 'app', viewport: 'desktop', narration: 'Open now.', steps: [
+      { cue: 'now', do: 'click', sel: '#a' }, { do: 'click', sel: '#b' }, { do: 'click', sel: '#c' },
+    ] } as Scene;
+    const r = schedule(sc1, v1, { travelSec: (st) => travelSecFor(st) });
+    expect(r.map(actionAt)).toEqual([1.8, 1.8, 1.8].map((t) => expect.closeTo(t, 6)));
+    expect(checkSchedule(sc1, r)).toEqual([]);
+    expect(scheduleWarnings(sc1, r, 2.45)).toEqual([]);
   });
 
   it('a first uncued step acts once the take has started', () => {
-    expect(actionAt(schedule(scene([{ do: 'goto' }]), voice, opts)[0]!)).toBe(FIRST_ACTION_SEC);
+    expect(actionAt(schedule(scene([{ do: 'goto' }]), voice, opts)[0]!)).toBe(SAFE_FIRST_ACTION_SEC);
     // A pointer step's glide already takes it past the flash.
     expect(schedule(scene([{ do: 'click', sel: '#a' }]), voice, opts)[0]!.startAt).toBe(0);
   });
@@ -254,13 +266,24 @@ describe('checkSchedule: problems found before anything is recorded', () => {
   it('a step on the scene\'s first word: says to cue a later word or add an offset', () => {
     const scn = sc('Start here, then approve it.', [{ cue: 'Start here', do: 'click', sel: '#a' }]);
     const r = schedule(scn, v({ Start: 0, 'here,': 0.3, then: 0.6, approve: 0.9, 'it.': 1.2 }), o);
-    expect(checkSchedule(scn, r, 6.45)).toEqual([
+    expect(checkSchedule(scn, r)).toEqual([
       'scene "s2" step 0: click on "Start here" would act at 0.00 s, before the take has started (the flash marker ' +
-        `takes the scene's first ${FIRST_ACTION_SEC} s); cue a later word, or add offset: ${FIRST_ACTION_SEC}`,
+        `takes the scene's first ${FIRST_ACTION_SEC} s); cue a later word, or add offset: ${SAFE_FIRST_ACTION_SEC}`,
     ]);
     // On a later word it is fine.
     const later = sc('Start here, then approve it.', [{ cue: 'approve', do: 'click', sel: '#a' }]);
-    expect(checkSchedule(later, schedule(later, v({ Start: 0, 'here,': 0.3, then: 0.6, approve: 0.9, 'it.': 1.2 }), o), 6.45)).toEqual([]);
+    expect(checkSchedule(later, schedule(later, v({ Start: 0, 'here,': 0.3, then: 0.6, approve: 0.9, 'it.': 1.2 }), o))).toEqual([]);
+  });
+
+  it('a 1.1 schedule with a first-word click at 0.15 s still records: a warning, not an error', () => {
+    // As record.test.ts records it: "Open" at 0.15 s, pre-positioned.
+    const scn = sc('Open it.', [{ cue: 'Open', do: 'click', sel: '#menu-button' }]);
+    const r = schedule(scn, v({ Open: 0.15, 'it.': 0.45 }, 3), o);
+    expect(checkSchedule(scn, r)).toEqual([]);
+    expect(scheduleWarnings(scn, r, 3.45)).toEqual([
+      'scene "s2" step 0: click on "Open" acts at 0.15 s, close to the flash marker that starts the take; if the render ' +
+        'fails with "happened before the take started", cue a later word or add offset: 0.05',
+    ]);
   });
 
   it('a cued step that acts before the step above it: names both and says what to change', () => {
@@ -269,22 +292,23 @@ describe('checkSchedule: problems found before anything is recorded', () => {
       { cue: 'menu', do: 'ring', sel: '#m' },
     ]);
     const r = schedule(scn, v({ Open: 0.4, the: 0.7, menu: 1.0, and: 1.4, then: 1.6, pick: 2.0, 'one.': 2.3 }), o);
-    expect(checkSchedule(scn, r, 6.45)).toEqual([
+    expect(checkSchedule(scn, r)).toEqual([
       'scene "s2" step 1: ring on "menu" would act at 1.00 s, before step 0 (click on "pick") at 2.00 s; steps run in ' +
         'the order they are listed: cue it on a later word, or move it above step 0',
     ]);
   });
 
-  it('an uncued step that runs past the end of the scene: says how much to take off', () => {
+  it('an uncued step that runs past the end of the scene: a warning that says how much to take off', () => {
     const scn = sc('Type the name of the laptop.', [
       { cue: 'laptop', do: 'type', sel: '#t', text: 'x' },
       { do: 'wait', ms: 2000 },
       { do: 'ring', sel: '#r' },
     ]);
     const r = schedule(scn, v({ Type: 0.3, the: 0.6, name: 0.8, of: 1.1, 'laptop.': 1.4 }, 2.0), o);
-    expect(checkSchedule(scn, r, 2.45)).toEqual([
-      'scene "s2" step 2: ring (no cue) would act at 3.40 s, after the scene ends at 2.45 s (its narration plus a short ' +
-        'breath); give it a cue, or take 0.95 s off the ms of the steps before it',
+    expect(checkSchedule(scn, r)).toEqual([]);
+    expect(scheduleWarnings(scn, r, 2.45)).toEqual([
+      'scene "s2" step 2: ring (no cue) acts at 3.40 s, after the scene ends at 2.45 s (its narration plus a short ' +
+        'breath), so it is not shown; give it a cue, or take 0.95 s off the ms of the steps before it',
     ]);
   });
 });

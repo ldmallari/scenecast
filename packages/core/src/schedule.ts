@@ -47,10 +47,15 @@ export function travelSecFor(step: Step, opts: { touch?: boolean } = {}): number
 }
 
 /**
- * No action may come before this, in scene seconds: the take starts with the flash marker (shown for at least 0.1 s,
- * and up to a frame or two more in the video), and retime has nothing to show an action against before it is gone.
+ * No action may come before this, in scene seconds: the take starts with the flash marker (shown for at least 0.1 s),
+ * and an action logged while it is still on screen fails the take ("happened before the take started").
  */
-export const FIRST_ACTION_SEC = 0.2;
+export const FIRST_ACTION_SEC = 0.12;
+/**
+ * An action before this, in scene seconds, may still fall inside the flash marker as it shows in the video (up to a
+ * frame or two past its 0.1 s): it usually records, so it is a warning, not an error.
+ */
+export const SAFE_FIRST_ACTION_SEC = 0.2;
 
 /** When a scheduled step's action fires, in scene seconds. */
 export function actionAt(s: ScheduledStep): number {
@@ -116,9 +121,11 @@ export function schedule(scene: Scene, voice: SceneVoice, opts: ScheduleOpts): S
     const travel = Number.isFinite(t) && t > 0 ? t : 0;
     const prev = out[index - 1];
     if (cue === null) {
-      // Right after the step before acts (plus its `ms`), never with it: a step that starts with the previous glide
-      // and glides faster would act first. The first step acts once the take has started.
-      const startAt = prev ? actionAt(prev) + (prev.step.ms ?? 0) / 1000 : Math.max(0, FIRST_ACTION_SEC - travel);
+      // As in 1.1: the step starts with the step before it (plus that step's `ms`), but it never acts before that step
+      // does (a faster glide, or a ring after a click, used to act first). The first step acts once the take has started.
+      const startAt = prev
+        ? Math.max(prev.startAt + (prev.step.ms ?? 0) / 1000, actionAt(prev) - travel)
+        : Math.max(0, SAFE_FIRST_ACTION_SEC - travel);
       out.push({ index, step, cueTime: null, startAt, travel });
       return;
     }
@@ -152,11 +159,10 @@ const upTo05 = (t: number) => Math.ceil(t * 20 - 1e-9) / 20;
 
 /**
  * What would make this scene's take fail after it is recorded, found from the schedule alone, each with what to
- * change: an action before the take has started (a pointer step on the scene's first word), a step that acts before
- * the step listed above it (the recorder runs steps in order), and a step that acts after the scene ends (`sceneEnd`:
- * the narration plus the breath after it). Empty when the schedule is fine.
+ * change: an action while the flash marker still shows (a pointer step on a first word at 0 s), and a step that acts
+ * before the step listed above it (the recorder runs steps in order). Empty when the schedule is fine.
  */
-export function checkSchedule(scene: Scene, scheduled: ScheduledStep[], sceneEnd: number): string[] {
+export function checkSchedule(scene: Scene, scheduled: ScheduledStep[]): string[] {
   const out: string[] = [];
   const steps = [...scheduled].sort((a, b) => a.index - b.index);
   steps.forEach((s, k) => {
@@ -165,7 +171,7 @@ export function checkSchedule(scene: Scene, scheduled: ScheduledStep[], sceneEnd
     if (at < FIRST_ACTION_SEC - 1e-9) {
       out.push(
         `${where}, before the take has started (the flash marker takes the scene's first ${FIRST_ACTION_SEC} s); ` +
-          `cue a later word, or add offset: ${upTo05(FIRST_ACTION_SEC - at)}`,
+          `cue a later word, or add offset: ${upTo05(SAFE_FIRST_ACTION_SEC - at)}`,
       );
       return;
     }
@@ -175,31 +181,47 @@ export function checkSchedule(scene: Scene, scheduled: ScheduledStep[], sceneEnd
         `${where}, before step ${prev.index} (${describeStep(prev)}) at ${sec(actionAt(prev))}; steps run in the order ` +
           `they are listed: cue it on a later word, or move it above step ${prev.index}`,
       );
-      return;
     }
-    if (at > sceneEnd + 1e-6)
-      out.push(
-        `${where}, after the scene ends at ${sec(sceneEnd)} (its narration plus a short breath); ` +
-          (s.step.cue === undefined
-            ? `give it a cue, or take ${sec(upTo05(at - sceneEnd))} off the ms of the steps before it`
-            : `cue it on an earlier word, or reduce its offset`),
-      );
   });
   return out;
 }
 
 /**
- * Notes that do not stop the render: a `type` step whose typing (one character every 35 ms after its click) runs so
- * far into the next step's time that the step will act late. The recorder finishes typing first; a glide that sets
- * off late is compressed down to half its travel, so only typing past that makes the next action late.
+ * A `ringSel` ring on a click is drawn once the click has had its effect (a frame or two, at most 0.4 s): on a `type`
+ * step the typing starts after it. This is the usual wait.
  */
-export function scheduleWarnings(scene: Scene, scheduled: ScheduledStep[]): string[] {
+const RING_AFTER_CLICK_SEC = 0.05;
+
+/**
+ * Notes that do not stop the render:
+ * - an action between FIRST_ACTION_SEC and SAFE_FIRST_ACTION_SEC: it may still fall inside the flash marker;
+ * - a `type` step whose typing (one character every 35 ms after its click, and after its `ringSel` ring) runs so far
+ *   into the next step's time that the step will act late. The recorder finishes typing first; a glide that sets off
+ *   late is compressed down to half its travel, so only typing past that makes the next action late;
+ * - a step that acts after the scene ends (`sceneEnd`: the narration plus the breath after it): it is not shown.
+ */
+export function scheduleWarnings(scene: Scene, scheduled: ScheduledStep[], sceneEnd?: number): string[] {
   const out: string[] = [];
   const steps = [...scheduled].sort((a, b) => a.index - b.index);
   steps.forEach((s, k) => {
+    const at = actionAt(s);
+    const where = `scene "${scene.id}" step ${s.index}: ${describeStep(s)} acts at ${sec(at)}`;
+    if (at >= FIRST_ACTION_SEC - 1e-9 && at < SAFE_FIRST_ACTION_SEC - 1e-9)
+      out.push(
+        `${where}, close to the flash marker that starts the take; if the render fails with "happened before the take ` +
+          `started", cue a later word or add offset: ${upTo05(SAFE_FIRST_ACTION_SEC - at)}`,
+      );
+    if (sceneEnd !== undefined && at > sceneEnd + 1e-6)
+      out.push(
+        `${where}, after the scene ends at ${sec(sceneEnd)} (its narration plus a short breath), so it is not shown; ` +
+          (s.step.cue === undefined
+            ? `give it a cue, or take ${sec(upTo05(at - sceneEnd))} off the ms of the steps before it`
+            : `cue it on an earlier word, or reduce its offset`),
+      );
     const next = steps[k + 1];
     if (s.step.do !== 'type' || !s.step.text || !next) return;
-    const typed = actionAt(s) + s.step.text.length * TYPE_CHAR_SEC;
+    const ringWait = s.step.ringSel !== undefined ? RING_AFTER_CLICK_SEC : 0;
+    const typed = actionAt(s) + ringWait + s.step.text.length * TYPE_CHAR_SEC;
     const late = typed - next.startAt - next.travel / 2;
     if (late <= 0.05) return;
     const text = s.step.text.length > 30 ? `${s.step.text.slice(0, 27)}...` : s.step.text;

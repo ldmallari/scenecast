@@ -230,8 +230,8 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
       if (scene.kind !== 'app') continue;
       const { voice } = voices.get(scene.id)!;
       const scheduled = schedule(scene, voice, scheduleOptsFor(scene, spec.cursor, voice.duration));
-      problems.push(...checkSchedule(scene, scheduled, voice.duration + DEFAULTS.video.breathSec));
-      for (const w of scheduleWarnings(scene, scheduled)) log(`warning: ${w}`);
+      problems.push(...checkSchedule(scene, scheduled));
+      for (const w of scheduleWarnings(scene, scheduled, voice.duration + DEFAULTS.video.breathSec)) log(`warning: ${w}`);
       schedules.set(scene.id, scheduled);
     }
     if (problems.length) throw new Error(`the steps cannot be recorded as scheduled:\n${problems.join('\n')}`);

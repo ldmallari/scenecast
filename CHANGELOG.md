@@ -16,8 +16,9 @@ All notable changes to scenecast are listed here. The format follows
 - Scene `setup` steps: untimed, unfilmed steps that run after `route` opens and before recording starts, so a scene
   can start part-way through a flow (an open drawer, step 2 of a wizard) without an init script that fakes the state.
 - Steps that could only fail once recorded are reported after the voice is made and before anything is recorded, all
-  at once, each with what to change: a step on a scene's first word, a step that would act before the step above it,
-  and a step that would run past the end of its scene.
+  at once, each with what to change: a step that acts while the flash marker still shows (a first word at 0 s), and
+  a cued step that would act before the step above it. A step that acts between 0.12 and 0.2 s, or after its scene
+  ends (it is not shown), is a warning.
 - A warning when a `type` step's typing runs long enough to make the next step act late.
 - A warning before composing when a zoom leaves no caption position free, with how much of the zoomed height its
   target fills.
@@ -25,8 +26,10 @@ All notable changes to scenecast are listed here. The format follows
 
 ### Changed
 
-- A step without a cue starts once the step before it has acted (plus that step's `ms`), not while that step's cursor
-  is still gliding. A first step without a cue acts 0.2 s into the scene, once the take has started.
+- A step without a cue still starts with the step before it (plus that step's `ms`), but never acts before it: a
+  shorter glide sets off later, and a ring, key press or wait after a click comes once the click has landed (before,
+  it came at the click's glide start). Such steps can move by up to a glide in videos made with 1.1. A first step
+  without a cue that is not a pointer step acts 0.2 s into the scene instead of at 0 s.
 - Takes recorded by 1.1.0 are recorded again on the next render (the record stage's cache version is 4); the voice and
   music are kept.
 

@@ -86,18 +86,24 @@ few words later, or set the scene's `cursor` near the target.
 `render` stops after the voice and before recording, listing every step whose timing could only fail once the scene
 was recorded:
 
-- **`… would act at 0.00 s, before the take has started (the flash marker takes the scene's first 0.2 s); cue a later
-  word, or add offset: 0.2`.** The cue is the scene's first word. Cue the step on a later word of the same phrase, or
+- **`… would act at 0.00 s, before the take has started (the flash marker takes the scene's first 0.12 s); cue a
+  later word, or add offset: 0.2`.** The cue is the scene's first word. Cue the step on a later word of the same phrase, or
   give it the `offset` the message suggests.
 - **`… would act at 4.20 s, before step 2 (click on "pick") at 4.52 s; steps run in the order they are listed`.** The
   recorder runs steps in order, so a step cued on an earlier word than the step above it cannot happen first. Move it
   above that step, or cue it on a later word.
-- **`… would act at 12.40 s, after the scene ends at 11.95 s`.** A step without a cue runs after the step before it
-  plus that step's `ms`, and here that is past the end of the narration. Give it a cue, or shorten the `ms` before it
-  by the amount the message says.
 
-These used to fail after every scene had been recorded, as `action <n> is scheduled before the previous action` or
-`action <n> happened before the take started`.
+These used to fail after every scene had been recorded, as `action <n> happened before the take started` or
+`action <n> is scheduled before the previous action` (the second only for cued steps: an uncued step no longer acts
+before the step above it).
+
+Two warnings, which do not stop the render:
+
+- **`… acts at 0.15 s, close to the flash marker that starts the take`.** It usually records. If the render then fails
+  with `happened before the take started`, cue a later word or add the `offset` it gives.
+- **`… acts at 12.40 s, after the scene ends at 11.95 s …, so it is not shown`.** A step without a cue runs after the
+  step before it plus that step's `ms`, and here that is past the end of the narration. Give it a cue, or shorten the
+  `ms` before it by the amount the message says.
 
 ## Caption FAILs
 
