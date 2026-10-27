@@ -37,7 +37,7 @@ Downloaded by `scenecast doctor` into `~/.cache/scenecast/` (never committed, ne
 | Silero VAD model (`silero_vad_v6.onnx`, shipped inside the faster-whisper package, not downloaded); finds where speech starts before forced alignment | MIT | https://github.com/snakers4/silero-vad |
 | spaCy `en_core_web_sm` 3.8.0 (installed as a Python package) | MIT | https://github.com/explosion/spacy-models |
 | CMU Pronouncing Dictionary (NLTK data `cmudict`) | BSD-2-Clause-style (the licence is in its README) | https://github.com/cmusphinx/cmudict |
-| NLTK averaged perceptron tagger (NLTK data `averaged_perceptron_tagger`, `averaged_perceptron_tagger_eng`) | not stated in the download; distributed by the NLTK data project | https://github.com/nltk/nltk_data |
+| NLTK averaged perceptron tagger (NLTK data `averaged_perceptron_tagger`, `averaged_perceptron_tagger_eng`) | MIT (per the NLTK data index; trained by the textblob-aptagger project) | https://github.com/nltk/nltk_data, https://github.com/sloria/textblob-aptagger |
 
 ## Bundled fonts
 
@@ -61,7 +61,7 @@ is not used, because it depends on GPL packages). It contains:
 
 The kokoro-onnx part is used under the MIT licence:
 
-> Copyright (c) the kokoro-onnx authors (https://github.com/thewh1teagle/kokoro-onnx)
+> Copyright (c) 2025 github.com/thewh1teagle
 >
 > Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 > documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
@@ -309,7 +309,7 @@ here, and its licence was not verified.
 | `more-itertools` | MIT | https://github.com/more-itertools/more-itertools |
 | `murmurhash` | MIT | https://github.com/explosion/murmurhash |
 | `nltk` | Apache-2.0 | https://github.com/nltk/nltk |
-| `num2words` | LGPL (metadata gives no version; upstream: LGPL-2.1) | https://github.com/savoirfairelinux/num2words |
+| `num2words` | LGPL-2.1 (upstream COPYING; the wheel metadata says only "LGPL") | https://github.com/savoirfairelinux/num2words |
 | `numpy` | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | https://numpy.org |
 | `onnxruntime` | MIT | https://onnxruntime.ai |
 | `packaging` | Apache-2.0 OR BSD-2-Clause | https://github.com/pypa/packaging |
