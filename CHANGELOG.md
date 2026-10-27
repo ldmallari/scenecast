@@ -30,8 +30,8 @@ All notable changes to scenecast are listed here. The format follows
   shorter glide sets off later, and a ring, key press or wait after a click comes once the click has landed (before,
   it came at the click's glide start). Such steps can move by up to a glide in videos made with 1.1. A first step
   without a cue that is not a pointer step acts 0.2 s into the scene instead of at 0 s.
-- Takes recorded by 1.1.0 are recorded again on the next render (the record stage's cache version is 4); the voice and
-  music are kept.
+- The first render after updating makes every scene's voice and recording again (the voice and record stages' cache
+  versions are 3 and 4), so the alignment and recording fixes reach videos cached by 1.1; the music is kept.
 
 ### Fixed
 

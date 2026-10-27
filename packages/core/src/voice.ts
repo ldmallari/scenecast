@@ -22,8 +22,11 @@ export interface VoiceTimeline {
 export type SceneVoice = VoiceTimeline['scenes'][string];
 export type WordSource = 'forced' | 'onset' | 'free' | 'position';
 
-/** Bumped whenever the Python word timing changes, so cached voice timelines are re-made (it is in the cache key). */
-export const VOICE_ALIGN_VERSION = 2;
+/**
+ * Bumped whenever the Python word timing changes, so cached voice timelines are re-made (it is in the cache key).
+ * 3: two spoken words on one start are split by a frame instead of the phrase falling back to the free transcript.
+ */
+export const VOICE_ALIGN_VERSION = 3;
 
 const MAX_PHRASE = 140;
 /** A clause split needs at least this many words on each side, so a list like "speed; care" stays one phrase. */

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { splitPhrases, phraseGaps, buildVoice } from '../src/voice.js';
+import { splitPhrases, phraseGaps, buildVoice, VOICE_ALIGN_VERSION } from '../src/voice.js';
 import { findUv } from '../src/toolchain.js';
 import { DEFAULTS, VideoSpecSchema } from '../src/scene/schema.js';
 
@@ -102,4 +102,10 @@ describe.skipIf(!process.env.SCENECAST_E2E)('buildVoice e2e (real Kokoro + whisp
     expect(s.words.length).toBe(4);
     console.log(JSON.stringify(s, null, 2));
   }, 600_000);
+});
+
+describe('the voice stage version', () => {
+  it('is 3: two words on one start are split by a frame (align.separate_ties), so voices cached by 1.1 are re-made', () => {
+    expect(VOICE_ALIGN_VERSION).toBe(3);
+  });
 });
