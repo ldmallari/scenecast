@@ -27,8 +27,8 @@ WORDS = [
     {"w": " two", "start": 1.40, "end": 1.60},
     {"w": " documents", "start": 1.65, "end": 2.20},
     {"w": " for", "start": 2.30, "end": 2.45},
-    {"w": " Anna", "start": 2.50, "end": 2.80},
-    {"w": " Rayes.", "start": 2.85, "end": 3.30},
+    {"w": " Meera", "start": 2.50, "end": 2.80},
+    {"w": " Solana.", "start": 2.85, "end": 3.30},
 ]
 
 
@@ -68,13 +68,13 @@ def fixture(tmp_path, moments=None, events=None, cues=None, zooms=None, **kw):
         "rules": RULES,
         "loudness": {"lufs": -16.1, "truePeak": -2.0},
         "music": None,
-        "allowList": ["Ana Reyes"],
+        "allowList": ["Mira Solano"],
         "scenes": [
             {
                 "id": "s1",
                 "start": 0.0,
                 "end": 6.0,
-                "narration": "Open 2 documents for Ana Reyes.",
+                "narration": "Open 2 documents for Mira Solano.",
                 "cues": cues or [],
                 "zooms": zooms or [],
                 "navBox": None,
@@ -290,7 +290,7 @@ def test_spinner_visible_at_cue_fails(tmp_path):
 
 
 def test_numbers_and_allow_listed_names_do_not_fail(tmp_path):
-    # Script says "2 documents" and "Ana Reyes"; whisper heard "two documents" and "Anna Rayes".
+    # Script says "2 documents" and "Mira Solano"; whisper heard "two documents" and "Meera Solana".
     v = run(fixture(tmp_path))
     nar = v["narration"][0]
     assert nar["verdict"] == "PASS", nar
@@ -299,7 +299,7 @@ def test_numbers_and_allow_listed_names_do_not_fail(tmp_path):
     w = run(fixture(tmp_path, allowList=[]))
     nar = w["narration"][0]
     assert nar["verdict"] == "WARN"
-    assert "ana reyes" in nar["diff"] and "anna rayes" in nar["diff"]
+    assert "mira solano" in nar["diff"] and "meera solana" in nar["diff"]
     assert w["pass"] is True and w["counts"]["fail"] == 0
 
 
@@ -436,8 +436,8 @@ def test_real_whisper_hears_the_cue(tmp_path):
 
 
 def test_cue_on_allow_listed_misheard_name_uses_the_transcript(tmp_path):
-    # Script "Ana Reyes", heard "Anna Rayes": the cue "Ana" maps to "Anna" by position, not to the plan time.
-    row = only_row(run(fixture(tmp_path, moments=[moment(cue="Ana", planWordTime=0.5, actionTime=2.5)])))
+    # Script "Mira Solano", heard "Meera Solana": the cue "Mira" maps to "Meera" by position, not to the plan time.
+    row = only_row(run(fixture(tmp_path, moments=[moment(cue="Mira", planWordTime=0.5, actionTime=2.5)])))
     assert row["wordSource"] == "transcript"
     assert row["wordTime"] == pytest.approx(2.5)
     assert row["verdict"] == "PASS"
@@ -466,7 +466,7 @@ def test_cue_word_index_picks_the_scheduled_occurrence(tmp_path):
 
 def test_allow_list_does_not_hide_extra_words(tmp_path):
     words = WORDS[:4] + [{"w": f" {w}", "start": 2.5 + 0.3 * i, "end": 2.7 + 0.3 * i} for i, w in
-                         enumerate(["Anna", "Rayes", "and", "delete", "everything."])]
+                         enumerate(["Meera", "Solana", "and", "delete", "everything."])]
     nar = run(fixture(tmp_path, words=words))["narration"][0]
     assert nar["verdict"] == "WARN"
     assert "delete everything" in nar["diff"]
@@ -773,8 +773,8 @@ def _with_media(monkeypatch, tmp_path, tiny_video, data):
     return data
 
 
-NARRATION = "Open 2 documents for Ana Reyes."
-PHRASES = [{"start": 0.5, "end": 2.2, "words": 3, "text": "Open 2 documents"}, {"start": 2.4, "end": 3.4, "words": 3, "text": "for Ana Reyes."}]
+NARRATION = "Open 2 documents for Mira Solano."
+PHRASES = [{"start": 0.5, "end": 2.2, "words": 3, "text": "Open 2 documents"}, {"start": 2.4, "end": 3.4, "words": 3, "text": "for Mira Solano."}]
 
 
 def test_cue_time_comes_from_forced_alignment(tmp_path, tiny_video, monkeypatch):
@@ -789,7 +789,7 @@ def test_cue_time_comes_from_forced_alignment(tmp_path, tiny_video, monkeypatch)
     assert row["wordTime"] == pytest.approx(2.05)
     assert row["wordSource"] == "transcript"
     assert row["verdict"] == "PASS"
-    assert [p["text"] for p in aligner.calls[0]] == ["Open 2 documents", "for Ana Reyes."]
+    assert [p["text"] for p in aligner.calls[0]] == ["Open 2 documents", "for Mira Solano."]
 
 
 def test_unheard_cue_still_warns_with_the_plan_time(tmp_path, tiny_video, monkeypatch):
@@ -806,11 +806,11 @@ def test_unheard_cue_still_warns_with_the_plan_time(tmp_path, tiny_video, monkey
 def test_forced_time_is_clamped_to_its_phrase_and_untimed_phrases_use_the_transcript(tmp_path, tiny_video, monkeypatch):
     data = _with_media(monkeypatch, tmp_path, tiny_video, fixture(tmp_path, moments=[
         moment(index=0, cue="Open", cueWord=0, planWordTime=0.5, actionTime=0.5),
-        moment(index=1, cue="Ana", cueWord=4, planWordTime=2.5, actionTime=2.5, target=None)]))
+        moment(index=1, cue="Mira", cueWord=4, planWordTime=2.5, actionTime=2.5, target=None)]))
     data["scenes"][0]["phrases"] = PHRASES
     rows = run(data, aligner=FakeAligner([0.2, 1.4, 1.9, None, None, None]))["moments"]
     assert rows[0]["wordTime"] == pytest.approx(0.5)  # 0.2 is before its phrase starts at 0.5
-    assert rows[1]["wordTime"] == pytest.approx(2.5)  # no forced time: the transcript's "Anna" at 2.50
+    assert rows[1]["wordTime"] == pytest.approx(2.5)  # no forced time: the transcript's "Meera" at 2.50
 
 
 def test_adjacent_words_sharing_a_start_are_separated_by_alignment(tmp_path, tiny_video, monkeypatch):
@@ -915,7 +915,7 @@ def test_phrase_first_word_uses_the_voice_onset_and_the_mix_onset_is_a_cross_che
 def test_word_time_sources_are_recorded(tmp_path, tiny_video, monkeypatch):
     moments = [moment(index=0, cue="Open", cueWord=0, planWordTime=0.5, actionTime=1.0),
                moment(index=1, cue="documents", cueWord=2, planWordTime=2.0, actionTime=2.05, target=None),
-               moment(index=2, cue="Ana", cueWord=4, planWordTime=2.5, actionTime=2.5, target=None)]
+               moment(index=2, cue="Mira", cueWord=4, planWordTime=2.5, actionTime=2.5, target=None)]
     words = [w for w in WORDS if w["w"].strip() != "Open"]
     data = _with_media(monkeypatch, tmp_path, tiny_video, fixture(tmp_path, words=words, moments=moments))
     data["scenes"][0]["phrases"] = PHRASES  # no voice onsets (an old timeline): the mix times stand

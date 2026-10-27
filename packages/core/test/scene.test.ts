@@ -63,12 +63,12 @@ describe('scene loader', () => {
       id: 'v', title: 'v', output: 'o.mp4',
       brand: { primary: '#000', accent: '#fff', font: 'F', introTitle: 'v' },
       app: { baseUrl: 'http://x' },
-      scenes: [{ id: 's1', kind: 'app', narration: 'Hi Ana Reyes.' }],
+      scenes: [{ id: 's1', kind: 'app', narration: 'Hi Mira Solano.' }],
     };
     expect(VideoSpecSchema.parse(base).audit).toBeUndefined();
-    expect(VideoSpecSchema.parse({ ...base, audit: { allowList: ['Ana Reyes'] } }).audit).toEqual({ allowList: ['Ana Reyes'] });
+    expect(VideoSpecSchema.parse({ ...base, audit: { allowList: ['Mira Solano'] } }).audit).toEqual({ allowList: ['Mira Solano'] });
     expect(VideoSpecSchema.parse({ ...base, audit: {} }).audit).toEqual({ allowList: [] });
-    expect(() => VideoSpecSchema.parse({ ...base, audit: { allowList: 'Ana' } })).toThrow();
+    expect(() => VideoSpecSchema.parse({ ...base, audit: { allowList: 'Mira' } })).toThrow();
   });
 });
 

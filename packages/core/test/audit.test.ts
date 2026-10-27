@@ -230,9 +230,9 @@ describe('buildAuditInput', () => {
   });
 
   it('the allow-list comes from the scene file; the option overrides it', () => {
-    const spec2 = { audit: { allowList: ['Ana Reyes'] } };
+    const spec2 = { audit: { allowList: ['Mira Solano'] } };
     const read = (o: AuditOpts) => (buildAuditInput(o, { outDir: '/x', ffmpeg: null, whisperModel: null }) as { allowList: string[] }).allowList;
-    expect(read(opts({ spec: spec2 }))).toEqual(['Ana Reyes']);
+    expect(read(opts({ spec: spec2 }))).toEqual(['Mira Solano']);
     expect(read(opts({ spec: spec2, allowList: ['Sam'] }))).toEqual(['Sam']);
     expect(read(opts())).toEqual([]);
   });

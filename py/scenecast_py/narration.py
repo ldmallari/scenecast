@@ -15,7 +15,7 @@ _TENS = "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()
 _SCALES = ((10**12, "trillion"), (10**9, "billion"), (10**6, "million"), (1000, "thousand"))
 _ORDINAL = {"one": "first", "two": "second", "three": "third", "five": "fifth", "eight": "eighth",
             "nine": "ninth", "twelve": "twelfth"}
-# An allow-listed name may come back as this many more heard tokens than it has (e.g. "Ana" -> "An na").
+# An allow-listed name may come back as this many more heard tokens than it has (e.g. "Mira" -> "An na").
 _ALLOW_SLACK = 1
 SCENE_EDGE_SEC = 0.05  # recognised times this close to the scene start count as inside it
 # A word stamped before the scene counts only when it runs this far into it (a stretched tail of the previous scene,
