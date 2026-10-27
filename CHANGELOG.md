@@ -13,6 +13,8 @@ All notable changes to scenecast are listed here. The format follows
   drop zone on its cue and answers the file chooser with the file (or files). Files are checked when the scene file
   loads, and their contents are part of the recording's cache key. The demo app has a New request drawer with a drop
   zone to try it on.
+- Scene `setup` steps: untimed, unfilmed steps that run after `route` opens and before recording starts, so a scene
+  can start part-way through a flow (an open drawer, step 2 of a wizard) without an init script that fakes the state.
 
 ### Fixed
 

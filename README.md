@@ -38,7 +38,8 @@ no sound; the video is narrated.*
   (to the top, a corner, or beside the phone on phone scenes), including while the view is zoomed in. They break at
   the narration's clauses, and the voice pauses briefly there too.
 - **Made for real apps.** Feature flags and slow third parties can be answered with routes, init scripts run before
-  the app does, sign-ins kept in sessionStorage are saved and restored, zooms end on a cue word, the cursor parks out
+  the app does, sign-ins kept in sessionStorage are saved and restored, a scene can start inside an open drawer or a
+  wizard step (`setup`), files are chosen with an `upload` step, zooms end on a cue word, the cursor parks out
   of the way, phone scenes use touch, and the intro and outro cards take a gradient or image background, their own
   font, an entrance and a "next" line (or an HTML page of your own).
 - **Local and free.** Voice by [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), speech recognition by

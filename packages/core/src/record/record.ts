@@ -230,9 +230,9 @@ const toBox = (b: { x: number; y: number; width: number; height: number }): Box 
 });
 const asList = (sel: string | string[] | undefined): string[] => (sel === undefined ? [] : Array.isArray(sel) ? sel : [sel]);
 const selectors = (step: Step): string[] => asList(step.sel);
-/** What a selector belongs to, for error messages: a step's index, or the scene's initial zoom. */
-type SelOwner = number | 'zoom';
-const ownerName = (at: SelOwner) => (at === 'zoom' ? 'zoom' : `step ${at}`);
+/** What a selector belongs to, for error messages: a step's index, or a name (the scene's `zoom`, `setup step 1`). */
+type SelOwner = number | string;
+const ownerName = (at: SelOwner) => (typeof at === 'number' ? `step ${at}` : at);
 
 /** First visible match of `sel` (never the overlay), waiting up to SELECTOR_TIMEOUT_MS. */
 async function findVisible(page: Page, sceneId: string, index: SelOwner, sel: string): Promise<Locator> {
@@ -445,7 +445,7 @@ async function signIn(browser: Browser, app: AppConn, file: string): Promise<str
     trackNetwork(page);
     if (app.login?.length) {
       if (app.login[0]!.do !== 'goto') await page.goto(app.baseUrl);
-      for (const [i, step] of app.login.entries()) await loginStep(page, app, step, i);
+      for (const [i, step] of app.login.entries()) await untimedStep(page, app, step, 'login', i);
       await page.waitForLoadState('load').catch(() => {});
       await settle(page);
     } else {
@@ -462,10 +462,14 @@ async function signIn(browser: Browser, app: AppConn, file: string): Promise<str
   }
 }
 
-/** Login steps run as fast as possible, untimed and unrecorded. */
-async function loginStep(page: Page, app: AppConn, step: Step, i: number): Promise<void> {
+/**
+ * Login and setup steps run as fast as possible, untimed and unrecorded. `sceneId` and `owner` name the step in
+ * errors (`login` and its index, or the scene and `setup step <i>`).
+ */
+async function untimedStep(page: Page, app: AppConn, step: Step, sceneId: string, owner: SelOwner): Promise<void> {
   const sel = selectors(step)[0];
-  const el = sel === undefined ? undefined : await findVisible(page, 'login', i, sel);
+  const el = sel === undefined ? undefined : await findVisible(page, sceneId, owner, sel);
+  const where = `scene "${sceneId}" ${ownerName(owner)}`;
   switch (step.do) {
     case 'goto':
       await page.goto(new URL(step.text ?? sel ?? '/', app.baseUrl).href);
@@ -473,8 +477,12 @@ async function loginStep(page: Page, app: AppConn, step: Step, i: number): Promi
     case 'click':
       await el?.click();
       break;
+    case 'check':
+      if (el && !(await isChecked(el))) await el.click();
+      if (el && !(await becomesChecked(el))) throw new Error(`${where}: ${sel} is not checked after the click`);
+      break;
     case 'upload':
-      if (el) await clickAndChoose(page, () => el.click(), step, `login step ${i}`);
+      if (el) await clickAndChoose(page, () => el.click(), step, sceneId === 'login' ? `login step ${owner}` : where);
       break;
     case 'hover':
       await el?.hover();
@@ -486,11 +494,16 @@ async function loginStep(page: Page, app: AppConn, step: Step, i: number): Promi
     case 'press':
       await page.keyboard.press(step.text ?? 'Enter');
       break;
+    case 'scroll':
+      if (el) await el.evaluate((e) => e.scrollIntoView({ block: 'center' }));
+      else if (step.to !== undefined) await page.evaluate((top) => window.scrollTo({ top }), step.to);
+      else await page.evaluate((by) => window.scrollBy({ top: by ?? innerHeight * 0.8 }), step.by ?? null);
+      break;
     case 'wait':
       await sleep(step.ms ?? 0);
       break;
     default:
-      break; // zoom, ring and scroll only matter on camera
+      break; // zoom, ring, unzoom and park only matter on camera
   }
 }
 
@@ -603,6 +616,13 @@ async function runTake(
   }
   await page.goto(url(scene.route ?? '/'));
   await settleTake();
+  // Setup: untimed, unfilmed steps that bring the page to where the scene starts (an open drawer, a wizard step).
+  if (scene.setup?.length) {
+    for (const [i, step] of scene.setup.entries()) {
+      await untimedStep(page, app, step, scene.id, `setup step ${i}`);
+      await settleTake();
+    }
+  }
   const navs = await navBoxes(page, app);
   // The scene's initial zoom: its `zoom.sel` scrolled into view and measured (union of all), plus `pad`.
   const zoomSels = asList(scene.zoom?.sel);

@@ -177,6 +177,11 @@ const SceneSchema = z.object({
   prewarm: z.array(z.string()).optional(),
   narration: z.string(),
   steps: z.array(StepSchema).default([]),
+  /**
+   * App scenes: steps run after `route` opens and before recording starts, untimed and not filmed (like `app.login`):
+   * a scene can start part-way through a flow, such as an open drawer or step 2 of a wizard.
+   */
+  setup: z.array(StepSchema).optional(),
   /** Title scenes: an HTML file shown as the card, rendered once like `cards.introPage`. Ignored (with a warning) on app scenes. */
   page: z.string().optional(),
   zoom: z.object({ sel: SelSchema, pad: z.number().nonnegative().optional() }).strict().optional(),
@@ -234,6 +239,7 @@ export const VideoSpecSchema = z
         }
       }
       checkStepFields(scene, si, ctx);
+      checkSetup(scene, si, ctx);
       scene.steps.forEach((step, i) => {
         if (step.cue === undefined) return;
         const n = countCue(scene.narration, step.cue);
@@ -248,6 +254,26 @@ export const VideoSpecSchema = z
   });
 
 type SceneIn = z.infer<typeof SceneSchema>;
+
+/** What a setup step may do: everything but what only matters on camera. */
+const SETUP_KINDS: ReadonlySet<string> = new Set(['click', 'type', 'hover', 'check', 'upload', 'press', 'wait', 'goto', 'scroll']);
+
+/** Setup steps: app scenes only, no cue (they run before the take), and only steps that change the page. */
+function checkSetup(scene: SceneIn, si: number, ctx: z.RefinementCtx): void {
+  if (!scene.setup) return;
+  if (scene.kind !== 'app') {
+    ctx.addIssue({ code: 'custom', path: ['scenes', si, 'setup'], message: `scene "${scene.id}": setup is for app scenes` });
+    return;
+  }
+  scene.setup.forEach((step, i) => {
+    const bad = (message: string) =>
+      ctx.addIssue({ code: 'custom', path: ['scenes', si, 'setup', i], message: `scene "${scene.id}" setup step ${i}: ${message}` });
+    if (step.cue !== undefined || step.occ !== undefined || step.offset !== undefined)
+      bad('setup steps run before recording starts and take no cue, occ or offset');
+    if (!SETUP_KINDS.has(step.do)) bad(`${step.do} is not filmed in setup; make it a scene step`);
+    checkUpload(step, bad);
+  });
+}
 
 /** An upload names what it clicks (`sel`) and what it chooses (`file`); `file` is for upload steps only. */
 function checkUpload(step: z.infer<typeof StepSchema>, bad: (message: string) => void): void {

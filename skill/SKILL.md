@@ -36,6 +36,8 @@ mobile apps, or Windows without WSL.
    - make sign-in unattended (`app.login`, `app.storageState` or `app.loginHook`); a sign-in kept in sessionStorage
      is saved and restored too;
    - seed the data the video shows with `app.seed`, so every render shows the same thing;
+   - start a scene part-way through a flow (an open drawer, step 2 of a wizard) with the scene's `setup` steps: they
+     run before recording starts and are not filmed;
    - switch features on, or answer slow third-party calls, with `app.routes`; set things up before the app's own
      scripts with `app.initScript` (it runs before `<html>` exists: wrap page access in `DOMContentLoaded`);
    - point a zoom or ring at exactly what the narration names, and end a zoom on a word with `{ cue: …, do: unzoom }`

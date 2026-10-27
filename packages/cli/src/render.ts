@@ -308,9 +308,9 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
  */
 export const RECORD_STAGE_VERSION = 3;
 
-/** The files a scene's take depends on (their contents join the record stage's key): the app's, and the scene's uploads. */
+/** The files a scene's take depends on (their contents join the record stage's key): the app's, and the scene's uploads (setup's too). */
 export function recordStageFiles(app: VideoSpec['app'], scene: Scene): string[] {
-  return [...new Set([...appFiles(app), ...stepFiles(scene.steps)])];
+  return [...new Set([...appFiles(app), ...stepFiles(scene.setup), ...stepFiles(scene.steps)])];
 }
 
 /** Everything a scene's take depends on: the record stage's cache input. */

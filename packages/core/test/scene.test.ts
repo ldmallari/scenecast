@@ -241,3 +241,35 @@ describe('upload steps', () => {
     }
   });
 });
+
+describe('setup steps', () => {
+  const spec = (setup: unknown[], extra: Record<string, unknown> = {}) => ({
+    id: 'v', title: 'V', output: 'v',
+    brand: { primary: '#000', accent: '#fff', font: 'Inter', introTitle: 'V' },
+    app: { baseUrl: 'http://x' },
+    scenes: [{ id: 's1', kind: 'app', narration: 'Attach the receipt now.', setup, steps: [], ...extra }],
+  });
+
+  it('take the step format without cues', () => {
+    const s = parseScene(spec([{ do: 'click', sel: '#new' }, { do: 'type', sel: '#t', text: 'x' }, { do: 'press', text: 'Tab' }]));
+    expect(s.scenes[0]!.setup).toHaveLength(3);
+    expect(() => parseScene(spec([{ cue: 'Attach', do: 'click', sel: '#new' }]))).toThrow(
+      'scene "s1" setup step 0: setup steps run before recording starts and take no cue, occ or offset',
+    );
+  });
+
+  it('reject what only matters on camera', () => {
+    for (const d of ['zoom', 'ring', 'unzoom', 'park'])
+      expect(() => parseScene(spec([{ do: d, sel: '.a' }]))).toThrow(`scene "s1" setup step 0: ${d} is not filmed in setup; make it a scene step`);
+  });
+
+  it('are for app scenes only', () => {
+    expect(() => parseScene(spec([{ do: 'click', sel: '#new' }], { kind: 'title', seconds: 2 }))).toThrow(
+      'scene "s1": setup is for app scenes',
+    );
+  });
+
+  it('check uploads like scene steps', () => {
+    expect(() => parseScene(spec([{ do: 'upload', sel: '.d' }]))).toThrow('scene "s1" setup step 0: upload needs file (the file to choose)');
+  });
+});

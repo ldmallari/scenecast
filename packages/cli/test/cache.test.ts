@@ -134,6 +134,8 @@ describe('the record stage files', () => {
     for (const f of [a, b]) fs.writeFileSync(f, 'x');
     const scene = { id: 's', kind: 'app', narration: 'Hi.', steps: [{ do: 'upload', sel: '.d', file: [a, b] }, { do: 'click', sel: '.x' }] } as never;
     expect(recordStageFiles({ baseUrl: 'http://x' } as never, scene)).toEqual([a, b]);
+    const withSetup = { id: 's', kind: 'app', narration: 'Hi.', setup: [{ do: 'upload', sel: '.d', file: [b] }], steps: [{ do: 'upload', sel: '.d', file: [a] }] } as never;
+    expect(recordStageFiles({ baseUrl: 'http://x' } as never, withSetup)).toEqual([b, a]);
   });
 });
 

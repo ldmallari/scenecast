@@ -57,6 +57,7 @@ export async function loadScene(file: string): Promise<VideoSpec> {
     });
   uploads(spec.app.login, (i) => `app.login step ${i}`);
   for (const scene of spec.scenes) uploads(scene.steps, (i) => `scene "${scene.id}" step ${i}`);
+  for (const scene of spec.scenes) uploads(scene.setup, (i) => `scene "${scene.id}" setup step ${i}`);
   return spec;
 }
 

@@ -242,10 +242,39 @@ exactly one time, whatever its punctuation, hyphens or numbers ("sign-in", "$1,5
 | `viewport` | no | `desktop` (1920×1080, the default) or `phone` (390×844 in a drawn phone outline). |
 | `signedOut` | no | `true` records this scene without signing in. |
 | `prewarm` | no | Paths to open, and wait on, before `route`, so caches are warm when recording starts. |
+| `setup` | no | App scenes: steps run after `route` opens and before recording starts, untimed and not filmed, so the scene starts part-way through a flow (an open drawer, step 2 of a wizard). See [setup](#setup). |
 | `seconds` | title scenes: yes | The card's minimum length. It runs longer if the narration needs it. |
-| `zoom` | no | App scenes: `{ sel, pad }`. The scene starts zoomed on this element (measured before recording starts), until its first `zoom` or `unzoom` step, or the scene end. A selector that matches nothing fails the recording (`scene "<id>" zoom selector "<sel>" not found`). A zoom that grows to hold a declared nav and so becomes the full frame prints a warning (`scene "<id>": zoom on <sel> became the full frame because it holds nav <nav>`). |
+| `zoom` | no | App scenes: `{ sel, pad }`. The scene starts zoomed on this element (measured before recording starts, after `setup`), until its first `zoom` or `unzoom` step, or the scene end. A selector that matches nothing fails the recording (`scene "<id>" zoom selector "<sel>" not found`). A zoom that grows to hold a declared nav and so becomes the full frame prints a warning (`scene "<id>": zoom on <sel> became the full frame because it holds nav <nav>`). |
 | `cursor` | no | App scenes: where the cursor starts in this scene (a [spot](#cursor)). Overrides `cursor.start`. |
 | `page` | no | Title scenes: an HTML file shown as the card instead of the drawn one (see [card pages](#card-pages)). On an app scene it is ignored, with a warning. |
+
+### setup
+
+Some places in an app have no URL: a drawer opened by a button, step 3 of a wizard, a form half filled in. `setup`
+gets the page there before the take starts, the way `app.login` signs in: its steps run as fast as possible after
+`route` has opened and settled, the page settles after each one, and none of it is in the video. The scene's first
+frame shows the result.
+
+```yaml
+- id: attach
+  kind: app
+  route: /requests
+  setup:
+    - { do: click, sel: "#new-request" }
+    - { do: type, sel: "#request-title", text: A new monitor }
+    - { do: click, sel: "#wizard-next" }
+  narration: Attach a quote, and send the request.
+  steps:
+    - { cue: Attach, do: upload, sel: ".dropzone", file: ./quote.pdf }
+    - { cue: send, do: click, sel: "#wizard-submit" }
+```
+
+Setup steps use the step format without `cue`, `occ` or `offset`: `click`, `type` (fills the field at once),
+`hover`, `check`, `upload`, `press`, `scroll`, `wait` and `goto`. What only matters on camera (`zoom`, `ring`,
+`unzoom`, `park`) is a load error; make it a scene step. The scene's `zoom` and the declared navs are measured after
+setup, so a scene can start zoomed on the drawer setup opened. A setup selector that matches nothing fails the
+recording with `scene "<id>" setup step <i> selector "<sel>" not found`. Prefer `setup` to an `app.initScript`
+that fakes the state: it drives the app as a person would, so it keeps working when the app's internals change.
 
 The video is an intro card (3 s by default, music only), then every scene in order, then an outro card (3 s) with
 `title`. See [cards](#cards).

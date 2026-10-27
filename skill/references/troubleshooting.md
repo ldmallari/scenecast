@@ -171,7 +171,10 @@ the ring off by the rest of the movement.
   layouts scroll inside a container (a main panel, a table), so the window does not move. Use `scroll` with `sel` on
   an element inside that container: it is scrolled into the middle of the view, whichever element scrolls.
 - **`zoom selector "<sel>" not found`** (a scene's `zoom`). The element is measured before recording starts, on
-  `route`: it must be there without any step.
+  `route` after `setup`: it must be there without any scene step. If it appears only after a click, open it in
+  `setup`.
+- **`setup step <i> selector "<sel>" not found`**. Setup runs on `route` before the take: check the steps in order in
+  a browser. Each setup step waits for the page to settle before the next one runs.
 - **`brand.accent "…" is not a CSS colour; the touch indicator uses #F5C518`** (a warning on a phone scene). The
   render goes on with the default yellow; give `brand.accent` a CSS colour (`#rrggbb`, a name, `rgb(…)`) to use yours.
 
@@ -198,6 +201,10 @@ provider on another site and then comes back, the saved sessionStorage is applie
 signed in. Record the signed-out part as its own scene with `signedOut: true`.
 
 ## Feature flags, slow third parties and init scripts
+
+- **The scene should start inside a drawer, a dialog or a wizard step** that no URL opens. Use the scene's `setup`
+  steps (see [setup](scene-format.md#setup)): they click and type their way there before recording starts, and none
+  of it is filmed. There is no need for an init script that fakes the state.
 
 - **Turn a feature on for the video** with `app.routes`: answer the app's flags request with the values you want, for
   example `{ url: "**/api/flags", json: { sso: true } }`. The glob matches any origin, so an API on another host

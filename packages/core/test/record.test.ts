@@ -583,6 +583,33 @@ describe('recordScene', () => {
     );
   }, 60_000);
 
+  it('setup steps open a drawer at step 2 of its wizard before the flash; the take starts there', async () => {
+    const file = path.join(work, 'quote.pdf');
+    fs.writeFileSync(file, '%PDF-1.4 quote');
+    const steps: Step[] = [{ do: 'upload', sel: '.dropzone', file: [file] }];
+    const s = {
+      ...scene('setup', '/requests', steps),
+      setup: [
+        { do: 'click', sel: '#new-request' },
+        { do: 'type', sel: '#request-title', text: 'A new monitor' },
+        { do: 'click', sel: '#wizard-next' },
+      ],
+    } as Scene;
+    const plan = sched(steps, [0.3]);
+    const take = await recordScene(s, plan, app, path.join(work, 'takes'));
+    const e = take.events[0]!;
+    // The drawer (role=dialog) was open, on its second step, when the take's only step ran on its time.
+    expect(e.panels).toHaveLength(1);
+    const late = fired(e) - (0.3 + DEFAULT_TRAVEL_SEC);
+    expect(late, `late by ${late.toFixed(3)} s`).toBeGreaterThanOrEqual(-0.005);
+    expect(late, `late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
+  }, 60_000);
+
+  it('a setup step whose selector is missing names the scene and the setup step', async () => {
+    const s = { ...scene('setup-bad', '/requests', []), setup: [{ do: 'click', sel: '#nope' }] } as Scene;
+    await expect(recordScene(s, [], app, path.join(work, 'takes'))).rejects.toThrow('scene "setup-bad" setup step 0 selector "#nope" not found');
+  }, 60_000);
+
   it('scroll by pixels and to a position', async () => {
     // The init script runs before the page has its <html> element, so it makes the page tall once the DOM is in.
     const tall: AppConn = {
