@@ -2,6 +2,7 @@
 // the plan's scene starts give the voice placements, chapters and the final-time captions.
 import {
   actionAt,
+  clampZoom,
   DEFAULTS,
   DESKTOP_CAPTIONS,
   layoutCaptions,
@@ -179,6 +180,36 @@ export function fullFrameZoomWarnings(scene: Scene, take: Take, scheduled: Sched
 }
 
 /**
+ * Warnings for zooms (a zoom step, or the scene's starting zoom) during which some caption found no free position:
+ * the zoomed target covers the caption bands and corners. Says how much of the zoomed height the target fills.
+ */
+export function zoomCaptionWarnings(scene: Scene, take: Take, scheduled: ScheduledStep[], plan: PlanScene, align: PhoneAlign): string[] {
+  const phone = take.viewport === 'phone';
+  const toFrame = (b: Box) => (phone ? phoneToFrame(b, align) : b);
+  const frame: Box = { x: 0, y: 0, w: DEFAULTS.video.width, h: DEFAULTS.video.height };
+  const navs = (take.navs ?? []).map((n) => ({ ...n, box: toFrame(n.box) }));
+  const same = (a: Box, b: Box) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+  const out: string[] = [];
+  for (const z of plan.zooms ?? []) {
+    const held = z.instant ? z.start : z.start + DEFAULTS.video.zoomEaseSec;
+    if (!(plan.cues ?? []).some((c) => c.reason && c.start < z.end && c.end > held)) continue;
+    let owner: string | undefined;
+    if (z.instant && scene.zoom) owner = `scene "${scene.id}": zoom on ${selText(scene.zoom.sel)}`;
+    else {
+      const e = take.events.find((ev) => ev.kind === 'zoom' && ev.target && same(ev.target, z.box));
+      const step = e && scheduled.find((s) => s.index === e.index)?.step;
+      if (e && step?.sel !== undefined) owner = `scene "${scene.id}" step ${e.index}: zoom on ${selText(step.sel)}`;
+    }
+    if (!owner) continue;
+    const target = toFrame(z.box);
+    const region = clampZoom(target, frame, DEFAULTS.audit.zoomPadPx, undefined, phone ? phoneScreen(align).x : 0, navs);
+    const share = Math.round((100 * Math.min(target.h, region.h)) / region.h);
+    out.push(`${owner} leaves no caption position free (its target fills ${share}% of the zoomed height); zoom on a smaller element, use a smaller pad, or end the zoom sooner`);
+  }
+  return out;
+}
+
+/**
  * One app scene of the plan: the retimed take with its zooms, composer rings and captions. `align` is where a phone
  * take sits (`phone.align`): its boxes are mapped there, and its captions go beside the phone (`phoneCaptions`).
  */
@@ -274,6 +305,7 @@ export function buildVideo(spec: BuildSpec, inputs: SceneInput[], opts: BuildOpt
     if (!input.scheduled || !input.recorded) throw new Error(`scene "${scene.id}": app scene needs its schedule and take`);
     const { plan, segments } = appPlanScene(scene, voice, input.scheduled, input.recorded, align);
     warnings.push(...fullFrameZoomWarnings(scene, input.recorded.take, input.scheduled, align));
+    warnings.push(...zoomCaptionWarnings(scene, input.recorded.take, input.scheduled, plan, align));
     const start = push(plan);
     placed.push({ ...input, planIndex: planScenes.length - 1, start, segments });
   }

@@ -384,6 +384,22 @@ describe('zoom that becomes the full frame', () => {
   });
 });
 
+describe('zoom that leaves no room for captions', () => {
+  it('warns, naming the zoom step and how much of the zoomed height its target fills', () => {
+    const app = appInput('a', { zoom: true });
+    app.recorded.take.events[1]!.target = { x: 700, y: 300, w: 500, h: 420 };
+    const w = buildVideo(spec, [app], { cards: false }).warnings;
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatch(
+      /^scene "a" step 1: zoom on #z leaves no caption position free \(its target fills \d+% of the zoomed height\); zoom on a smaller element, use a smaller pad, or end the zoom sooner$/,
+    );
+  });
+
+  it('no warning for a zoom that leaves a caption position free', () => {
+    expect(buildVideo(spec, [appInput('a', { zoom: true })], { cards: false }).warnings).toEqual([]);
+  });
+});
+
 describe('voice track', () => {
   let dir: string;
   beforeEach(() => (dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-vt-'))));

@@ -9,6 +9,9 @@ All notable changes to scenecast are listed here. The format follows
 
 ### Added
 
+- A warning before composing when a zoom leaves no caption position free, with how much of the zoomed height its
+  target fills.
+
 - `app.seedInputs`: data files the seed reads; their contents join the recordings' cache key.
 
 - An `upload` step: `{ cue: attach, do: upload, sel: ".dropzone", file: ./quote.pdf }` clicks the button, label or

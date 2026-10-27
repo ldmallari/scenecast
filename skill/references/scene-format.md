@@ -347,7 +347,9 @@ What each action does:
   shows a declared nav whole or not at all. A target too big to need a zoom gets the full frame. When holding a
   declared nav whole is what makes the region the full frame (a large `pad` reaching a top bar, say), render and
   preview print a warning: `scene "<id>" step <i>: zoom on <sel> became the full frame because it holds nav <nav>`
-  (see [troubleshooting](troubleshooting.md#crop-fails)).
+  (see [troubleshooting](troubleshooting.md#crop-fails)). When a caption finds no free position while a zoom is
+  held, render and preview warn before composing: `zoom on <sel> leaves no caption position free (its target fills
+  N% of the zoomed height)`.
 - **unzoom.** Eases the zoom out, starting on its cue (it needs a `zoom` step before it in the scene, or the scene's
   own `zoom`, which it then ends). It has no `sel`.
   Use it to end a zoom on a word ("…comes **first**") instead of after a fixed `ms`.

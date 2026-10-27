@@ -107,6 +107,11 @@ the captions check in the table gives the reason, `no free position; <side> over
 a smaller element, close a panel the step does not need, or move the step to a phrase when less is on screen. Point
 the zoom at what the narration names: a zoom on a whole page leaves no room anywhere.
 
+**`zoom on <sel> leaves no caption position free (its target fills N% of the zoomed height)`** (a warning from
+render or preview, before composing). While that zoom is held, the zoomed target covers the top and bottom bands and
+the corners, so some caption has to overlap it, and the audit will likely FAIL its captions check. Zoom on a smaller
+element (the field, not the form), use a smaller `pad`, or end the zoom sooner with an `unzoom` before the phrase.
+
 **A caption covers a panel the audit does not know.** Built-in panels are dialogs, menus, listboxes and modals. Add
 the app's own pop-overs and drawers to `app.panels` (CSS selectors), and captions keep clear of them too.
 

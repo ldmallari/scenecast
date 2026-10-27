@@ -66,6 +66,7 @@ mobile apps, or Windows without WSL.
    | blank frames | Rare: blank runs are frozen in the take. Zoom to a region with content, or re-render with `--fresh`. |
    | crop: zoom cuts the nav | Declare the nav in `app.nav`. |
    | warning: zoom on … became the full frame because it holds nav … | Use a smaller `pad`, or zoom on an element clear of the nav. |
+   | warning: zoom on … leaves no caption position free | Zoom on a smaller element, use a smaller `pad`, or end the zoom sooner with an `unzoom`. |
    | work dir … is in use by another render (pid …) | Another render of the same video is running: wait for it, or use `--work <dir>`. |
    | crop: target too close to the zoom edge | Zoom the element's card or section instead (a side on the frame edge never fails). |
    | plan: unzoom has no zoom end near it | Put a `zoom` before the `unzoom` in the same scene, and drop the zoom's `ms`. |
