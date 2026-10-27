@@ -98,8 +98,8 @@ licence taken from the wheel's licence files, SBOM or upstream build script. sce
 wheels: `scenecast doctor` has uv install them from PyPI into `py/.venv`.
 
 None of the libraries scenecast loads is GPL-only. The GCC runtime libraries carry the GCC Runtime Library Exception,
-which allows linking them into code under any licence. The only GPL code installed (x264 and x265 inside the `av`
-wheel) is never loaded; see the `av` rows.
+which allows linking them into code under any licence. The `av` (PyAV) wheel, which bundles GPL x264 and x265, is not
+installed at all; see the note below the table.
 
 | Wheel | Bundled library | Licence | Verdict |
 |---|---|---|---|
@@ -118,23 +118,20 @@ wheel) is never loaded; see the `av` rows.
 | pillow 13.0.0 | `pillow.libs/`: libjpeg-turbo, libpng, libtiff 4.7.2, libwebp 1.6.0, libavif 1.4.2, OpenJPEG 2.5.4, FreeType 2.14.3, HarfBuzz 14.5.0, Little CMS 2.19, brotli, liblzma, zstd, libxcb, libXau | IJG and BSD-3-Clause (libjpeg-turbo), libpng, libtiff, BSD-2/3-Clause, FTL (FreeType), MIT, X11 | OK (per the wheel's SBOM in `pillow-*.dist-info/sboms/`) |
 | pillow | FriBiDi (for complex text layout) | LGPL-2.1-or-later | OK: not bundled; loaded from the system if present |
 | pillow | libimagequant | GPL-3.0-or-later | Not included: Pillow's SBOM names it, but the wheel is built without it (`PIL.features.check("libimagequant")` is False) |
-| av (PyAV) 19.0.2 | `av.libs/`: the FFmpeg libraries (libavcodec 63.1, libavformat, libavutil and the rest; libmp3lame linked in), configured `--enable-version3` without `--enable-gpl` | LGPL-3.0-or-later | Never loaded (see below) |
-| av | `av.libs/`: libx264, libx265, which libavcodec links | GPL-2.0-or-later | **GPL, never loaded** (see below) |
-| av | `av.libs/`: libgnutls, libnettle, libhogweed, libgmp, libunistring, libasound | LGPL-2.1-or-later or LGPL-3.0-or-later (nettle, gmp and libunistring: LGPL-3.0-or-later OR GPL-2.0-or-later) | Never loaded |
-| av | `av.libs/`: libdav1d, libSvtAv1Enc, libvmaf, libvpx, libvpl, libopus, libwebp, libdrm, libxcb, libXau | BSD-2-Clause, BSD-3-Clause, BSD-2-Clause-Patent, MIT, X11 | Never loaded |
+| av (PyAV) | FFmpeg libraries, libx264 and libx265 (GPL-2.0-or-later) and others in `av.libs/` | mixed, including GPL | **Not installed** (see below) |
 | tokenizers 0.23.3, hf-xet 1.7.0, pydantic-core 2.50.1 | Rust extension modules with their crates linked statically; no bundled shared libraries | the package licence (Apache-2.0, Apache-2.0, MIT) | OK; the statically linked crates were not reviewed one by one |
 | blis, PyYAML, regex, spacy, thinc and the other compiled packages | their own extension modules only (BLIS and libyaml compiled in) | the package licence | OK |
 | imageio-ffmpeg 0.6.0 | the ffmpeg 7.0.2 static executable (johnvansickle.com) | GPL-3.0-or-later (`--enable-gpl --enable-version3`) | OK: run as a separate program, never linked (see "Tools") |
 
-**`av` (PyAV)** is installed because faster-whisper depends on it, but scenecast **never loads it**. faster-whisper
-imports `av` when it loads, only to decode audio files. scenecast decodes audio with the ffmpeg tool above into a
-16 kHz array, and puts a stub in place of `av` before importing faster-whisper (`py/scenecast_py/whisper.py`), so PyAV
-and the libraries in `av.libs/` never load. `py/tests/test_whisper.py` checks this, and a real transcription was
-checked by hand on macOS (`DYLD_PRINT_LIBRARIES`) and Linux (`LD_DEBUG=libs`): neither x264 nor x265 loaded. The wheel
-still lands in `py/.venv` (uv installs it from PyPI, as faster-whisper requires it); scenecast does not redistribute it.
+**`av` (PyAV) is not installed.** faster-whisper declares it as a dependency, but `py/pyproject.toml` overrides that
+requirement away (`[tool.uv] override-dependencies`, the same way `distance` is kept out), so the wheel and the GPL
+x264/x265 it bundles never land in `py/.venv`. faster-whisper imports `av` when it loads, only to decode audio files.
+scenecast decodes audio with the ffmpeg tool above into a 16 kHz array, and puts a stub in place of `av` before
+importing faster-whisper (`py/scenecast_py/whisper.py`), so the import is satisfied without PyAV.
+`py/tests/test_whisper.py` checks both: the stub is in place, and `av` is not installed.
 
-**Other platforms.** The macOS arm64 wheels bundle the same kinds of libraries (the `av` wheel there also carries x264
-and x265; ctranslate2 uses Apple Accelerate instead of oneMKL). On Linux arm64, ctranslate2 4.8.3 bundles libgomp
+**Other platforms.** The macOS arm64 wheels bundle the same kinds of libraries (the `av` wheel there, not installed, would
+also carry x264 and x265; ctranslate2 uses Apple Accelerate instead of oneMKL). On Linux arm64, ctranslate2 4.8.3 bundles libgomp
 and is built with OpenBLAS and Ruy (BSD-3-Clause, Apache-2.0) instead of oneMKL and oneDNN, and imageio-ffmpeg 0.6.0
 ships the same GPL-3.0 static ffmpeg 7.0.2 build for aarch64 (wheel contents checked, 2026-10-27).
 
@@ -299,7 +296,6 @@ comes from `vite` 5 under `vitest`. It installs only on Linux x64 (glibc); its l
 | `annotated-doc` | MIT | https://github.com/fastapi/annotated-doc |
 | `annotated-types` | MIT | https://github.com/annotated-types/annotated-types |
 | `anyio` | MIT | https://github.com/agronholm/anyio |
-| `av` | BSD-3-Clause (installed for faster-whisper, never loaded: see "Native libraries inside Python wheels") | https://github.com/PyAV-Org/PyAV |
 | `blis` | BSD-3-Clause | https://github.com/explosion/cython-blis |
 | `catalogue` | MIT | https://github.com/explosion/catalogue |
 | `certifi` | MPL-2.0 | https://github.com/certifi/python-certifi |

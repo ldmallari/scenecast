@@ -15,5 +15,5 @@ ticked.
       see was reviewed by hand (2026-10-27): every native library bundled in the Linux x86_64 wheels, the linux-arm64
       npm platform builds (rolldown, lightningcss, ffprobe) and the ffmpeg/ffprobe builds. Results are in
       `THIRD_PARTY.md` ("Native libraries inside Python wheels", "Tools run as separate programs"). Nothing GPL-only is
-      loaded; the GPL x264/x265 in the `av` wheel are installed but never loaded. Review again when a wheel or
+      installed: the `av` wheel (GPL x264/x265) is kept out by a uv override, and scenecast stubs its import. Review again when a wheel or
       platform package version changes.

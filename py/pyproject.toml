@@ -33,4 +33,6 @@ allow-direct-references = true
 
 [tool.uv]
 # g2p_en declares `distance` (GPL) but never imports it (verified by grep); never install it.
-override-dependencies = ["distance; python_version < '0'"]
+# faster-whisper declares `av` (PyAV, whose wheels bundle GPL x264/x265) but scenecast never loads it:
+# scenecast_py.whisper puts a stub in its place before faster_whisper is imported. Never install it.
+override-dependencies = ["distance; python_version < '0'", "av; python_version < '0'"]

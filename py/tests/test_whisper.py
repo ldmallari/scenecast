@@ -74,16 +74,29 @@ def test_whisper_model_installs_the_stub_before_faster_whisper():
     assert r.stdout.strip() == "ok"
 
 
-def test_refuses_when_real_pyav_is_already_loaded():
-    r = _run(
-        """
-        import av  # the real one
-        from scenecast_py.whisper import install_av_stub
-        try:
-            install_av_stub()
-        except RuntimeError as e:
-            print("refused" if "already imported" in str(e) else e)
-        """
+def test_pyav_is_not_installed():
+    """pyproject.toml overrides faster-whisper's `av` requirement away, so the GPL-linked wheel never lands.
+    Checked in a fresh interpreter: other tests may have put the stub in this one's sys.modules."""
+    r = _run("import importlib.util; print(importlib.util.find_spec('av'))")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "None"
+
+
+def test_refuses_when_real_pyav_is_already_loaded(tmp_path):
+    """PyAV is not installed, so a stand-in `av` (first on the path) plays the real one."""
+    (tmp_path / "av.py").write_text("")
+    r = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(
+            """
+            import av  # stands in for the real one
+            from scenecast_py.whisper import install_av_stub
+            try:
+                install_av_stub()
+            except RuntimeError as e:
+                print("refused" if "already imported" in str(e) else e)
+            """
+        )],
+        capture_output=True, text=True, env={**__import__("os").environ, "PYTHONPATH": str(tmp_path)},
     )
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "refused"

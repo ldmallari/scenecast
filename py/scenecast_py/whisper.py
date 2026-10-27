@@ -3,8 +3,9 @@
 faster-whisper imports PyAV (`av`) when it loads, only to decode audio files. PyAV's wheels bundle native
 libraries that include GPL encoders (x264, x265), and scenecast never hands faster-whisper a file: audio is
 decoded by the toolchain ffmpeg (a separate program) into a 16 kHz mono float32 array first. So before
-faster_whisper is imported, a stub takes the place of `av` in sys.modules and the real PyAV never loads.
-The stub raises if anything actually uses it.
+faster_whisper is imported, a stub takes the place of `av` in sys.modules. PyAV itself is not installed
+(py/pyproject.toml overrides faster-whisper's `av` requirement away), so without the stub faster_whisper would not
+import. The stub raises if anything actually uses it.
 """
 import subprocess
 import sys
