@@ -259,7 +259,6 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
             await runSeed(app.seed, sceneDir, app.baseUrl);
             seeded = true;
           }
-          let take;
           // The signed-in session the recorder saves holds credentials: never leave it behind, even on failure or
           // when the process is stopped mid-recording (Ctrl-C exits through Playwright's signal handler).
           const session = path.join(dir, '.session.json');
@@ -269,13 +268,19 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
             fs.rmSync(sessionStoragePath(session), { force: true });
           };
           process.once('exit', removeSession);
+          let recorded;
           try {
-            take = await recordScene(scene, scheduled, app, dir, { minTakeSec, cursor: spec.cursor, touchColour: spec.brand.accent });
+            recorded = await recordTake(
+              scene.id,
+              () => recordScene(scene, scheduled, app, dir, { minTakeSec, cursor: spec.cursor, touchColour: spec.brand.accent }),
+              scanFlash,
+              log,
+            );
           } finally {
             removeSession();
             process.removeListener('exit', removeSession);
           }
-          const flash = await scanFlash(take.file);
+          const { take, flash } = recorded;
           let blanks = await scanBlank(take.file, flash.end);
           if (blanks.length) {
             // Blank frames (a page between navigations) become the last good frame before them, in the take itself.
@@ -323,6 +328,34 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
  * scrolled). The global cache version stays, so voice and music clips are kept.
  */
 export const RECORD_STAGE_VERSION = 4;
+
+/**
+ * Records a take and finds its flash marker. The marker is very rarely missing from an otherwise good take (seen once
+ * in many renders, the same scene passing before and after): then the scene is recorded once more. A second miss, or
+ * any other problem with the marker, fails.
+ */
+export async function recordTake<T extends { file: string }>(
+  sceneId: string,
+  record: () => Promise<T>,
+  scan: (file: string) => Promise<{ start: number; end: number }>,
+  log: (m: string) => void,
+): Promise<{ take: T; flash: { start: number; end: number } }> {
+  const missing = (e: unknown) => e instanceof Error && e.message.startsWith('no flash marker found');
+  const take = await record();
+  try {
+    return { take, flash: await scan(take.file) };
+  } catch (e) {
+    if (!missing(e)) throw e;
+    log(`record/${sceneId}: no flash marker found in the take; recording it again`);
+  }
+  const again = await record();
+  try {
+    return { take: again, flash: await scan(again.file) };
+  } catch (e) {
+    if (!missing(e)) throw e;
+    throw new Error(`${(e as Error).message} (twice in a row; re-run the render, and report it if it keeps happening)`);
+  }
+}
 
 /**
  * The seed's files, whose contents join every recording's cache key, so a changed seed records every scene again:

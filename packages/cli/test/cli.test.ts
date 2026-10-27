@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import type { BrowserContext, Page } from 'playwright';
 import { loadScene, sessionStoragePath } from '@scenecast/core';
 import { saveSession } from '../src/index.js';
-import { prepare, runSeed, timingSummary } from '../src/render.js';
+import { prepare, recordTake, runSeed, timingSummary } from '../src/render.js';
 
 let dir: string;
 beforeEach(() => (dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-cli-'))));
@@ -85,6 +85,41 @@ describe('app.seed: a path or a command', () => {
       process.env.PATH = prev;
     }
     expect(fs.readFileSync(path.join(dir, 'seeded.txt'), 'utf8').trim()).toBe('db/seed.py');
+  });
+});
+
+describe('recordTake', () => {
+  const take = (file: string) => ({ file, flashAt: 0, events: [] });
+  const flash = { start: 1, end: 1.12 };
+
+  it('records again, once, when the flash marker is not found in the take', async () => {
+    let n = 0;
+    const logs: string[] = [];
+    const scans: string[] = [];
+    const r = await recordTake(
+      's04',
+      async () => take(`t${++n}.webm`),
+      async (file) => {
+        scans.push(file);
+        if (file === 't1.webm') throw new Error('no flash marker found in t1.webm');
+        return flash;
+      },
+      (m) => logs.push(m),
+    );
+    expect(r).toEqual({ take: take('t2.webm'), flash });
+    expect(scans).toEqual(['t1.webm', 't2.webm']);
+    expect(logs).toEqual(['record/s04: no flash marker found in the take; recording it again']);
+  });
+
+  it('a second miss fails, saying to re-run; other scan errors are not retried', async () => {
+    const miss = async (file: string): Promise<typeof flash> => Promise.reject(new Error(`no flash marker found in ${file}`));
+    await expect(recordTake('s', async () => take('t.webm'), miss, () => {})).rejects.toThrow(
+      'no flash marker found in t.webm (twice in a row; re-run the render, and report it if it keeps happening)',
+    );
+    let n = 0;
+    const never = async (): Promise<typeof flash> => Promise.reject(new Error('flash marker never ends in t.webm'));
+    await expect(recordTake('s', async () => (n++, take('t.webm')), never, () => {})).rejects.toThrow('flash marker never ends');
+    expect(n).toBe(1);
   });
 });
 

@@ -204,6 +204,10 @@ movement.
 
 - **`<sel> is not checked after the click`** (a `check` step). `sel` must be the element that holds the state: the
   `<input type=checkbox>` itself, or the element with `role="switch"` and `aria-checked`, not its label or a wrapper.
+- **`record/<scene>: no flash marker found in the take; recording it again`** (a log line). Very rarely the magenta
+  marker that starts each take is missing from the video file. The scene is recorded once more by itself. If that
+  happens twice in a row the render stops with `no flash marker found … (twice in a row; re-run the render …)`: run
+  the same command again, and report it if it keeps happening.
 - **`clicking "<sel>" opened no file chooser`** (an `upload` step). `sel` must be what a person clicks to choose a
   file: the button, the `<label>` of the file input, or a drop zone that opens the chooser on click. A hidden
   `<input type=file>` cannot be clicked; point at the element that opens it. A drop zone that only takes dragged files

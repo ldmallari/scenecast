@@ -20,6 +20,9 @@ All notable changes to scenecast are listed here. The format follows
 
 ### Fixed
 
+- A take whose flash marker is missing (rare, and gone on the next try) is recorded once more by itself instead of
+  failing the render.
+
 - A changed seed records every scene again: the files a seed command names (`scripts/seed.mjs` in
   `node scripts/seed.mjs`) are part of the recordings' cache key, as a seed script path already was.
 
