@@ -280,3 +280,23 @@ describe('setup steps', () => {
     expect(() => parseScene(spec([{ do: 'upload', sel: '.d' }]))).toThrow('scene "s1" setup step 0: upload needs file (the file to choose)');
   });
 });
+
+describe('app.seedInputs', () => {
+  it('resolves against the scene file and names a missing file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenecast-seedin-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'people.json'), '[]');
+      const write = (seedInputs: string[]) =>
+        fs.writeFileSync(path.join(dir, 'video.json'), JSON.stringify({
+          id: 'v', title: 'V', output: 'v', brand: { primary: '#000', accent: '#fff', font: 'Inter', introTitle: 'V' },
+          app: { baseUrl: 'http://x', seed: 'make seed', seedInputs }, scenes: [{ id: 's', kind: 'app', narration: 'Hi.' }],
+        }));
+      write(['./people.json']);
+      expect((await loadScene(path.join(dir, 'video.json'))).app.seedInputs).toEqual([path.join(dir, 'people.json')]);
+      write(['./nope.json']);
+      await expect(loadScene(path.join(dir, 'video.json'))).rejects.toThrow(`app.seedInputs: no such file: ${path.join(dir, 'nope.json')}`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

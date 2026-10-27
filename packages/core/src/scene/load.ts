@@ -38,6 +38,12 @@ export async function loadScene(file: string): Promise<VideoSpec> {
   if (spec.app.storageState) spec.app.storageState = rel(spec.app.storageState);
   if (spec.app.loginHook) spec.app.loginHook = rel(spec.app.loginHook);
   if (spec.app.seed) spec.app.seed = resolveSeed(spec.app.seed, dir);
+  if (spec.app.seedInputs)
+    spec.app.seedInputs = spec.app.seedInputs.map((f) => {
+      const abs = rel(f)!;
+      if (!existsSync(abs)) throw new Error(`app.seedInputs: no such file: ${abs}`);
+      return abs;
+    });
   const init = spec.app.initScript;
   if (init !== undefined)
     spec.app.initScript = (Array.isArray(init) ? init : [init]).map((i) => resolveInitScript(i, dir));

@@ -247,13 +247,12 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
       }
       const scheduled = schedules.get(scene.id)!;
       const app = spec.app;
-      const seedFile = app.seed && path.isAbsolute(app.seed) && fs.existsSync(app.seed) ? app.seed : undefined;
       // The take runs at least as long as the scene it fills (voice, breath) plus a tail, so retime never runs out of frames.
       const minTakeSec = voice.duration + DEFAULTS.video.breathSec + DEFAULTS.video.takeTailSec;
       const { result: recorded } = await cache.run<Recorded>({
         name: `record/${scene.id}`,
         input: recordStageInput(scene, scheduled, app, spec.cursor, minTakeSec, spec.brand.accent),
-        files: [...recordStageFiles(app, scene), ...(seedFile ? [seedFile] : [])],
+        files: [...recordStageFiles(app, scene), ...seedFiles(app, sceneDir)],
         run: async (dir) => {
           if (app.seed && !seeded) {
             log(`seed: ${app.seed}`);
@@ -324,6 +323,21 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
  * scrolled). The global cache version stays, so voice and music clips are kept.
  */
 export const RECORD_STAGE_VERSION = 4;
+
+/**
+ * The seed's files, whose contents join every recording's cache key, so a changed seed records every scene again:
+ * the seed script, or the files a seed command names (each word that is a file, relative to the scene folder, such as
+ * `scripts/seed.mjs` in `node scripts/seed.mjs`), and `app.seedInputs`.
+ */
+export function seedFiles(app: VideoSpec['app'], sceneDir: string): string[] {
+  const seed = app.seed?.trim();
+  const named = !seed
+    ? []
+    : path.isAbsolute(seed) && fs.existsSync(seed)
+      ? [seed]
+      : seed.split(/\s+/).map((w) => path.resolve(sceneDir, w)).filter((f) => fs.existsSync(f) && fs.statSync(f).isFile());
+  return [...new Set([...named, ...(app.seedInputs ?? [])])];
+}
 
 /** The files a scene's take depends on (their contents join the record stage's key): the app's, and the scene's uploads (setup's too). */
 export function recordStageFiles(app: VideoSpec['app'], scene: Scene): string[] {

@@ -149,6 +149,8 @@ const AppConnSchema = z.object({
   login: z.array(StepSchema).optional(),
   loginHook: z.string().optional(),
   seed: z.string().optional(),
+  /** Files the seed reads (its data); their contents join the recordings' cache key, like the seed script's. */
+  seedInputs: z.array(z.string().min(1)).optional(),
   initScript: z.union([z.string(), z.array(z.string())]).optional(),
   routes: z.array(RouteDeclSchema).optional(),
   panels: z.array(z.string()).optional(),

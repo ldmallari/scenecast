@@ -9,6 +9,8 @@ All notable changes to scenecast are listed here. The format follows
 
 ### Added
 
+- `app.seedInputs`: data files the seed reads; their contents join the recordings' cache key.
+
 - An `upload` step: `{ cue: attach, do: upload, sel: ".dropzone", file: ./quote.pdf }` clicks the button, label or
   drop zone on its cue and answers the file chooser with the file (or files). Files are checked when the scene file
   loads, and their contents are part of the recording's cache key. The demo app has a New request drawer with a drop
@@ -17,6 +19,9 @@ All notable changes to scenecast are listed here. The format follows
   can start part-way through a flow (an open drawer, step 2 of a wizard) without an init script that fakes the state.
 
 ### Fixed
+
+- A changed seed records every scene again: the files a seed command names (`scripts/seed.mjs` in
+  `node scripts/seed.mjs`) are part of the recordings' cache key, as a seed script path already was.
 
 - A cue with a symbol in it, such as `Save & close`, matches the narration: words with no letter or digit
   count on neither side.

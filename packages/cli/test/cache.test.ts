@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { lockWorkDir, StageCache } from '../src/cache.js';
-import { RECORD_STAGE_VERSION, recordStageFiles, recordStageInput } from '../src/render.js';
+import { RECORD_STAGE_VERSION, recordStageFiles, recordStageInput, seedFiles } from '../src/render.js';
 
 let work: string;
 beforeEach(() => {
@@ -136,6 +136,22 @@ describe('the record stage files', () => {
     expect(recordStageFiles({ baseUrl: 'http://x' } as never, scene)).toEqual([a, b]);
     const withSetup = { id: 's', kind: 'app', narration: 'Hi.', setup: [{ do: 'upload', sel: '.d', file: [b] }], steps: [{ do: 'upload', sel: '.d', file: [a] }] } as never;
     expect(recordStageFiles({ baseUrl: 'http://x' } as never, withSetup)).toEqual([b, a]);
+  });
+});
+
+describe('the seed files in the record key', () => {
+  it('a seed script, the files a seed command names, and app.seedInputs; not words that are no file', () => {
+    fs.mkdirSync(path.join(work, 'scripts'));
+    const script = path.join(work, 'scripts', 'seed.mjs');
+    const data = path.join(work, 'data.json');
+    fs.writeFileSync(script, '');
+    fs.writeFileSync(data, '{}');
+    expect(seedFiles({ baseUrl: 'x', seed: script } as never, work)).toEqual([script]);
+    expect(seedFiles({ baseUrl: 'x', seed: 'node scripts/seed.mjs --reset data.json' } as never, work)).toEqual([script, data]);
+    // `scripts` is a folder and `make`/`seed` name nothing: only files count.
+    expect(seedFiles({ baseUrl: 'x', seed: 'make seed scripts' } as never, work)).toEqual([]);
+    expect(seedFiles({ baseUrl: 'x', seed: 'make seed', seedInputs: [data] } as never, work)).toEqual([data]);
+    expect(seedFiles({ baseUrl: 'x' } as never, work)).toEqual([]);
   });
 });
 

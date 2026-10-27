@@ -27,8 +27,10 @@ The demo (about 46 s of video) takes about 3 minutes cold on a 12-core Linux PC;
 5 minutes for the 44-second v1 demo). A busy machine is slower.
 `scenecast render` prints the time of each stage that ran at the end.
 
-The cache is keyed on the scene file, the saved session, the login hook and the seed script, not on the app itself.
-When the **app** has changed, render with `--fresh` so every scene is recorded again. `--only <sceneId>` re-renders a single scene (without the intro and outro
+The cache is keyed on the scene file, the saved session, the login hook, the seed script (or the files a seed
+command names) and `app.seedInputs`, not on the app itself or its database. When the **app** has changed, or its data
+changed some other way than through those files, render with `--fresh` so every scene is recorded again. List the
+data files your seed reads in `app.seedInputs`, so changing them records again by itself. `--only <sceneId>` re-renders a single scene (without the intro and outro
 cards) while you work on it.
 
 ## One render per work dir
