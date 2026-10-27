@@ -136,6 +136,17 @@ describe('buildAuditInput', () => {
     expect(z.problems).toEqual([]);
   });
 
+  it("a zoom's padded target is clipped to the frame: a pad that runs off the frame edge is not part of the target", () => {
+    // v1.2: a button at the top edge with pad 250 logged 1497,-240 651x544, which no zoom inside the frame contains.
+    const padded = box(1497, -240, 651, 544);
+    const take = { ...deskTake, events: [deskTake.events[0]!, { ...deskTake.events[1]!, target: padded }] };
+    const z = build(opts({ scenes: [{ ...opts().scenes[0]!, take }] })).scenes[0]!.moments[1]!;
+    expect(z.target).toEqual(box(1497, 0, 423, 304));
+    // The initial zoom too.
+    const zt = build(opts({ scenes: [{ ...opts().scenes[0]!, take: { ...deskTake, initialZoom: padded } }] })).scenes[0] as unknown as Record<string, any>;
+    expect(zt.initialZoom.target).toEqual(box(1497, 0, 423, 304));
+  });
+
   it('an action inside a cut has no time on the video', () => {
     const take = { ...deskTake, events: [{ ...deskTake.events[0]!, at: 2.5 }, deskTake.events[1]!] }; // source 2.6: cut
     const o = opts();
@@ -328,7 +339,9 @@ describe('buildAuditInput: unzoom steps and scenes that start zoomed', () => {
       plan: { ...zplan([{ start: 0, end: 2.0, box: HEAD, instant: true }]), scenes: [{ kind: 'card', duration: 3 }, { ...zplan([{ start: 0, end: 2.0, box: HEAD, instant: true }]).scenes[1]!, phone: true }] },
       scenes: [{ scene: zz, planIndex: 1, scheduled: sched(zz, [2.0, 4.0], [2.0, 4.0]), take: take({ viewport: 'phone' }), flashTime: 0.1 }],
     })).scenes[0] as unknown as Record<string, any>;
-    expect(s.initialZoom.target).toEqual(phoneToFrame(HEAD, 'center'));
+    // HEAD (100..500 px across) runs past the 390 px phone screen: only its on-screen part is the target.
+    const onScreen = phoneToFrame(box(100, 80, 290, 60), 'center');
+    for (const k of ['x', 'y', 'w', 'h'] as const) expect(s.initialZoom.target[k]).toBeCloseTo(onScreen[k], 6);
     expect(s.initialZoom.box).toEqual(clampZoom(phoneToFrame(HEAD, 'center'), FRAME, 24, undefined, phoneFrame('center').x));
   });
 

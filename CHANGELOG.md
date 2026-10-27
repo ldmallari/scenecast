@@ -20,6 +20,9 @@ All notable changes to scenecast are listed here. The format follows
 
 ### Fixed
 
+- The audit's zoom target check leaves out the part of a zoom's `pad` that runs off the frame, so a large pad on an
+  element near the edge no longer FAILs with "zoom does not contain target".
+
 - A take whose flash marker is missing (rare, and gone on the next try) is recorded once more by itself instead of
   failing the render.
 

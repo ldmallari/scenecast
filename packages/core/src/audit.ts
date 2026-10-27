@@ -152,6 +152,16 @@ export function buildAuditInput(
     if (phone !== !!ps.phone) throw new Error(`audit: scene "${scene.id}": the take and the plan disagree on the phone viewport`);
     // Take and plan boxes are in take px on phone scenes; map them once, as captions.ts and the composer do.
     const toFrame = (b: Box): Box => (phone ? phoneToFrame(b, align) : b);
+    // A zoom's target is the element plus its pad; the part of the pad beyond the app's screen shows nothing, and no
+    // zoom (which stays on the screen) could hold it, so it is left out.
+    const appScreen = phone ? phoneRect : frame;
+    const onScreenPart = (b: Box): Box => {
+      const x = Math.max(b.x, appScreen.x);
+      const y = Math.max(b.y, appScreen.y);
+      const r = Math.min(b.x + b.w, appScreen.x + appScreen.w);
+      const btm = Math.min(b.y + b.h, appScreen.y + appScreen.h);
+      return r > x && btm > y ? { x, y, w: r - x, h: btm - y } : b;
+    };
     const segments = ps.segments ?? [];
     const navBox = ps.navBox && toFrame(ps.navBox);
     const navs = (ps.navs ?? []).map((n) => ({ ...n, box: toFrame(n.box) }));
@@ -237,7 +247,7 @@ export function buildAuditInput(
           actionTime: global(actionTime),
           planWordTime: round(start + (s.cueTime ?? 0)),
           cueWord: cueWordIndex(narrationWords, s.step.cue!, s.step.occ ?? 1),
-          target: target ? toFrame(target) : null,
+          target: target ? (s.step.do === 'zoom' ? onScreenPart(toFrame(target)) : toFrame(target)) : null,
           // A spinner the action itself brings up is its result; only one up before it counts.
           loading: ev.loadingBefore ?? ev.loading,
           settleTimedOut: !!ev.settleTimedOut,
@@ -253,7 +263,7 @@ export function buildAuditInput(
     // A scene that starts zoomed: the box the recorder measured is the target; the box is the plan's
     // instant zoom, clamped like the composer (null when the plan has none: a FAIL in the audit).
     const initial = zooms.find((z) => z.instant);
-    const initialZoom = take.initialZoom ? { box: initial?.box ?? null, target: toFrame(take.initialZoom) } : null;
+    const initialZoom = take.initialZoom ? { box: initial?.box ?? null, target: onScreenPart(toFrame(take.initialZoom)) } : null;
     return {
       id: scene.id,
       kind: 'app',
