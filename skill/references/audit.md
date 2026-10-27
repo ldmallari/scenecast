@@ -69,8 +69,11 @@ The "Scene checks" table under the rows has one row per scene that needs checks 
 
 The free transcript decides whether a cue word was heard at all, and gives the narration diff. A heard cue takes its
 time from forced alignment of the known script against the final mix, which returns one time for every script word
-(none missed or merged). The first word of a phrase after a silence takes the voice's own onset instead. A phrase the
-aligner cannot time sensibly falls back to the transcript for that phrase only, and its words show `free`. A cue that
+(none missed or merged). The first word of a phrase after a silence takes the voice's own onset instead. When the
+aligner gives two adjacent spoken words the same start (a short word that got no frames of its own), the later one
+starts one alignment frame (0.02 s) on, and the phrase stays forced. A phrase the aligner cannot time sensibly
+(three or more words on one start, or times going backwards) falls back to the transcript for that phrase only, and
+its words show `free`. A cue that
 was not heard WARNs with the plan time, as before.
 
 ## Read every moment

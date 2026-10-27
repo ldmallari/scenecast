@@ -101,13 +101,47 @@ def test_a_silent_punctuation_word_may_share_a_start_with_its_neighbour():
     out = finish_alignment(text, pieces, 0.05, 0.0)
     assert [w["w"] for w in out] == text.split()
     assert [w["start"] for w in out] == pytest.approx([0.05, 0.3, 0.9, 0.9, 1.1])
-    # Two spoken words on one frame are still rejected, and so is a start going backwards.
-    with pytest.raises(AlignmentError, match='"then" does not start after "Save"'):
-        finish_alignment(text, _pieces((" Press", 0.0, 0.3), (" Save", 0.9, 0.9), (" —", 0.9, 0.9), (" then", 0.9, 1.1),
-                                       (" wait", 1.1, 1.4), (".", 1.4, 1.4)), 0.05, 0.0)
+    # A start going backwards is still rejected.
     from scenecast_py.align import check_times
 
     assert "starts before" in check_times([{"w": "a", "start": 1.0}, {"w": "—", "start": 0.9}, {"w": "b", "start": 1.2}])
+
+
+def test_two_spoken_words_on_one_start_are_split_by_a_frame_not_dropped():
+    """v1.2: the aligner gave "documents" no frames, so it starts where "to" does. The phrase is kept (the later word
+    moves one alignment frame later) instead of falling back to the free transcript."""
+    text = "Open documents to upload, or wait."
+    pieces = _pieces((" Open", 0.0, 0.3), (" documents", 0.9, 0.9), (" to", 0.9, 1.1), (" upload", 1.1, 1.5),
+                     (",", 1.5, 1.5), (" or", 1.6, 1.7), (" wait", 1.7, 2.0), (".", 2.0, 2.0))
+    out = finish_alignment(text, pieces, 0.05, 10.0)
+    assert [w["w"] for w in out] == text.split()
+    assert [w["start"] for w in out] == pytest.approx([10.05, 10.9, 10.92, 11.1, 11.6, 11.7])
+    assert all(w["end"] >= w["start"] for w in out)
+    assert [w["from"] for w in out] == ["onset"] + ["forced"] * 5
+
+
+def test_a_tie_with_little_room_before_the_next_word_takes_half_the_gap():
+    text = "Save it now"
+    out = finish_alignment(text, _pieces((" Save", 0.5, 0.5), (" it", 0.5, 0.51), (" now", 0.51, 0.8)), 0.0, 0.0)
+    assert [w["start"] for w in out] == pytest.approx([0.5, 0.505, 0.51])
+    # A tie on the phrase's last word moves it one frame on.
+    out = finish_alignment("Then save it", _pieces((" Then", 0.0, 0.3), (" save", 0.6, 0.6), (" it", 0.6, 0.6)), 0.1, 0.0)
+    assert [w["start"] for w in out] == pytest.approx([0.1, 0.6, 0.62])
+    assert out[-1]["end"] == pytest.approx(0.62)
+
+
+def test_a_punctuation_word_after_a_moved_word_moves_with_it():
+    text = "Press Save — then wait."
+    pieces = _pieces((" Press", 0.0, 0.3), (" Save", 0.9, 0.9), (" then", 0.9, 0.9), (" —", 0.9, 0.9), (" wait", 1.1, 1.4),
+                     (".", 1.4, 1.4))
+    out = finish_alignment("Press Save then — wait.", pieces, 0.05, 0.0)
+    assert [w["start"] for w in out] == pytest.approx([0.05, 0.9, 0.92, 0.92, 1.1])
+
+
+def test_three_spoken_words_on_one_start_are_still_rejected():
+    with pytest.raises(AlignmentError, match='"menu" does not start after "the"'):
+        finish_alignment("Open the menu now", _pieces((" Open", 0.0, 0.3), (" the", 0.5, 0.5), (" menu", 0.5, 0.5),
+                                                      (" now", 0.5, 0.9)), 0.0, 0.0)
 
 
 def test_finish_alignment_rejects_an_empty_result():

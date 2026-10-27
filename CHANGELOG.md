@@ -7,6 +7,11 @@ All notable changes to scenecast are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Forced alignment no longer drops a whole phrase to the free transcript when two adjacent words get the same start:
+  the later word starts one alignment frame on, so the phrase keeps its forced word times.
+
 ## [1.1.0] - 2026-10-28
 
 ### Added

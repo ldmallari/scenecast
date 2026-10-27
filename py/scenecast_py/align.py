@@ -118,6 +118,36 @@ def check_times(words):
     return None
 
 
+def separate_ties(words):
+    """Gives two spoken words that share a start their own starts, in place.
+
+    The aligner sometimes gives a short word no frames of its own, so it starts on the same frame as the next word
+    ("documents" and "to" both at 29.848 s). That is one frame of doubt, not a failed alignment: the later word moves
+    one alignment frame on (or halfway to the next spoken word's start, when that is nearer), and punctuation-only
+    words that started before its new start move with it. Three or more spoken words on one start are left alone:
+    that means the aligner had nothing to go on, and `check_times` rejects it.
+    """
+    lexical = [i for i, w in enumerate(words) if is_lexical(w["w"])]
+    for k in range(1, len(lexical)):
+        a, b = words[lexical[k - 1]], words[lexical[k]]
+        if b["start"] != a["start"]:
+            continue
+        if k >= 2 and words[lexical[k - 2]]["start"] == a["start"]:
+            continue  # a third word on the same start
+        nxt = words[lexical[k + 1]]["start"] if k + 1 < len(lexical) else None
+        if nxt is not None and nxt <= a["start"]:
+            continue  # the next word ties too
+        new = a["start"] + ALIGN_FRAME_SEC
+        if nxt is not None and new >= nxt:
+            new = (a["start"] + nxt) / 2
+        b["start"], b["end"] = new, max(b["end"], new)
+        for w in words[lexical[k] + 1:]:
+            if w["start"] >= new:
+                break
+            w["start"], w["end"] = new, max(w["end"], new)
+    return words
+
+
 ONSET_FRAME = 160  # 10 ms energy frames
 ONSET_LOOKBACK = 30  # frames (0.3 s) the onset may lie before the VAD's
 ONSET_BRIDGE = 8  # quieter frames (80 ms: a stop closure, as in "speed") bridged while walking back
@@ -171,7 +201,7 @@ def align_text(model, pcm16k, text, offset=0.0):
     "onset" for the first word (it starts where speech does) and "forced" for the rest.
 
     Raises AlignmentError when the aligner's output can't be trusted: no pieces, pieces that don't spell the text, or
-    starts that don't strictly increase.
+    starts that don't strictly increase (after two words on one start are split by a frame).
     """
     from scenecast_py.whisper import install_av_stub
 
@@ -198,8 +228,8 @@ def align_text(model, pcm16k, text, offset=0.0):
 
 def finish_alignment(text, pieces, onset, offset):
     """The aligner's pieces as checked word times: the first word starts at the speech onset (the alignment path
-    starts at the clip's first frame), but no later than one frame before the second word; then everything moves by
-    `offset`."""
+    starts at the clip's first frame), but no later than one frame before the second word; two spoken words on one
+    start are split by a frame (`separate_ties`); then everything moves by `offset`."""
     reason = check_pieces(text, pieces)
     if reason:
         raise AlignmentError(reason)
@@ -213,6 +243,7 @@ def finish_alignment(text, pieces, onset, offset):
         first["start"] = onset
         first["from"] = "onset"
     first["end"] = max(first["end"], first["start"])
+    separate_ties(out)
     for w in out:
         w["start"] += offset
         w["end"] += offset
