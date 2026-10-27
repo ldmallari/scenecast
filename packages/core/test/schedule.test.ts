@@ -331,6 +331,12 @@ describe('scheduleWarnings', () => {
         '(click on "pick") is due to start at 1.68 s, so that step will be about 0.20 s late; start typing on an earlier ' +
         'word, or shorten the text',
     ]);
+    // A ringSel ring on the field is drawn before the typing starts: that wait counts too.
+    const ringed = sc('short');
+    ringed.steps[0] = { ...ringed.steps[0]!, ringSel: '#subject' };
+    expect(scheduleWarnings(ringed, schedule(ringed, v, { travelSec: (st) => travelSecFor(st) }))[0]).toContain(
+      'runs until 2.19 s, after step 1 (click on "pick") is due to start at 1.68 s, so that step will be about 0.25 s late',
+    );
     // Typing from "Give" ends at 1.24 s, before the click sets off.
     const early = sc('Give');
     expect(scheduleWarnings(early, schedule(early, v, { travelSec: (st) => travelSecFor(st) }))).toEqual([]);
