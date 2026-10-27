@@ -5,6 +5,9 @@
   </picture>
 </h1>
 
+[![e2e](https://github.com/ldmallari/scenecast/actions/workflows/e2e.yml/badge.svg)](https://github.com/ldmallari/scenecast/actions/workflows/e2e.yml)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+
 Website: https://ldmallari.github.io/scenecast/
 
 scenecast turns a short scene file into a narrated walkthrough video of your real web app. It records the app in
@@ -115,8 +118,8 @@ Recording happens in real time, so a render takes several times the length of th
 
 - composing the video (zoom, rings, captions, cards): about 2× the video length;
 - a whole first render: about 3.5 to 7× the video length, because recording, the voice and speech recognition add
-  to it. The 46-second demo takes about 3 minutes on a 12-core Linux PC; an Apple silicon Mac is slower (the 44-second v1
-  demo took 4 to 5 minutes);
+  to it. The 46-second demo takes about 3 minutes on a 12-core Linux PC or an Apple silicon Mac, and
+  about 2 minutes on a GitHub Actions runner;
 - a re-run with nothing changed: under a second, as every stage comes from the cache.
 
 ## Use it with an AI coding agent
