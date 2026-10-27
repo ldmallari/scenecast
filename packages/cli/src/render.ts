@@ -7,6 +7,7 @@ import {
   appFiles,
   audit,
   buildVoice,
+  checkSchedule,
   DEFAULTS,
   ensureToolchain,
   lastFrameTime,
@@ -220,6 +221,19 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
     const introImage = cards && spec.cards.introSec > 0 ? await cardImage('intro', spec.cards.introPage) : undefined;
     const outroImage = cards && spec.cards.outroSec > 0 ? await cardImage('outro', spec.cards.outroPage) : undefined;
 
+    // Every app scene's schedule, checked before anything is recorded: a step that could only fail once its take
+    // is recorded (on the first word, out of order, past the scene end) is named now, with what to change.
+    const schedules = new Map<string, ScheduledStep[]>();
+    const problems: string[] = [];
+    for (const scene of scenes) {
+      if (scene.kind !== 'app') continue;
+      const { voice } = voices.get(scene.id)!;
+      const scheduled = schedule(scene, voice, scheduleOptsFor(scene, spec.cursor, voice.duration));
+      problems.push(...checkSchedule(scene, scheduled, voice.duration + DEFAULTS.video.breathSec));
+      schedules.set(scene.id, scheduled);
+    }
+    if (problems.length) throw new Error(`the steps cannot be recorded as scheduled:\n${problems.join('\n')}`);
+
     let seeded = false;
     const inputs: SceneInput[] = [];
     for (const scene of scenes) {
@@ -229,7 +243,7 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
         inputs.push({ scene, voice, ...(image ? { cardImage: image } : {}) });
         continue;
       }
-      const scheduled: ScheduledStep[] = schedule(scene, voice, scheduleOptsFor(scene, spec.cursor, voice.duration));
+      const scheduled = schedules.get(scene.id)!;
       const app = spec.app;
       const seedFile = app.seed && path.isAbsolute(app.seed) && fs.existsSync(app.seed) ? app.seed : undefined;
       // The take runs at least as long as the scene it fills (voice, breath) plus a tail, so retime never runs out of frames.

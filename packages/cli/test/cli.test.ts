@@ -171,6 +171,28 @@ describe('cards and pages', () => {
     expect(fs.readdirSync(workDir)).toEqual(['.lock']);
   });
 
+  it('a schedule that cannot record fails after the voice and before any recording, naming every problem', async () => {
+    const file = sceneFile([
+      'scenes:',
+      '  - { id: a, kind: app, narration: "Open the menu, then wait.", steps: [{ cue: Open, do: click, sel: "#m" }] }',
+      '  - { id: b, kind: app, narration: "Pick one of these.", steps: [{ cue: these, do: click, sel: "#x" }, { cue: Pick, do: ring, sel: "#y" }] }',
+    ]);
+    const prevFake = process.env.SCENECAST_FAKE_TTS;
+    process.env.SCENECAST_FAKE_TTS = '1';
+    try {
+      const logs: string[] = [];
+      const err = await prepare(file, { workRoot: path.join(dir, 'work'), log: (m) => logs.push(m) }).then(() => null, (e: Error) => e.message);
+      expect(err).toMatch(/^the steps cannot be recorded as scheduled:\n/);
+      expect(err).toContain('scene "a" step 0: click on "Open" would act at');
+      expect(err).toContain('before the take has started');
+      expect(err).toContain('scene "b" step 1: ring on "Pick" would act at');
+      expect(logs.some((l) => l.startsWith('record/') || l.startsWith('seed'))).toBe(false);
+    } finally {
+      if (prevFake === undefined) delete process.env.SCENECAST_FAKE_TTS;
+      else process.env.SCENECAST_FAKE_TTS = prevFake;
+    }
+  }, 120_000);
+
   it('renders the intro, outro and title scene pages once and passes the images to the plan', async () => {
     const page = (name: string, colour: string) => {
       fs.writeFileSync(path.join(dir, name), `<!doctype html><style>body{margin:0;background:${colour}}</style>`);

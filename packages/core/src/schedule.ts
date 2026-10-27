@@ -43,6 +43,12 @@ export function travelSecFor(step: Step, opts: { touch?: boolean } = {}): number
   return step.glideMs !== undefined ? step.glideMs / 1000 : DEFAULT_TRAVEL_SEC;
 }
 
+/**
+ * No action may come before this, in scene seconds: the take starts with the flash marker (shown for at least 0.1 s,
+ * and up to a frame or two more in the video), and retime has nothing to show an action against before it is gone.
+ */
+export const FIRST_ACTION_SEC = 0.2;
+
 /** When a scheduled step's action fires, in scene seconds. */
 export function actionAt(s: ScheduledStep): number {
   return s.startAt + s.travel;
@@ -102,7 +108,10 @@ export function schedule(scene: Scene, voice: SceneVoice, opts: ScheduleOpts): S
     const travel = Number.isFinite(t) && t > 0 ? t : 0;
     const prev = out[index - 1];
     if (cue === null) {
-      out.push({ index, step, cueTime: null, startAt: prev ? prev.startAt + (prev.step.ms ?? 0) / 1000 : 0, travel });
+      // Right after the step before acts (plus its `ms`), never with it: a step that starts with the previous glide
+      // and glides faster would act first. The first step acts once the take has started.
+      const startAt = prev ? actionAt(prev) + (prev.step.ms ?? 0) / 1000 : Math.max(0, FIRST_ACTION_SEC - travel);
+      out.push({ index, step, cueTime: null, startAt, travel });
       return;
     }
     const target = cue + (step.offset ?? 0);
@@ -124,6 +133,50 @@ export function schedule(scene: Scene, voice: SceneVoice, opts: ScheduleOpts): S
     out.push({ index, step, cueTime: cue, startAt: Math.max(0, raw), travel });
   });
   if (opts.park) addParks(out, opts.park, opts.sceneEnd);
+  return out;
+}
+
+/** A step for messages: `click on "Save"`, or `ring (no cue)`. */
+const describeStep = (s: ScheduledStep) => (s.step.cue === undefined ? `${s.step.do} (no cue)` : `${s.step.do} on "${s.step.cue}"`);
+const sec = (t: number) => `${t.toFixed(2)} s`;
+/** Rounds a time up to the next 0.05 s, for a suggested offset or cut. */
+const upTo05 = (t: number) => Math.ceil(t * 20 - 1e-9) / 20;
+
+/**
+ * What would make this scene's take fail after it is recorded, found from the schedule alone, each with what to
+ * change: an action before the take has started (a pointer step on the scene's first word), a step that acts before
+ * the step listed above it (the recorder runs steps in order), and a step that acts after the scene ends (`sceneEnd`:
+ * the narration plus the breath after it). Empty when the schedule is fine.
+ */
+export function checkSchedule(scene: Scene, scheduled: ScheduledStep[], sceneEnd: number): string[] {
+  const out: string[] = [];
+  const steps = [...scheduled].sort((a, b) => a.index - b.index);
+  steps.forEach((s, k) => {
+    const where = `scene "${scene.id}" step ${s.index}: ${describeStep(s)} would act at ${sec(actionAt(s))}`;
+    const at = actionAt(s);
+    if (at < FIRST_ACTION_SEC - 1e-9) {
+      out.push(
+        `${where}, before the take has started (the flash marker takes the scene's first ${FIRST_ACTION_SEC} s); ` +
+          `cue a later word, or add offset: ${upTo05(FIRST_ACTION_SEC - at)}`,
+      );
+      return;
+    }
+    const prev = steps[k - 1];
+    if (prev && at < actionAt(prev) - 1e-6) {
+      out.push(
+        `${where}, before step ${prev.index} (${describeStep(prev)}) at ${sec(actionAt(prev))}; steps run in the order ` +
+          `they are listed: cue it on a later word, or move it above step ${prev.index}`,
+      );
+      return;
+    }
+    if (at > sceneEnd + 1e-6)
+      out.push(
+        `${where}, after the scene ends at ${sec(sceneEnd)} (its narration plus a short breath); ` +
+          (s.step.cue === undefined
+            ? `give it a cue, or take ${sec(upTo05(at - sceneEnd))} off the ms of the steps before it`
+            : `cue it on an earlier word, or reduce its offset`),
+      );
+  });
   return out;
 }
 

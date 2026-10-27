@@ -18,6 +18,13 @@ All notable changes to scenecast are listed here. The format follows
 
 ### Fixed
 
+- A step without a cue now starts after the step before it has acted, not while that step's cursor is still gliding,
+  so it can no longer act first (which failed the render with "action is scheduled before the previous action").
+- Steps that could only fail once recorded are reported after the voice is made and before anything is recorded, all
+  at once, each with what to change: a step on a scene's first word, a step that would act before the step above it,
+  and a step that would run past the end of its scene. A first step without a cue now acts 0.2 s into the scene,
+  once the take has started.
+
 - Forced alignment no longer drops a whole phrase to the free transcript when two adjacent words get the same start:
   the later word starts one alignment frame on, so the phrase keeps its forced word times.
 

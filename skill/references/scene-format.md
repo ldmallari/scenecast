@@ -355,8 +355,18 @@ The first pointer step of a scene that comes too soon after the scene starts for
 cursor is already on its target from the first frame, and the action fires on its cue. On a phone scene, a
 pre-positioned first tap's touch indicator appears at the tap without fading in.
 
-A step without a `cue` runs right after the step before it (plus that step's `ms`). Only steps with a cue are checked
-for sync by the audit, so give a cue to every step a viewer should see happen on a word.
+A step without a `cue` runs right after the step before it acts (plus that step's `ms`): after a click's cursor has
+arrived and clicked, not while it is still gliding. A first step without a cue acts 0.2 s into the scene, once the
+take has started. Only steps with a cue are checked for sync by the audit, so give a cue to every step a viewer should
+see happen on a word.
+
+Once the voice is made, and before anything is recorded, every scene's steps are checked against their times. Each
+problem is named, all at once, with what to change (see
+[troubleshooting](troubleshooting.md#the-steps-cannot-be-recorded-as-scheduled)):
+
+- a step that would act in the scene's first 0.2 s (a click on its first word), before the take has started;
+- a step that would act before the step listed above it (steps run in the order they are listed);
+- a step that would act after the scene ends (its narration plus a short breath).
 
 Before each step the recorder waits for the page to settle: no document, XHR or fetch requests in flight, a stable
 layout, and no visible loading indicator (`[aria-busy=true]`, `[role=progressbar]` without a value, `.is-loading`,
