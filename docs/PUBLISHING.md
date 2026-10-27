@@ -8,8 +8,10 @@ ticked.
 - [x] **kokoro-onnx copyright line.** `THIRD_PARTY.md` quotes the exact line from the kokoro-onnx LICENSE.
 - [x] **NLTK tagger data licence.** MIT, per the NLTK data index; recorded in `THIRD_PARTY.md`.
 - [x] **num2words licence.** LGPL-2.1, per the project's COPYING file; recorded in `THIRD_PARTY.md`.
-- [ ] **Linux review.** `node scripts/check-licences.mjs` passed on macOS arm64 and on Linux x86_64 (WSL, 2026-10-26).
-      Run it in CI on Linux too (after `scenecast doctor`), and review what the metadata check cannot see: the
-      native libraries bundled inside Linux wheels (`ctranslate2`, `onnxruntime`, `soundfile`, `av`), and the
-      linux-arm64 platform builds (rolldown, lightningcss, ffprobe). Add reviewed overrides or `THIRD_PARTY.md` rows
-      as needed.
+- [x] **Linux review.** `node scripts/check-licences.mjs` passes on macOS arm64 and on Linux x86_64 (WSL, 2026-10-27),
+      and runs in CI on Linux after `scenecast doctor` (`.github/workflows/e2e.yml`). What the metadata check cannot
+      see was reviewed by hand (2026-10-27): every native library bundled in the Linux x86_64 wheels, the linux-arm64
+      npm platform builds (rolldown, lightningcss, ffprobe) and the ffmpeg/ffprobe builds. Results are in
+      `THIRD_PARTY.md` ("Native libraries inside Python wheels", "Tools run as separate programs"). Nothing GPL-only is
+      loaded; the GPL x264/x265 in the `av` wheel are installed but never loaded. Review again when a wheel or
+      platform package version changes.

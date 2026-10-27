@@ -83,30 +83,60 @@ the GPL of the ffmpeg builds, apply to those binaries only.
 
 | Tool | Licence | Source | How scenecast uses it |
 |---|---|---|---|
-| ffmpeg bundled with `imageio-ffmpeg` | macOS arm64: a GPL-2.0-or-later build (`--enable-gpl`, with libx264). Linux x86_64: a GPL-3.0-or-later static build (`--enable-gpl --enable-version3`, with libx264) | https://ffmpeg.org/legal.html, https://github.com/imageio/imageio-ffmpeg | The toolchain ffmpeg: encoding, mixing, loudness, frame extraction. Run as a subprocess. |
-| ffprobe from `@ffprobe-installer/*` (one build per platform) | darwin-arm64: LGPL-2.1 (an LGPL build, checked). darwin-x64 and the Linux builds: GPL-3.0 (static builds; npm registry metadata, 2026-10-25) | https://github.com/SavageCore/node-ffprobe-installer | Run by Revideo to read media (`FFPROBE_PATH`). |
+| ffmpeg bundled with `imageio-ffmpeg` | macOS arm64: a GPL-2.0-or-later build (`--enable-gpl`, with libx264). Linux x86_64 and arm64: a GPL-3.0-or-later static build of ffmpeg 7.0.2 from johnvansickle.com (`--enable-gpl --enable-version3`, with libx264; checked 2026-10-27) | https://ffmpeg.org/legal.html, https://github.com/imageio/imageio-ffmpeg | The toolchain ffmpeg: encoding, mixing, loudness, frame extraction. Run as a subprocess. |
+| ffprobe from `@ffprobe-installer/*` (one build per platform) | darwin-arm64: LGPL-2.1 (an LGPL build, checked). darwin-x64 and the Linux builds: GPL-3.0 (static builds; npm registry metadata, 2026-10-25; the linux-x64 and linux-arm64 binaries are johnvansickle.com builds configured `--enable-gpl --enable-version3`, checked 2026-10-27) | https://github.com/SavageCore/node-ffprobe-installer | Run by Revideo to read media (`FFPROBE_PATH`). |
 | `@ffmpeg-installer/ffmpeg` | not installed | https://github.com/kribblo/node-ffmpeg-installer | `@revideo/ffmpeg` asks for it. A pnpm override replaces it with `stubs/ffmpeg-installer`, a small stand-in (MIT, part of this repository) that points at the toolchain ffmpeg, so no ffmpeg binary is downloaded with the npm packages. |
 | Chromium (Playwright's build) | BSD-3-Clause, with third-party parts under their own licences | https://playwright.dev, https://www.chromium.org | Records the app and renders the composition. Installed with `pnpm -C packages/cli exec playwright install chromium`. |
 | uv | MIT OR Apache-2.0 | https://github.com/astral-sh/uv | Manages the Python environment. `scenecast doctor` installs it into your home folder if it is missing. |
 
 ## Native libraries inside Python wheels
 
-Some Python wheels ship native libraries:
+`check-licences.mjs` reads package metadata only, so the native libraries that wheels bundle (in `<package>.libs/`,
+or next to the package's own code) were reviewed by hand on Linux x86_64 (WSL, Python 3.12, 2026-10-27): every
+shared library in `site-packages` was listed, its links read with `ldd`, its version read from the library, and its
+licence taken from the wheel's licence files, SBOM or upstream build script. scenecast never redistributes these
+wheels: `scenecast doctor` has uv install them from PyPI into `py/.venv`.
 
-- **`av` (PyAV)** is installed because faster-whisper depends on it, but scenecast **never loads it**. Its wheel bundles
-  the FFmpeg libraries (built as LGPL-3.0-or-later) and also libx264 and libx265, which are GPL-2.0-or-later.
-  faster-whisper imports `av` when it loads, only to decode audio files. scenecast decodes audio with the ffmpeg tool
-  above into a 16 kHz array, and puts a stub in place of `av` before importing faster-whisper
-  (`py/scenecast_py/whisper.py`), so PyAV and its libraries never load. `py/tests/test_whisper.py` checks this, and a
-  real transcription was checked by hand on macOS (`DYLD_PRINT_LIBRARIES`) and Linux (`LD_DEBUG=libs`): neither x264
-  nor x265 loaded.
-- **`soundfile`** bundles libsndfile (LGPL-2.1).
-- **`pillow`** bundles image codecs (libjpeg, libpng, libtiff, libwebp, FreeType, HarfBuzz and others) under their own
-  permissive licences.
-- **`ctranslate2`**, **`onnxruntime`**, **`numpy`** ship their own compiled code under the licences in the table.
+None of the libraries scenecast loads is GPL-only. The GCC runtime libraries carry the GCC Runtime Library Exception,
+which allows linking them into code under any licence. The only GPL code installed (x264 and x265 inside the `av`
+wheel) is never loaded; see the `av` rows.
 
-Wheels differ per platform. These notes describe the macOS arm64 wheels; the Linux x86_64 `av` wheel bundles x264 and
-x265 too (in `av.libs/`). Other Linux wheels may bundle different libraries.
+| Wheel | Bundled library | Licence | Verdict |
+|---|---|---|---|
+| soundfile 0.14.0 | libsndfile 1.2.2 (`_soundfile_data/libsndfile_x86_64.so`, loaded with cffi; built by bastibe/libsndfile-binaries) | LGPL-2.1-or-later | OK: LGPL, loaded as a separate shared library |
+| soundfile | linked statically into that libsndfile: libogg, libvorbis 1.3.7, libFLAC 1.4.3, libopus 1.4 | BSD-3-Clause | OK |
+| soundfile | linked statically into that libsndfile: mpg123 (MP3 decoding), LAME 3.100 (MP3 encoding) | LGPL-2.1 (mpg123), LGPL-2.0-or-later (LAME) | OK: LGPL, inside the LGPL library |
+| ctranslate2 4.8.3 | libctranslate2 (`ctranslate2.libs/`) | MIT | OK |
+| ctranslate2 | linked statically into libctranslate2: Intel oneMKL 2025.3 (the int16 compute type is present) | Intel Simplified Software License (permissive, binary redistribution allowed; not open source) | OK under the rules (not GPL); recorded because it is not an open-source licence |
+| ctranslate2 | linked statically into libctranslate2: oneDNN 3.1.1 | Apache-2.0 | OK |
+| ctranslate2 | libgomp (GCC OpenMP runtime, `ctranslate2.libs/`) | GPL-3.0-or-later WITH GCC-exception-3.1 | OK: the runtime exception permits linking |
+| ctranslate2 | CUDA libraries | not bundled: loaded from the system only when a GPU is used, which scenecast does not do | n/a |
+| onnxruntime 1.31.0 | libonnxruntime, libonnxruntime_providers_shared (`onnxruntime/capi/`), with Eigen, protobuf, abseil, re2, flatbuffers, onnx, cpuinfo and others linked in | MIT; parts under MIT, BSD, Apache-2.0, MPL-2.0 (Eigen) and similar, listed in the wheel's `onnxruntime/ThirdPartyNotices.txt`. Its one dual-licensed part (Mbed TLS, Apache-2.0 OR GPL-2.0-or-later) is used under Apache-2.0 | OK |
+| numpy 2.5.4 | OpenBLAS 0.3.34 (`numpy.libs/libscipy_openblas64_*.so`), with LAPACK | BSD-3-Clause; LAPACK BSD-3-Clause-Open-MPI | OK (listed in the wheel's `LICENSE.txt`) |
+| numpy | libgfortran (`numpy.libs/`) | GPL-3.0-or-later WITH GCC-exception-3.1 | OK: the runtime exception permits linking |
+| numpy | libquadmath (`numpy.libs/`) | LGPL-2.1-or-later | OK: LGPL |
+| pillow 13.0.0 | `pillow.libs/`: libjpeg-turbo, libpng, libtiff 4.7.2, libwebp 1.6.0, libavif 1.4.2, OpenJPEG 2.5.4, FreeType 2.14.3, HarfBuzz 14.5.0, Little CMS 2.19, brotli, liblzma, zstd, libxcb, libXau | IJG and BSD-3-Clause (libjpeg-turbo), libpng, libtiff, BSD-2/3-Clause, FTL (FreeType), MIT, X11 | OK (per the wheel's SBOM in `pillow-*.dist-info/sboms/`) |
+| pillow | FriBiDi (for complex text layout) | LGPL-2.1-or-later | OK: not bundled; loaded from the system if present |
+| pillow | libimagequant | GPL-3.0-or-later | Not included: Pillow's SBOM names it, but the wheel is built without it (`PIL.features.check("libimagequant")` is False) |
+| av (PyAV) 19.0.2 | `av.libs/`: the FFmpeg libraries (libavcodec 63.1, libavformat, libavutil and the rest; libmp3lame linked in), configured `--enable-version3` without `--enable-gpl` | LGPL-3.0-or-later | Never loaded (see below) |
+| av | `av.libs/`: libx264, libx265, which libavcodec links | GPL-2.0-or-later | **GPL, never loaded** (see below) |
+| av | `av.libs/`: libgnutls, libnettle, libhogweed, libgmp, libunistring, libasound | LGPL-2.1-or-later or LGPL-3.0-or-later (nettle, gmp and libunistring: LGPL-3.0-or-later OR GPL-2.0-or-later) | Never loaded |
+| av | `av.libs/`: libdav1d, libSvtAv1Enc, libvmaf, libvpx, libvpl, libopus, libwebp, libdrm, libxcb, libXau | BSD-2-Clause, BSD-3-Clause, BSD-2-Clause-Patent, MIT, X11 | Never loaded |
+| tokenizers 0.23.3, hf-xet 1.7.0, pydantic-core 2.50.1 | Rust extension modules with their crates linked statically; no bundled shared libraries | the package licence (Apache-2.0, Apache-2.0, MIT) | OK; the statically linked crates were not reviewed one by one |
+| blis, PyYAML, regex, spacy, thinc and the other compiled packages | their own extension modules only (BLIS and libyaml compiled in) | the package licence | OK |
+| imageio-ffmpeg 0.6.0 | the ffmpeg 7.0.2 static executable (johnvansickle.com) | GPL-3.0-or-later (`--enable-gpl --enable-version3`) | OK: run as a separate program, never linked (see "Tools") |
+
+**`av` (PyAV)** is installed because faster-whisper depends on it, but scenecast **never loads it**. faster-whisper
+imports `av` when it loads, only to decode audio files. scenecast decodes audio with the ffmpeg tool above into a
+16 kHz array, and puts a stub in place of `av` before importing faster-whisper (`py/scenecast_py/whisper.py`), so PyAV
+and the libraries in `av.libs/` never load. `py/tests/test_whisper.py` checks this, and a real transcription was
+checked by hand on macOS (`DYLD_PRINT_LIBRARIES`) and Linux (`LD_DEBUG=libs`): neither x264 nor x265 loaded. The wheel
+still lands in `py/.venv` (uv installs it from PyPI, as faster-whisper requires it); scenecast does not redistribute it.
+
+**Other platforms.** The macOS arm64 wheels bundle the same kinds of libraries (the `av` wheel there also carries x264
+and x265; ctranslate2 uses Apple Accelerate instead of oneMKL). On Linux arm64, ctranslate2 4.8.3 bundles libgomp
+and is built with OpenBLAS and Ruy (BSD-3-Clause, Apache-2.0) instead of oneMKL and oneDNN, and imageio-ffmpeg 0.6.0
+ships the same GPL-3.0 static ffmpeg 7.0.2 build for aarch64 (wheel contents checked, 2026-10-27).
 
 ## Deprecated packages
 
@@ -124,8 +154,8 @@ Revideo's LaTeX support, which scenecast does not use.
 
 Development tools (TypeScript, vitest, pytest and their dependencies) are not shipped and are not in the tables below.
 One of them is worth naming: `@napi-rs/lzma-linux-x64-gnu` 1.5.1 is an optional dependency of `rollup` 4.65.0, which
-comes from `vite` 5 under `vitest`. It installs only on Linux x64 (glibc), so it is not on a Mac and was not checked
-here, and its licence was not verified.
+comes from `vite` 5 under `vitest`. It installs only on Linux x64 (glibc); its licence is MIT (npm registry metadata,
+2026-10-27).
 
 ## npm production packages
 
@@ -257,8 +287,8 @@ here, and its licence was not verified.
 | `yargs` | MIT | https://yargs.js.org/ |
 | `yargs-parser` | ISC | https://github.com/yargs/yargs-parser |
 | `zod` | MIT | https://zod.dev |
-| `@rolldown/binding-*` | MIT | https://rolldown.rs/ (the build for your platform; darwin-arm64 checked) |
-| `lightningcss-*` | MPL-2.0 | https://github.com/parcel-bundler/lightningcss (the build for your platform; darwin-arm64 checked) |
+| `@rolldown/binding-*` | MIT | https://rolldown.rs/ (the build for your platform; every build in `pnpm-lock.yaml`, linux-arm64-gnu included, is MIT per npm registry metadata, 2026-10-27) |
+| `lightningcss-*` | MPL-2.0 | https://github.com/parcel-bundler/lightningcss (the build for your platform; every build in `pnpm-lock.yaml` is MPL-2.0 per npm registry metadata, and the linux-arm64-gnu tarball ships the MPL-2.0 text, 2026-10-27) |
 | `@ffprobe-installer/*` | darwin-arm64: LGPL-2.1; darwin-x64, linux-x64, linux-arm64, linux-arm, linux-ia32: GPL-3.0 (run as a separate program, see "Tools") | https://github.com/SavageCore/node-ffprobe-installer (the build for your platform) |
 
 ## Python production packages
