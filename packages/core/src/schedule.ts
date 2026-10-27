@@ -189,8 +189,9 @@ export function checkSchedule(scene: Scene, scheduled: ScheduledStep[], sceneEnd
 }
 
 /**
- * Notes that do not stop the render: a `type` step whose typing (one character every 35 ms after its click) is still
- * going when the next step sets off. The recorder finishes typing first, so that step starts late.
+ * Notes that do not stop the render: a `type` step whose typing (one character every 35 ms after its click) runs so
+ * far into the next step's time that the step will act late. The recorder finishes typing first; a glide that sets
+ * off late is compressed down to half its travel, so only typing past that makes the next action late.
  */
 export function scheduleWarnings(scene: Scene, scheduled: ScheduledStep[]): string[] {
   const out: string[] = [];
@@ -199,12 +200,13 @@ export function scheduleWarnings(scene: Scene, scheduled: ScheduledStep[]): stri
     const next = steps[k + 1];
     if (s.step.do !== 'type' || !s.step.text || !next) return;
     const typed = actionAt(s) + s.step.text.length * TYPE_CHAR_SEC;
-    if (next.startAt >= typed - 0.05) return;
+    const late = typed - next.startAt - next.travel / 2;
+    if (late <= 0.05) return;
     const text = s.step.text.length > 30 ? `${s.step.text.slice(0, 27)}...` : s.step.text;
     out.push(
       `scene "${scene.id}" step ${s.index}: typing "${text}" (${s.step.text.length} characters, ${sec(s.step.text.length * TYPE_CHAR_SEC)}) ` +
         `runs until ${sec(typed)}, after step ${next.index} (${describeStep(next)}) is due to start at ${sec(next.startAt)}, so that ` +
-        `step will be about ${sec(typed - next.startAt)} late; start typing on an earlier word, or shorten the text`,
+        `step will be about ${sec(late)} late; start typing on an earlier word, or shorten the text`,
     );
   });
   return out;

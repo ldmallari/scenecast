@@ -318,8 +318,8 @@ What each action does:
   upload) is drawn once the action has had its effect: after the layout change and the transitions and animations on
   those elements and their ancestors (at most 0.4 s after the cue), round them where they come to rest. On a `type`
   step it is drawn after the click into the field, before the typing.
-  `type` types one character every 35 ms. When the typing would still be going as the next step sets off, the render
-  warns (`typing "…" (24 characters, 0.84 s) runs until 2.14 s, after step 1 … is due to start at 1.68 s`): that step
+  `type` types one character every 35 ms. When the typing would run so long that the next step acts late (a glide
+  that sets off late shrinks to half its length, which absorbs a little), the render warns (`typing "…" (24 characters, 0.84 s) runs until 2.14 s, after step 1 … is due to start at 1.68 s`): that step
   would start late, so start typing on an earlier word, or shorten the text.
 - **check.** Ticks a checkbox or switch: the cursor glides to it, and it is clicked only when it is not already
   checked, so a re-render over seeded data that already has it ticked stays the same. The recording fails when it

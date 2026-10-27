@@ -299,11 +299,12 @@ describe('scheduleWarnings', () => {
         { cue, do: 'type', sel: '#subject', text: 'Screen flickers at start' },
         { cue: 'pick', do: 'click', sel: '#category' },
       ] }) as Scene;
-    // "short" at 1.30 s: 24 characters type until 2.14 s; the click on "pick" (2.20 s) sets off at 1.68 s.
+    // "short" at 1.30 s: 24 characters type until 2.14 s; the click on "pick" (2.20 s) sets off at 1.68 s, and its glide
+    // can shrink to half (0.26 s), so it acts 0.20 s late.
     const late = sc('short');
     expect(scheduleWarnings(late, schedule(late, v, { travelSec: (st) => travelSecFor(st) }))).toEqual([
       'scene "s3" step 0: typing "Screen flickers at start" (24 characters, 0.84 s) runs until 2.14 s, after step 1 ' +
-        '(click on "pick") is due to start at 1.68 s, so that step will be about 0.46 s late; start typing on an earlier ' +
+        '(click on "pick") is due to start at 1.68 s, so that step will be about 0.20 s late; start typing on an earlier ' +
         'word, or shorten the text',
     ]);
     // Typing from "Give" ends at 1.24 s, before the click sets off.

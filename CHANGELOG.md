@@ -18,7 +18,7 @@ All notable changes to scenecast are listed here. The format follows
 - Steps that could only fail once recorded are reported after the voice is made and before anything is recorded, all
   at once, each with what to change: a step on a scene's first word, a step that would act before the step above it,
   and a step that would run past the end of its scene.
-- A warning when a `type` step's typing would still be going as the next step sets off.
+- A warning when a `type` step's typing runs long enough to make the next step act late.
 - A warning before composing when a zoom leaves no caption position free, with how much of the zoomed height its
   target fills.
 - `app.seedInputs`: data files the seed reads; their contents join the recordings' cache key.
