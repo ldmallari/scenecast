@@ -289,7 +289,7 @@ A render with `--only <id>` leaves out the intro and outro cards and writes `<ou
 | Field | Meaning |
 |---|---|
 | `do` | `click`, `type`, `hover`, `check`, `upload`, `scroll`, `press`, `zoom`, `unzoom`, `ring`, `park`, `wait` or `goto`. |
-| `cue` | A word or phrase from the narration (case-insensitive, whole words). The step lands on its first word. |
+| `cue` | A word or phrase from the narration (case-insensitive, whole words; punctuation and symbols such as `&` do not count, so `Save & close` matches "Save & close"). The step lands on its first word. |
 | `occ` | Which occurrence of the cue, counting from 1 (default 1). Use it when the cue appears more than once: in "To sign in, … and press Sign in", the button is `occ: 2`. |
 | `offset` | Seconds added to the cue time (negative is earlier). |
 | `sel` | A CSS selector, or a list of them. `click`, `type`, `hover`, `check`, `upload`, `zoom` and `ring` need one. With a list, the box is the union of all matches and the pointer aims at the first. |

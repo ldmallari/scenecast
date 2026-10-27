@@ -100,6 +100,13 @@ describe('scene file strictness', () => {
     expect(() => parseScene(ok)).not.toThrow();
   });
 
+  it('a cue with & matches a narration with & (v1.2)', () => {
+    const amp = base();
+    amp.scenes[0]!.narration = 'Choose "Save & close".';
+    (amp.scenes[0]!.steps as object[]).push({ cue: 'Save & close', do: 'click', sel: '#a' });
+    expect(() => parseScene(amp)).not.toThrow();
+  });
+
   it('the demo scene file loads under the strict schema', async () => {
     const demo = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../examples/demo-app/video.yaml');
     await expect(loadScene(demo)).resolves.toBeDefined();

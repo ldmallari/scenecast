@@ -76,16 +76,21 @@ function norm(w: string): string {
   return w.toLowerCase().replace(/^[^\p{L}\p{N}_]+|[^\p{L}\p{N}_]+$/gu, '');
 }
 
-/** Index of the first word of the nth occurrence of `cue` in `words` (punctuation trimmed, case-insensitive), or null. */
+/**
+ * Index of the first word of the nth occurrence of `cue` in `words` (punctuation trimmed, case-insensitive), or null.
+ * A word with no letter or digit (`&`, `—`) counts on neither side, so `Save & close` matches "Save &
+ * close" (and "Save close"); a cue of nothing but such words matches nothing.
+ */
 export function cueWordIndex(words: string[], cue: string, occ: number): number | null {
-  const target = cue.trim().split(/\s+/).map(norm);
-  if (target.some((t) => t === '')) return null;
-  const ws = words.map(norm);
+  const target = cue.trim().split(/\s+/).map(norm).filter((t) => t !== '');
+  if (!target.length) return null;
+  // The narration's spoken words, with their places in `words`.
+  const ws = words.flatMap((w, i) => (norm(w) === '' ? [] : [{ n: norm(w), i }]));
   let seen = 0;
-  for (let i = 0; i + target.length <= ws.length; i++) {
-    if (!target.every((t, j) => ws[i + j] === t)) continue;
-    if (++seen === occ) return i;
-    i += target.length - 1; // non-overlapping, like countCue
+  for (let k = 0; k + target.length <= ws.length; k++) {
+    if (!target.every((t, j) => ws[k + j]!.n === t)) continue;
+    if (++seen === occ) return ws[k]!.i;
+    k += target.length - 1; // non-overlapping, like countCue
   }
   return null;
 }

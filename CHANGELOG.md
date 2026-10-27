@@ -18,6 +18,9 @@ All notable changes to scenecast are listed here. The format follows
 
 ### Fixed
 
+- A cue with a symbol in it, such as `Save & close`, matches the narration: words with no letter or digit
+  count on neither side.
+
 - A step is no longer late because the page was busy: from just before the step is due, only a document still
   loading or a visible loading indicator holds it up; data requests and a layout still moving no longer do.
 - A `ringSel` ring on a click (and on type, check and upload) is measured after the click has had its effect, so an

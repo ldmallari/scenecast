@@ -320,4 +320,12 @@ describe('cueWordIndex', () => {
     expect(cueWordIndex(words, 'item then', 1)).toBe(2);
     expect(cueWordIndex(words, 'one', 3)).toBeNull();
   });
+
+  it('a symbol such as & counts on neither side, so a cue with it matches the narration', () => {
+    const words = 'Choose "Save & close". Then print & send.'.split(' ');
+    expect(cueWordIndex(words, 'Save & close', 1)).toBe(1);
+    expect(cueWordIndex(words, 'Save close', 1)).toBe(1);
+    expect(cueWordIndex(words, 'print & send', 1)).toBe(5);
+    expect(cueWordIndex(words, '&', 1)).toBeNull();
+  });
 });
