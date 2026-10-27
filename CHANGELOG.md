@@ -52,8 +52,8 @@ All notable changes to scenecast are listed here. The format follows
 - The audit's zoom target check leaves out the part of a zoom's `pad` that runs off the frame, so a large pad on an
   element near the edge no longer FAILs with "zoom does not contain target".
 - Captions no longer break between a hyphenated word and its noun ("your to-do / list"), or leave a clause's last
-  function word alone at the start of a line ("the team asked / for, Open"); a function word that ends a clause may end a
-  line.
+  function word alone at the start of a line ("the team asked / for, Open"); a function word that ends a clause may
+  end a line.
 - Retime no longer prints "quiet window (0.00 s) is shorter than the 0.00 s to cut" for cuts too small to show.
 
 ## [1.1.0] - 2026-10-28

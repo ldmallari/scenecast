@@ -262,8 +262,8 @@ function breakCost(word: string): number {
  * function word, because both split what reads as one unit:
  * - after a hyphenated compound that leads into its noun ("your to-do / list"), unless the next word is a function
  *   word ("sign-in / to");
- * - before a function word that ends a clause the line before does not end ("the team asked / for, Open"): it leaves the
- *   clause's last word alone at the start of the line.
+ * - before a function word that ends a clause the line before does not end ("the team asked / for, Open"): it
+ *   leaves the clause's last word alone at the start of the line.
  */
 function breakCostAt(words: string[], i: number): number {
   const [prev, next] = [words[i - 1]!, words[i]];
