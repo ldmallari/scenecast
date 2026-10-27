@@ -346,7 +346,12 @@ export async function recordTake<T extends { file: string }>(
     return { take, flash: await scan(take.file) };
   } catch (e) {
     if (!missing(e)) throw e;
-    log(`record/${sceneId}: no flash marker found in the take; recording it again`);
+    // The seed is not run again: other scenes recorded in this render (and later ones) were seeded once, and
+    // re-seeding here would reset what they rely on. A scene that changes data replays on the changed data.
+    log(
+      `record/${sceneId}: no flash marker found in the take; recording it again, on the app data the first take left ` +
+        '(app.seed is not run again: if this scene changes data, check the take, or render again with --fresh)',
+    );
   }
   const again = await record();
   try {

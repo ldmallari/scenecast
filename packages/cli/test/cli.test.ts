@@ -108,7 +108,10 @@ describe('recordTake', () => {
     );
     expect(r).toEqual({ take: take('t2.webm'), flash });
     expect(scans).toEqual(['t1.webm', 't2.webm']);
-    expect(logs).toEqual(['record/s04: no flash marker found in the take; recording it again']);
+    expect(logs).toEqual([
+      'record/s04: no flash marker found in the take; recording it again, on the app data the first take left ' +
+        '(app.seed is not run again: if this scene changes data, check the take, or render again with --fresh)',
+    ]);
   });
 
   it('a second miss fails, saying to re-run; other scan errors are not retried', async () => {
