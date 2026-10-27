@@ -272,7 +272,8 @@ frame shows the result.
 
 Setup steps use the step format without `cue`, `occ` or `offset`: `click`, `type` (fills the field at once),
 `hover`, `check`, `upload`, `press`, `scroll`, `wait` and `goto`. What only matters on camera (`zoom`, `ring`,
-`unzoom`, `park`) is a load error; make it a scene step. The scene's `zoom` and the declared navs are measured after
+`unzoom`, `park`, and the fields `ring`, `ringSel`, `ringMs`, `glideMs`, `pad`, `at`) is a load error; make it a scene
+step. `click`, `check` and `hover` need `sel`. The scene's `zoom` and the declared navs are measured after
 setup, so a scene can start zoomed on the drawer setup opened. A setup selector that matches nothing fails the
 recording with `scene "<id>" setup step <i> selector "<sel>" not found`. Prefer `setup` to an `app.initScript`
 that fakes the state: it drives the app as a person would, so it keeps working when the app's internals change.

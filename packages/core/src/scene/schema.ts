@@ -273,6 +273,13 @@ function checkSetup(scene: SceneIn, si: number, ctx: z.RefinementCtx): void {
     if (step.cue !== undefined || step.occ !== undefined || step.offset !== undefined)
       bad('setup steps run before recording starts and take no cue, occ or offset');
     if (!SETUP_KINDS.has(step.do)) bad(`${step.do} is not filmed in setup; make it a scene step`);
+    // A setup step that acts on nothing would leave the scene starting in the wrong state, silently.
+    if (['click', 'check', 'hover'].includes(step.do) && step.sel === undefined) bad(`${step.do} needs sel`);
+    for (const key of ['ring', 'ringSel', 'ringMs', 'glideMs', 'pad', 'at'] as const)
+      if (step[key] !== undefined) bad(`${key} is not used in setup (nothing is filmed)`);
+    if ((step.by !== undefined || step.to !== undefined) && step.do !== 'scroll') bad('by and to are for scroll steps');
+    if (step.do === 'scroll' && [step.sel, step.by, step.to].filter((v) => v !== undefined).length > 1)
+      bad('scroll takes one of sel, by, to');
     checkUpload(step, bad);
   });
 }

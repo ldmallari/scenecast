@@ -276,6 +276,18 @@ describe('setup steps', () => {
     );
   });
 
+  it('need sel where the step acts on an element, and reject fields that only matter on camera', () => {
+    for (const d of ['click', 'check', 'hover'])
+      expect(() => parseScene(spec([{ do: d }]))).toThrow(`scene "s1" setup step 0: ${d} needs sel`);
+    expect(() => parseScene(spec([{ do: 'click', sel: '#a', ringSel: '#b' }]))).toThrow(
+      'scene "s1" setup step 0: ringSel is not used in setup (nothing is filmed)',
+    );
+    expect(() => parseScene(spec([{ do: 'click', sel: '#a', glideMs: 300 }]))).toThrow('glideMs is not used in setup');
+    expect(() => parseScene(spec([{ do: 'click', sel: '#a', by: 300 }]))).toThrow('scene "s1" setup step 0: by and to are for scroll steps');
+    expect(() => parseScene(spec([{ do: 'scroll', sel: '#a', by: 300 }]))).toThrow('scene "s1" setup step 0: scroll takes one of sel, by, to');
+    expect(() => parseScene(spec([{ do: 'type', text: 'x' }, { do: 'wait', ms: 200 }, { do: 'scroll', by: 300 }]))).not.toThrow();
+  });
+
   it('check uploads like scene steps', () => {
     expect(() => parseScene(spec([{ do: 'upload', sel: '.d' }]))).toThrow('scene "s1" setup step 0: upload needs file (the file to choose)');
   });
