@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Getting started and the complete scene file reference for scenecast.">
+  <title>Documentation · scenecast</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header"><div class="shell header-inner">
+    <a class="wordmark" href="index.html"><span class="brand-mark" aria-hidden="true">sc</span>scenecast</a>
+    <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="docs.html" aria-current="page">Documentation</a><a href="audit.html">Audit</a><a href="https://github.com/ldmallari/scenecast">GitHub <span aria-hidden="true">↗</span></a></nav>
+  </div></header>
+  <main id="main" class="shell" tabindex="-1"><div class="docs-layout"><aside class="toc"><nav aria-label="On this page"><p class="eyebrow">On this page</p><ul><li><a href="#getting-started">Getting started</a></li><li><a href="#your-first-scene">Your first scene</a></li><li><a href="#commands">Commands</a></li><li><a href="#scene-file-reference">Scene file reference</a></li><li><a href="#top-level">Top level</a></li><li><a href="#cards">cards</a></li><li><a href="#card-pages">Card pages</a></li><li><a href="#brand">brand</a></li><li><a href="#app">app</a></li><li><a href="#init-scripts-and-routes">Init scripts and routes</a></li><li><a href="#voice">voice</a></li><li><a href="#scenes">scenes</a></li><li><a href="#steps">steps</a></li><li><a href="#cursor">cursor</a></li><li><a href="#phone-scenes">Phone scenes</a></li><li><a href="#captions">Captions</a></li><li><a href="#output">Output</a></li></ul></nav></aside><article class="prose"><header class="page-heading"><p class="eyebrow">Documentation</p><h1>From a scene file<br>to a walkthrough.</h1><p class="lead">Set up the toolchain, record the demo, then describe your own app.</p></header>
+<section aria-labelledby="getting-started"><h2 id="getting-started">Getting started</h2><p>Use macOS or Linux (WSL works), <strong>Node.js 24</strong> and <strong>pnpm 10</strong>. Allow about 2 GB for the models, Python environment and Chromium.</p><p>Run these commands in a clone of the repository. <code>doctor</code> sets up the local toolchain and models; the first run needs a network connection.</p><pre><code class="language-sh"># in a clone of this repository
+pnpm install
+pnpm -C packages/cli exec playwright install chromium
+node packages/cli/bin/scenecast.js doctor
+
+# start the demo app (an invented product, included in the repo), then render its video
+node examples/demo-app/server.mjs &amp;
+node packages/cli/bin/scenecast.js render examples/demo-app/video.yaml</code></pre><p>The render writes <code>out/demo.mp4</code>, <code>out/demo.srt</code>, <code>out/chapters.txt</code> and <code>out/audit/</code>. Open <code>out/audit/audit-table.md</code> to see every moment checked.</p><p>On Linux, Chromium may need system libraries. This step requires admin rights:</p><pre><code class="language-sh">pnpm -C packages/cli exec playwright install --with-deps chromium</code></pre><p><code>scenecast doctor</code> installs uv in <code>~/.local/bin/uv</code> (or <code>~/.cache/scenecast/bin/uv</code>), the Python environment in <code>py/.venv</code>, and models and NLTK data in <code>~/.cache/scenecast/</code>. <code>scenecast render</code> performs the same setup on first use if you skip doctor.</p></section>
+<section aria-labelledby="your-first-scene"><h2 id="your-first-scene">Your first scene</h2><p>Copy <code>examples/demo-app/video.yaml</code>, set <code>app.baseUrl</code> to your running app, then edit the narration and steps. A step’s <code>cue</code> must appear in its scene’s narration.</p><pre><code class="language-yaml">- id: sign-in
+  kind: app
+  route: /login
+  signedOut: true
+  narration: &gt;-
+    To sign in, type your work email, then your password, and press Sign in.
+  steps:
+    - { cue: email, do: type, sel: &quot;#email&quot;, text: sam@example.com }
+    - { cue: password, do: type, sel: &quot;#password&quot;, text: demo-password }
+    - { cue: Sign in, occ: 2, do: click, sel: &quot;#signin&quot; }</code></pre><p>Here <code>occ: 2</code> selects the second occurrence of “Sign in”. The click lands on the phrase’s first word.</p></section>
+<section aria-labelledby="commands"><h2 id="commands">Commands</h2><pre><code class="language-text">scenecast doctor                      check the toolchain (uv, Python, ffmpeg, Chromium, models)
+scenecast login &lt;video.yaml&gt;          sign in by hand and save app.storageState
+scenecast render &lt;video.yaml&gt; [--only &lt;sceneId&gt;] [--no-audit] [--keep-work] [--fresh]
+                              [--out &lt;dir&gt;] [--work &lt;dir&gt;]
+scenecast preview &lt;video.yaml&gt;        open the composed video in the Revideo player</code></pre><p>Stages whose inputs have not changed are reused from <code>work/&lt;id&gt;/</code>. Use <code>--fresh</code> after the app itself changes: the cache does not track the app. Use <code>--only &lt;sceneId&gt;</code> while refining one scene.</p><p>Recording runs in real time. Composition takes about 2× the video length; a whole cold render takes about 3.5 to 7×. A run with nothing changed reuses every stage and can finish in under a second.</p></section><h2 id="scene-file-reference">Scene file reference</h2>
+<p>A scene file (<code>video.yaml</code>; <code>.yml</code> and <code>.json</code> work too) describes one video: the app to record, the brand, the
+voice, and an ordered list of scenes. Each scene has its narration and the steps to perform while it is spoken. Every
+step names a <strong>cue</strong>, a word or phrase in the narration, and scenecast times the step so that it lands on that word.</p>
+<p>Relative paths (<code>brand.logo</code>, <code>brand.music.file</code>, <code>brand.background.image</code>, <code>app.storageState</code>, <code>app.loginHook</code>,
+<code>app.initScript</code> and <code>app.routes[].module</code> files, card pages, and <code>app.seed</code> when it is a script path) are resolved
+against the scene file's folder.</p>
+<p>The scene file is checked when it loads. Every problem is listed at once, for example
+<code>scene &quot;worklist&quot; step 1: cue &quot;due&quot; not in narration</code>.</p>
+<h3 id="a-complete-example">A complete example</h3>
+<p>Adapted from <code>examples/demo-app/video.yaml</code>, shortened, with generic card text:</p>
+<pre><code class="language-yaml">id: demo
+title: A quick tour
+output: demo
+brand:
+  primary: &quot;#1F3A5F&quot;
+  accent: &quot;#F5C518&quot;
+  font: Inter
+  cardFont: Inter
+  background: { from: &quot;#1F3A5F&quot;, to: &quot;#0F1E33&quot; }
+  introTitle: A quick tour
+  introSubtitle: Sign in, check your worklist and sign a form
+cards:
+  introSec: 3.5
+  outroSec: 4
+  outroNext: &quot;Next: approving requests&quot;
+  entrance: reveal
+app:
+  baseUrl: http://127.0.0.1:4310
+  seed: ./seed.mjs
+  routes:
+    - { url: &quot;**/api/flags&quot;, json: { sso: true, sessionToken: true } }
+  initScript: &quot;document.addEventListener('DOMContentLoaded', () =&gt; { document.documentElement.dataset.demo = 'video'; });&quot;
+  panels: [&quot;.filters-pop&quot;]
+  login:
+    - { do: goto, text: /login }
+    - { do: type, sel: &quot;#email&quot;, text: sam@example.com }
+    - { do: type, sel: &quot;#password&quot;, text: demo-password }
+    - { do: click, sel: &quot;#signin&quot; }
+  nav:
+    - { selector: header.topbar, edge: top }
+audit:
+  allowList: [worklist]
+
+scenes:
+  - id: worklist
+    kind: app
+    title: Your worklist
+    route: /dashboard
+    narration: &gt;-
+      Your dashboard opens on the worklist, with everything that needs you today.
+      Each item shows when it is due, so the most urgent work comes first.
+    steps:
+      - { cue: worklist, do: ring, sel: &quot;.worklist&quot;, pad: 10 }
+      - { cue: due, do: zoom, sel: &quot;.worklist&quot;, pad: 16 }
+      - { cue: first, do: unzoom }
+
+  - id: account-menu
+    kind: app
+    title: The account menu
+    route: /dashboard
+    cursor: right
+    narration: &gt;-
+      Your account menu sits at the top right. Open it to find your profile, your settings, and sign out.
+    steps:
+      - { cue: Open, do: click, sel: &quot;#menu-button&quot; }
+      - { cue: profile, do: ring, sel: &quot;#account-menu&quot;, pad: 6 }
+      - { do: park }
+
+  - id: on-the-go
+    kind: title
+    title: On the go
+    seconds: 3
+    narration: Next, the same app on a phone.
+
+  - id: phone
+    kind: app
+    title: On your phone
+    route: /dashboard
+    viewport: phone
+    narration: &gt;-
+      On a phone, the same worklist fits the narrow screen.
+      Tap Requests to see everything you have asked for.
+    steps:
+      - { cue: Requests, do: click, sel: &quot;.nav a[href='/requests']&quot; }
+</code></pre>
+<h2 id="top-level">Top level</h2>
+<table>
+<thead>
+<tr>
+<th scope="col">Field</th>
+<th scope="col">Required</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>yes</td>
+<td>Short name. The work folder is <code>&lt;work&gt;/&lt;id&gt;/</code>.</td>
+</tr>
+<tr>
+<td><code>title</code></td>
+<td>yes</td>
+<td>The video's title. It is shown on the outro card unless <code>cards.outroTitle</code> is set.</td>
+</tr>
+<tr>
+<td><code>output</code></td>
+<td>yes</td>
+<td>Base name of the output files: <code>&lt;out&gt;/&lt;output&gt;.mp4</code> and <code>.srt</code>.</td>
+</tr>
+<tr>
+<td><code>brand</code></td>
+<td>yes</td>
+<td>Colours, font and card text. See <a href="#brand">brand</a>.</td>
+</tr>
+<tr>
+<td><code>app</code></td>
+<td>yes</td>
+<td>How to reach and sign in to the app. See <a href="#app">app</a>.</td>
+</tr>
+<tr>
+<td><code>voice</code></td>
+<td>no</td>
+<td>The narrator. See <a href="#voice">voice</a>.</td>
+</tr>
+<tr>
+<td><code>scenes</code></td>
+<td>yes</td>
+<td>At least one scene. See <a href="#scenes">scenes</a>.</td>
+</tr>
+<tr>
+<td><code>cards</code></td>
+<td>no</td>
+<td>The intro and outro cards. See <a href="#cards">cards</a>.</td>
+</tr>
+<tr>
+<td><code>cursor</code></td>
+<td>no</td>
+<td>Where the cursor starts and parks. See <a href="#cursor">cursor</a>.</td>
+</tr>
+<tr>
+<td><code>phone</code></td>
+<td>no</td>
+<td><code>align</code>: where a phone scene's phone sits, <code>left</code> (default), <code>center</code> or <code>right</code>. See <a href="#phone-scenes">phone scenes</a>.</td>
+</tr>
+<tr>
+<td><code>audit</code></td>
+<td>no</td>
+<td><code>allowList</code>: names and words that speech recognition may spell differently, or leave out, without a narration WARN (for example <code>[worklist]</code>). An allow-listed cue word that is left out is placed by position, in the gap the heard words around it leave.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="cards">cards</h2>
+<table>
+<thead>
+<tr>
+<th scope="col">Field</th>
+<th scope="col">Default</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>introSec</code></td>
+<td><code>3</code></td>
+<td>Intro card length: 0 (no intro card) or at least 1 s.</td>
+</tr>
+<tr>
+<td><code>outroSec</code></td>
+<td><code>3</code></td>
+<td>Outro card length: 0 (no outro card) or at least 1 s.</td>
+</tr>
+<tr>
+<td><code>outroTitle</code></td>
+<td><code>title</code></td>
+<td>The outro card's title.</td>
+</tr>
+<tr>
+<td><code>outroNext</code></td>
+<td>none</td>
+<td>A smaller line under the outro title, for example <code>Next: approving requests</code>.</td>
+</tr>
+<tr>
+<td><code>entrance</code></td>
+<td><code>reveal</code></td>
+<td>How the logo, bar and text come in. <code>reveal</code>: the logo scales up slightly and fades in, the accent bar grows, then the title, subtitle and next line rise in one after another (about 1 s in all). <code>rise</code> is the v1 look (everything rises and fades in over 0.5 s). <code>none</code> shows the card at once.</td>
+</tr>
+<tr>
+<td><code>introPage</code></td>
+<td>none</td>
+<td>An HTML file shown as the intro card instead of the drawn one (see <a href="#card-pages">card pages</a>).</td>
+</tr>
+<tr>
+<td><code>outroPage</code></td>
+<td>none</td>
+<td>The same for the outro card.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="card-pages">Card pages</h3>
+<p>A card page (<code>cards.introPage</code>, <code>cards.outroPage</code>, or <code>page</code> on a title scene) is an HTML file that Chromium renders
+<strong>once</strong>, at 1920×1080, into the image the card shows. Paths are relative to the scene file. The page gets the brand
+as CSS variables on <code>:root</code>: <code>--sc-primary</code>, <code>--sc-accent</code>, <code>--sc-font</code> and <code>--sc-card-font</code> (font names come
+quoted, so <code>font-family: var(--sc-card-font), sans-serif</code> works). The capture waits for the page's fonts to load.</p>
+<ul>
+<li>The card is a still. CSS animations and transitions do not play in the video: finite ones are captured at their
+end state. The card entrance does not apply to a page; the page fades in and out with the dissolve like any scene.</li>
+<li>Everything the page loads must be local (fonts, images, styles): the network is blocked, so it renders the same
+offline. The cache notices a
+change to the HTML file itself; after changing only a file it loads, render with <code>--fresh</code>.</li>
+<li>Routes, init scripts and the signed-in session do not apply to card pages.</li>
+<li>A card page draws with the fonts installed on the machine that renders (and any font files the page loads
+itself). The fonts bundled with scenecast (Inter) are loaded only into the composer, for captions and drawn cards,
+not into card pages: ship the font file next to the page and load it with <code>@font-face</code> to be sure.</li>
+<li>The page replaces the whole drawn card: the logo, <code>introTitle</code>/<code>introSubtitle</code>, <code>outroTitle</code> and <code>outroNext</code> are
+not drawn on it.</li>
+<li>A title scene's narration captions are drawn over its page.</li>
+<li>Requests to anything but local files are blocked, and each blocked URL is named in a warning.</li>
+</ul>
+<h2 id="brand">brand</h2>
+<table>
+<thead>
+<tr>
+<th scope="col">Field</th>
+<th scope="col">Required</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>primary</code></td>
+<td>yes</td>
+<td>Background colour of the intro, outro and chapter cards, unless <code>background</code> is set. The card text is light or dark to suit the background.</td>
+</tr>
+<tr>
+<td><code>accent</code></td>
+<td>yes</td>
+<td>The accent bar on the cards, and the touch indicator on phone scenes. Any CSS colour works (<code>#F5C518</code>, <code>gold</code>, <code>rgb(245 197 24)</code>); the touch indicator uses it as computed by the browser, without alpha. A value that is not a colour prints a warning and the indicator falls back to <code>#F5C518</code>.</td>
+</tr>
+<tr>
+<td><code>font</code></td>
+<td>yes</td>
+<td>Font family for captions (and cards, unless <code>cardFont</code> is set), for example <code>Inter</code>. Inter is bundled with scenecast (OFL-1.1) and always works, offline. Any other family must be installed on the machine that renders: a font that is missing fails the render and names the font, rather than falling back to another typeface. The check runs when the video is composed (after the voice and the recordings), and a name the system resolves as an alias of an installed font counts as installed.</td>
+</tr>
+<tr>
+<td><code>cardFont</code></td>
+<td>no</td>
+<td>Font family of the card text. Defaults to <code>font</code>. The same rule applies: Inter, or a font installed where the render runs (use a free one; OFL is fine).</td>
+</tr>
+<tr>
+<td><code>background</code></td>
+<td>no</td>
+<td>Background of the cards and of the stage behind the phone on phone scenes: a colour (<code>&quot;#1F3A5F&quot;</code>), a gradient <code>{ from, to, angle }</code> (<code>angle</code> in CSS degrees, default 135: from the top-left to the bottom-right), or an image <code>{ image, dim }</code> (a path; it covers the frame, under a black overlay of <code>dim</code>, 0 to 1, default 0.35). Default: <code>primary</code>.</td>
+</tr>
+<tr>
+<td><code>logo</code></td>
+<td>no</td>
+<td>An image file shown on the intro and outro cards (not on chapter cards).</td>
+</tr>
+<tr>
+<td><code>introTitle</code></td>
+<td>yes</td>
+<td>Title of the intro card.</td>
+</tr>
+<tr>
+<td><code>introSubtitle</code></td>
+<td>no</td>
+<td>Subtitle of the intro card.</td>
+</tr>
+<tr>
+<td><code>music</code></td>
+<td>no</td>
+<td><code>{ file, licence }</code>: your own music track instead of the synthesised bed. <code>licence</code> is required and is copied into the audit.</td>
+</tr>
+</tbody>
+</table>
+<p>Without <code>brand.music</code>, scenecast synthesises a quiet music bed, so there is nothing to license.</p>
+<h2 id="app">app</h2>
+<table>
+<thead>
+<tr>
+<th scope="col">Field</th>
+<th scope="col">Required</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>baseUrl</code></td>
+<td>yes</td>
+<td>Where the app runs, for example <code>http://127.0.0.1:4310</code>. Routes and <code>goto</code> paths are relative to it. The app must already be running when you render.</td>
+</tr>
+<tr>
+<td><code>login</code></td>
+<td>no</td>
+<td>Steps that sign in, run before each signed-in scene is recorded (scenes reused from the cache don't sign in), untimed and not recorded. They use the same step format as scenes (<code>goto</code>, <code>type</code>, <code>click</code>, <code>press</code>, <code>hover</code>, <code>wait</code>).</td>
+</tr>
+<tr>
+<td><code>storageState</code></td>
+<td>no</td>
+<td>A saved Playwright session file. When set, it is used instead of <code>login</code>. <code>scenecast login &lt;video.yaml&gt;</code> opens a browser, lets you sign in by hand, and saves the session to this path (useful for SSO or two-factor sign-in).</td>
+</tr>
+<tr>
+<td><code>loginHook</code></td>
+<td>no</td>
+<td>A JavaScript module whose default export is <code>async (page, context) =&gt; {}</code> and signs in. It is used when there are no <code>login</code> steps and no <code>storageState</code>.</td>
+</tr>
+<tr>
+<td><code>seed</code></td>
+<td>no</td>
+<td>Runs once before the first recording, in the scene file's folder, with <code>SCENECAST_BASE_URL</code> set. A single word naming a file that exists (relative to the scene file), such as <code>./seed.mjs</code>, is a script: <code>.js</code>, <code>.mjs</code>, <code>.cjs</code> and <code>.ts</code> run with <code>node</code>, <code>.sh</code> with <code>sh</code>, anything else directly. Anything else, such as <code>node scripts/seed.mjs</code> or <code>python db/seed.py</code>, runs as a shell command. A single word that looks like a path but names no file (<code>./nope.mjs</code>) is an error when the scene file loads. Seeding is skipped when every recording is reused from the cache.</td>
+</tr>
+<tr>
+<td><code>nav</code></td>
+<td>no</td>
+<td>The app's navigation bars: a list of <code>{ selector, edge }</code> with <code>edge</code> <code>left</code> (a sidebar) or <code>top</code> (a bar along the top). A zoom shows a declared nav whole or leaves it out, never cut partway.</td>
+</tr>
+<tr>
+<td><code>initScript</code></td>
+<td>no</td>
+<td>JavaScript run in every page before the app's own scripts: a <code>.js</code>, <code>.mjs</code> or <code>.cjs</code> file (relative to the scene file), inline code, or a list of them. A single word with a script extension that names no file is a load error (<code>app.initScript: no such file: &lt;path&gt;</code>). See <a href="#init-scripts-and-routes">init scripts and routes</a>.</td>
+</tr>
+<tr>
+<td><code>routes</code></td>
+<td>no</td>
+<td>Network responses to fake: a list of <code>{ url, status, json, body, headers, module }</code>. See <a href="#init-scripts-and-routes">init scripts and routes</a>.</td>
+</tr>
+<tr>
+<td><code>panels</code></td>
+<td>no</td>
+<td>Extra CSS selectors for the app's open panels (pop-overs, drawers), added to the built-in list. Captions keep clear of them, and the audit checks that they do.</td>
+</tr>
+</tbody>
+</table>
+<p>A scene with <code>signedOut: true</code> is recorded without the session.</p>
+<p>When the app keeps its sign-in in <strong>sessionStorage</strong> (not only in cookies), the unattended sign-in and
+<code>scenecast login</code> save it in a second file next to the session (<code>&lt;session&gt;.session-storage.json</code>), and every
+recording restores it once per tab, before the app's scripts run. An app that clears it (by signing out, say) is not
+signed back in on its next navigation. The session files the unattended sign-in (<code>app.login</code> or <code>app.loginHook</code>)
+writes for a recording are deleted when that recording ends, even when it fails. The files <code>scenecast login</code> writes
+next to <code>app.storageState</code> (the session and its <code>.session-storage.json</code>) are kept, since later renders use them: keep
+both out of version control.</p>
+<h3 id="init-scripts-and-routes">Init scripts and routes</h3>
+<p>Both apply to every browser context scenecast opens on the app: the recording, the unattended sign-in, the prewarm and
+<code>scenecast login</code>. They do not apply to card pages.</p>
+<ul>
+<li>
+<p><strong><code>initScript</code></strong> runs as each document is created, <strong>before <code>&lt;html&gt;</code> exists</strong>: <code>document.documentElement</code> and
+<code>document.body</code> are still <code>null</code>. Code that touches the page must wait for it:</p>
+<pre><code class="language-yaml">initScript: &quot;document.addEventListener('DOMContentLoaded', () =&gt; { document.documentElement.dataset.demo = 'video'; });&quot;
+</code></pre>
+<p>Setting globals, <code>localStorage</code> values or feature switches the app reads at start-up works at once.</p>
+</li>
+<li>
+<p><strong><code>routes</code></strong> answer matching requests instead of the network. <code>url</code> is a Playwright glob and may match any origin
+(<code>**/api/flags</code> also matches <code>https://api.example.invalid/api/flags</code>). Give at most one of:</p>
+<ul>
+<li><code>json</code>: a value sent as JSON (<code>content-type: application/json</code>);</li>
+<li><code>body</code>: a string sent as is;</li>
+<li><code>module</code>: a JavaScript file whose default export is <code>async (route, request) =&gt; {}</code> and answers the request
+itself (with <code>route.fulfill</code>, <code>route.continue</code> or <code>route.abort</code>).</li>
+</ul>
+<p><code>status</code> defaults to 200 and <code>headers</code> are added to the response. Use more than one of <code>json</code>, <code>body</code> and <code>module</code>
+and the file fails to load (<code>app.routes[&lt;k&gt;]: use one of json, body, module</code>). A <code>json</code> or <code>body</code> answer gets CORS
+headers for the requesting page (unless <code>headers</code> sets <code>access-control-allow-origin</code>), and CORS preflights are
+answered for every route. A <code>module</code> route builds its own response, so a module that answers an API on another
+origin must set the CORS headers itself (<code>access-control-allow-origin</code>, plus <code>access-control-allow-credentials: true</code> when the app sends cookies), or the browser drops the answer.</p>
+<p>Routes suit feature flags, a third-party widget that would otherwise load slowly, or an API that is not running
+where the video is made.</p>
+</li>
+</ul>
+<h2 id="voice">voice</h2>
+<table>
+<thead>
+<tr>
+<th scope="col">Field</th>
+<th scope="col">Default</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td><code>af_heart</code></td>
+<td>A Kokoro voice.</td>
+</tr>
+<tr>
+<td><code>lang</code></td>
+<td><code>en-us</code></td>
+<td>Language code.</td>
+</tr>
+<tr>
+<td><code>speed</code></td>
+<td><code>0.9</code></td>
+<td>Speaking rate (1.0 is Kokoro's normal speed).</td>
+</tr>
+<tr>
+<td><code>phraseGapSec</code></td>
+<td><code>0.2</code></td>
+<td>Silence between phrases, in seconds.</td>
+</tr>
+<tr>
+<td><code>clauseGapSec</code></td>
+<td><code>0.15</code></td>
+<td>Silence after a phrase that ends at <code>:</code> or <code>;</code>. <code>0</code> gives the v1 rhythm.</td>
+</tr>
+</tbody>
+</table>
+<p>The narration is split into phrases at sentence ends (<code>.</code>, <code>!</code>, <code>?</code>, <code>…</code>), and after <code>:</code> or <code>;</code> when both sides have
+at least 3 words (so &quot;To sign the work agreement: tick the box, …&quot; is two phrases, but a short list such as &quot;speed;
+care&quot; stays whole). A sentence longer than about 140 characters is split again at commas, with <code>phraseGapSec</code> between
+the parts.</p>
+<p>Each word's time comes from forced alignment of the known script against the voice, so every narration word has
+exactly one time, whatever its punctuation, hyphens or numbers (&quot;sign-in&quot;, &quot;$1,500&quot;, &quot;9:30&quot;).</p>
+<h2 id="scenes">scenes</h2>
+<table>
+<thead>
+<tr>
+<th scope="col">Field</th>
+<th scope="col">Required</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>yes</td>
+<td>Unique within the file. Used in file names, errors, the audit, and <code>--only &lt;id&gt;</code>.</td>
+</tr>
+<tr>
+<td><code>kind</code></td>
+<td>yes</td>
+<td><code>app</code> (a recording of the app) or <code>title</code> (a narrated chapter card).</td>
+</tr>
+<tr>
+<td><code>title</code></td>
+<td>no</td>
+<td>The chapter name in <code>chapters.txt</code>. On a <code>title</code> scene, it is the card's text. Defaults to <code>id</code>.</td>
+</tr>
+<tr>
+<td><code>narration</code></td>
+<td>yes</td>
+<td>What the narrator says. Every cue must appear in it.</td>
+</tr>
+<tr>
+<td><code>steps</code></td>
+<td>no</td>
+<td>What happens on screen. See <a href="#steps">steps</a>.</td>
+</tr>
+<tr>
+<td><code>route</code></td>
+<td>no</td>
+<td>The path opened before recording (default <code>/</code>).</td>
+</tr>
+<tr>
+<td><code>viewport</code></td>
+<td>no</td>
+<td><code>desktop</code> (1920×1080, the default) or <code>phone</code> (390×844 in a drawn phone outline).</td>
+</tr>
+<tr>
+<td><code>signedOut</code></td>
+<td>no</td>
+<td><code>true</code> records this scene without signing in.</td>
+</tr>
+<tr>
+<td><code>prewarm</code></td>
+<td>no</td>
+<td>Paths to open, and wait on, before <code>route</code>, so caches are warm when recording starts.</td>
+</tr>
+<tr>
+<td><code>seconds</code></td>
+<td>title scenes: yes</td>
+<td>The card's minimum length. It runs longer if the narration needs it.</td>
+</tr>
+<tr>
+<td><code>zoom</code></td>
+<td>no</td>
+<td>App scenes: <code>{ sel, pad }</code>. The scene starts zoomed on this element (measured before recording starts), until its first <code>zoom</code> or <code>unzoom</code> step, or the scene end. A selector that matches nothing fails the recording (<code>scene &quot;&lt;id&gt;&quot; zoom selector &quot;&lt;sel&gt;&quot; not found</code>). A zoom that grows to hold a declared nav and so becomes the full frame prints a warning (<code>scene &quot;&lt;id&gt;&quot;: zoom on &lt;sel&gt; became the full frame because it holds nav &lt;nav&gt;</code>).</td>
+</tr>
+<tr>
+<td><code>cursor</code></td>
+<td>no</td>
+<td>App scenes: where the cursor starts in this scene (a <a href="#cursor">spot</a>). Overrides <code>cursor.start</code>.</td>
+</tr>
+<tr>
+<td><code>page</code></td>
+<td>no</td>
+<td>Title scenes: an HTML file shown as the card instead of the drawn one (see <a href="#card-pages">card pages</a>). On an app scene it is ignored, with a warning.</td>
+</tr>
+</tbody>
+</table>
+<p>The video is an intro card (3 s by default, music only), then every scene in order, then an outro card (3 s) with
+<code>title</code>. See <a href="#cards">cards</a>.
+A render with <code>--only &lt;id&gt;</code> leaves out the intro and outro cards and writes <code>&lt;output&gt;-&lt;id&gt;.mp4</code> and <code>&lt;output&gt;-&lt;id&gt;.srt</code>.</p>
+<h2 id="steps">steps</h2>
+<pre><code class="language-yaml">- { cue: Sign in, occ: 2, do: click, sel: &quot;#signin&quot; }
+</code></pre>
+<table>
+<thead>
+<tr>
+<th scope="col">Field</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>do</code></td>
+<td><code>click</code>, <code>type</code>, <code>hover</code>, <code>check</code>, <code>scroll</code>, <code>press</code>, <code>zoom</code>, <code>unzoom</code>, <code>ring</code>, <code>park</code>, <code>wait</code> or <code>goto</code>.</td>
+</tr>
+<tr>
+<td><code>cue</code></td>
+<td>A word or phrase from the narration (case-insensitive, whole words). The step lands on its first word.</td>
+</tr>
+<tr>
+<td><code>occ</code></td>
+<td>Which occurrence of the cue, counting from 1 (default 1). Use it when the cue appears more than once: in &quot;To sign in, … and press Sign in&quot;, the button is <code>occ: 2</code>.</td>
+</tr>
+<tr>
+<td><code>offset</code></td>
+<td>Seconds added to the cue time (negative is earlier).</td>
+</tr>
+<tr>
+<td><code>sel</code></td>
+<td>A CSS selector, or a list of them. <code>click</code>, <code>type</code>, <code>hover</code>, <code>zoom</code> and <code>ring</code> need one. With a list, the box is the union of all matches and the pointer aims at the first.</td>
+</tr>
+<tr>
+<td><code>text</code></td>
+<td>What <code>type</code> types, the key <code>press</code> presses (default <code>Enter</code>), or the path <code>goto</code> opens.</td>
+</tr>
+<tr>
+<td><code>ms</code></td>
+<td><code>zoom</code>: how long it holds after easing in (default 2000). <code>ring</code>: how long it holds (default 1200). <code>wait</code>: how long to wait. Any step: the minimum time before the next uncued step.</td>
+</tr>
+<tr>
+<td><code>pad</code></td>
+<td>Pixels added around the box of a <code>zoom</code> or <code>ring</code>.</td>
+</tr>
+<tr>
+<td><code>ring</code></td>
+<td><code>true</code> on another step (for example a <code>click</code>) draws a ring around its target as well.</td>
+</tr>
+<tr>
+<td><code>ringSel</code></td>
+<td><code>click</code>, <code>type</code>, <code>hover</code> and <code>check</code>: ring this element instead of the step's target (a selector or a list). Implies <code>ring: true</code>.</td>
+</tr>
+<tr>
+<td><code>ringMs</code></td>
+<td>The same steps: how long that ring holds (default 1200).</td>
+</tr>
+<tr>
+<td><code>glideMs</code></td>
+<td><code>click</code>, <code>type</code>, <code>hover</code>, <code>check</code> and <code>park</code>: how long the cursor takes to get there (default 520).</td>
+</tr>
+<tr>
+<td><code>by</code></td>
+<td><code>scroll</code>: scroll the window by this many px (positive is down).</td>
+</tr>
+<tr>
+<td><code>to</code></td>
+<td><code>scroll</code>: scroll the window to this <code>scrollY</code>. A scroll step takes one of <code>sel</code>, <code>by</code> and <code>to</code>.</td>
+</tr>
+<tr>
+<td><code>at</code></td>
+<td><code>park</code>: where the cursor goes (a <a href="#cursor">spot</a>). Default <code>cursor.park</code>, or <code>right</code> when that is <code>off</code>.</td>
+</tr>
+<tr>
+<td><code>settle</code></td>
+<td><code>false</code> skips the wait for the page to settle before this step.</td>
+</tr>
+</tbody>
+</table>
+<p>What each action does:</p>
+<ul>
+<li><strong>click, type, hover.</strong> The cursor glides to the element and the action happens on the cue word. <code>type</code> clicks
+the field, then types <code>text</code> one character at a time.
+A <code>hover</code> cannot ring an element that the hover itself reveals (a tooltip, a menu that opens on hover): the ring is
+measured as the cursor arrives, before it appears. Ring it from the next step instead, for example
+<code>{ cue: …, do: ring, sel: &quot;.tooltip&quot; }</code>. A hover that moves what it rings (a row that lifts or grows on hover) is
+fine: a hover's <code>ringSel</code> ring waits for the transitions and animations on those elements and their ancestors to
+finish (at most 0.4 s after the cue) and is drawn round them where they come to rest.</li>
+<li><strong>check.</strong> Ticks a checkbox or switch: the cursor glides to it, and it is clicked only when it is not already
+checked, so a re-render over seeded data that already has it ticked stays the same. The recording fails when it
+is still unchecked afterwards (<code>scene &quot;&lt;id&gt;&quot; step &lt;i&gt;: &lt;sel&gt; is not checked after the click</code>). <code>sel</code> must be the
+element that carries the state: the <code>&lt;input type=checkbox&gt;</code> itself, or the element with <code>role=&quot;switch&quot;</code> (or
+<code>role=&quot;checkbox&quot;</code>) and <code>aria-checked</code>, not a label or a wrapper around it.</li>
+<li><strong>press.</strong> Presses a key (<code>text</code>, default <code>Enter</code>).</li>
+<li><strong>scroll.</strong> With <code>sel</code>, scrolls the element into the middle of the view (in whatever container scrolls it). With
+<code>by</code> or <code>to</code>, scrolls the <strong>window</strong>; with none of them, it scrolls the window down by most of a screen. <code>by</code> and
+<code>to</code> do not move a scroller nested inside the page (a scrolling panel or table): use <code>sel</code> on an element inside it.
+A <code>by</code> or <code>to</code> scroll that leaves the window where it was fails the recording, naming the likely nested scroller.</li>
+<li><strong>zoom.</strong> Eases the view in to the element (0.7 s), holds it for <code>ms</code> (default 2 s) or until the <code>unzoom</code> that
+closes it, then eases out. A zoom ended by an <code>unzoom</code> may not also set <code>ms</code>. The zoomed region keeps the
+frame's 16:9 shape, magnifies at most 2.5×, keeps 24 px of space around the target, stays inside the frame, and
+shows a declared nav whole or not at all. A target too big to need a zoom gets the full frame. When holding a
+declared nav whole is what makes the region the full frame (a large <code>pad</code> reaching a top bar, say), render and
+preview print a warning: <code>scene &quot;&lt;id&gt;&quot; step &lt;i&gt;: zoom on &lt;sel&gt; became the full frame because it holds nav &lt;nav&gt;</code>
+(see <a href="audit.html#crop-fails">troubleshooting</a>).</li>
+<li><strong>unzoom.</strong> Eases the zoom out, starting on its cue (it needs a <code>zoom</code> step before it in the scene, or the scene's
+own <code>zoom</code>, which it then ends). It has no <code>sel</code>.
+Use it to end a zoom on a word (&quot;…comes <strong>first</strong>&quot;) instead of after a fixed <code>ms</code>.</li>
+<li><strong>ring.</strong> Draws a highlight ring around the element.</li>
+<li><strong>park.</strong> Glides the cursor to a <a href="#cursor">spot</a> out of the way (<code>at</code>, default <code>cursor.park</code>). Not allowed on phone
+scenes, which have no cursor (use <code>wait</code> to hold). Parking also happens by itself; see <a href="#cursor">cursor</a>.</li>
+<li><strong>goto.</strong> Opens a path in the app.</li>
+<li><strong>wait.</strong> Pauses.</li>
+</ul>
+<p>The first pointer step of a scene that comes too soon after the scene starts for a glide is <strong>pre-positioned</strong>: the
+cursor is already on its target from the first frame, and the action fires on its cue. On a phone scene, a
+pre-positioned first tap's touch indicator appears at the tap without fading in.</p>
+<p>A step without a <code>cue</code> runs right after the step before it (plus that step's <code>ms</code>). Only steps with a cue are checked
+for sync by the audit, so give a cue to every step a viewer should see happen on a word.</p>
+<p>Before each step the recorder waits for the page to settle: no document, XHR or fetch requests in flight, a stable
+layout, and no visible loading indicator (<code>[aria-busy=true]</code>, <code>[role=progressbar]</code> without a value, <code>.is-loading</code>,
+<code>.skeleton</code> or <code>[data-scenecast-loading]</code>). Open panels (<code>[role=dialog]</code>, <code>[role=menu]</code>, <code>[role=listbox]</code>,
+<code>[aria-modal=true]</code>, <code>[data-scenecast-panel]</code>, or a selector in <code>app.panels</code>) are measured so captions keep clear of them.</p>
+<h2 id="cursor">cursor</h2>
+<table>
+<thead>
+<tr>
+<th scope="col">Field</th>
+<th scope="col">Default</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start</code></td>
+<td><code>center</code></td>
+<td>Where the cursor is when a scene starts. A scene's own <code>cursor</code> overrides it.</td>
+</tr>
+<tr>
+<td><code>park</code></td>
+<td><code>right</code></td>
+<td>Where the cursor parks between distant pointer steps, or <code>off</code>.</td>
+</tr>
+<tr>
+<td><code>parkAfterSec</code></td>
+<td><code>2.5</code></td>
+<td>Park when the next pointer step, or the scene end, is more than this many seconds after a pointer action.</td>
+</tr>
+</tbody>
+</table>
+<p>A <strong>spot</strong> is <code>center</code>, <code>left</code>, <code>right</code> (96 px in from that edge, at 45% of the height, clear of the caption bands) or
+<code>{ x, y }</code> in viewport CSS pixels. The park glide starts 0.6 s after the action, or when it ends (typing done), whichever is
+later, and never runs into the next glide. Only the drawn cursor parks: the real mouse stays where it was, so a menu
+that opens on hover stays open. Set <code>park: off</code> for the v1 behaviour.</p>
+<h2 id="phone-scenes">phone scenes</h2>
+<p>A scene with <code>viewport: phone</code> is recorded at 390×844 with touch input, and drawn in a phone outline on the brand
+stage (<code>brand.background</code>). With <code>phone.align: left</code> (the default) the phone's centre is at 30% of the frame width,
+with captions in a column beside it; <code>right</code> puts it at 70%; <code>center</code> is the v1 layout, with captions below.</p>
+<ul>
+<li>A tap has no glide: a 34 px touch indicator in <code>brand.accent</code> fades in 0.25 s before the tap, taps on the cue, and
+fades out. <code>brand.accent</code> may be any CSS colour; one that is not a colour warns and falls back to <code>#F5C518</code>.</li>
+<li><code>park</code> steps are not allowed (there is no cursor).</li>
+</ul>
+<h2 id="captions">Captions</h2>
+<p>Captions come from the narration, shown as a sequence of rounded boxes of at most 2 lines of about 42 characters.
+A phrase is cut at clause punctuation (<code>, : ; — .</code>) first, never right after a function word (&quot;the&quot;, &quot;to&quot;, &quot;your&quot;,
+…), and never between a possessive and its noun. The same holds for the line break inside a caption: rather than end a
+line on &quot;your&quot;, the caption moves the word down, rebalancing its lines, or adds a caption when its lines would
+otherwise run past 42 characters. Only a phrase that cannot be cut any other way ends a line on a function word.</p>
+<p>Each caption takes the first position that covers nothing it must keep clear (the target, the cursor's destination, a
+ring, an open panel), trying bottom, top, bottom-left, bottom-right, top-left and top-right in that order. During a
+zoom they are placed against what is on screen at that moment. A box that covers 90% or more of the screen as shown
+(a whole-page container, say) is not kept clear, since nothing could avoid it. On a phone scene with the phone at the
+side, captions go in the column <strong>beside</strong> the phone (up to 30 characters a line, 3 lines), and fall back to the bottom
+or top when that column is blocked. The same text is written to <code>&lt;output&gt;.srt</code>.</p>
+<h2 id="output">Output</h2>
+<p><code>scenecast render video.yaml</code> writes, in <code>out/</code> (or <code>--out &lt;dir&gt;</code>):</p>
+<ul>
+<li><code>&lt;output&gt;.mp4</code>: 1920×1080, 30 fps, H.264 with AAC audio, loudness-normalised to −16 LUFS.</li>
+<li><code>&lt;output&gt;.srt</code>: the captions.</li>
+<li><code>chapters.txt</code>: <code>HH:MM:SS Title</code> for each scene.</li>
+<li><code>audit/</code>: <code>audit-table.md</code>, <code>audit.json</code>, <code>contact-sheet.png</code> and <code>frames/</code>. See the <a href="audit.html">audit guide</a>.</li>
+</ul>
+<p>Intermediate files go to <code>work/&lt;id&gt;/</code> (or <code>--work &lt;dir&gt;</code>). Each stage there is reused when its inputs have not
+changed. A render (or preview) locks that folder while it runs (<code>work/&lt;id&gt;/.lock</code>, holding its pid): a second render
+of the same video into the same folder stops at once with <code>work dir &lt;dir&gt; is in use by another render (pid &lt;pid&gt;)</code>.
+The lock is removed when the render ends, fails or is stopped; one left by a process that is gone is taken over.</p>
+<div class="next-page"><p>Render complete? Read every moment.</p><a href="audit.html">Read the audit guide <span aria-hidden="true">→</span></a></div></article></div></main>
+  <footer class="site-footer shell"><span>scenecast <span class="footer-separator" aria-hidden="true">/</span> Free and open source. MIT licensed.</span><a href="https://github.com/ldmallari/scenecast">Source on GitHub <span aria-hidden="true">↗</span></a></footer>
+</body>
+</html>

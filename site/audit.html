@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Understand scenecast audit rows, checks and thresholds, then fix timing, caption, crop and loading failures.">
+  <title>Audit guide · scenecast</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header"><div class="shell header-inner">
+    <a class="wordmark" href="index.html"><span class="brand-mark" aria-hidden="true">sc</span>scenecast</a>
+    <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="docs.html">Documentation</a><a href="audit.html" aria-current="page">Audit</a><a href="https://github.com/ldmallari/scenecast">GitHub <span aria-hidden="true">↗</span></a></nav>
+  </div></header>
+  <main id="main" class="shell" tabindex="-1"><div class="docs-layout"><aside class="toc"><nav aria-label="On this page"><p class="eyebrow">On this page</p><ul><li><a href="#how-the-audit-works">How the audit works</a></li><li><a href="#files">Files</a></li><li><a href="#the-table">Read the table</a></li><li><a href="#checks">Checks and thresholds</a></li><li><a href="#scene-checks">Scene checks</a></li><li><a href="#word-times">Word times</a></li><li><a href="#what-the-audit-does-not-check">Audit limits</a></li><li><a href="#read-a-fail-row">Read a FAIL row</a></li><li><a href="#fix-failures">Fix failures</a></li><li><a href="#sync-fails">Sync FAILs</a></li><li><a href="#the-cue-word-was-not-heard">Missing cue words</a></li><li><a href="#caption-fails">Caption FAILs</a></li><li><a href="#crop-fails">Crop FAILs</a></li><li><a href="#narration-warns">Narration WARNs</a></li><li><a href="#blank-frame-fails">Blank frame FAILs</a></li><li><a href="#the-cursor">The cursor</a></li><li><a href="#steps-that-fail-while-recording">Recording failures</a></li><li><a href="#loading-fails">Loading FAILs</a></li></ul></nav></aside><article class="prose"><header class="page-heading"><p class="eyebrow">Audit guide</p><h1>Check every moment.</h1><p class="lead">A render is only the start. The audit checks what actually made it into the finished video.</p></header><section aria-labelledby="how-the-audit-works"><h2 id="how-the-audit-works">How the audit works</h2><p>After every render, scenecast audits the finished video moment by moment and writes the result to <code>out/audit/</code>.
+<code>scenecast render</code> exits with code 1 when any check FAILs, so a script or CI job can stop on a bad video. A WARN never
+fails the render. <code>--no-audit</code> skips the audit and removes any older <code>out/audit/</code>, so a stale audit is never left next
+to a new video.</p>
+<p>The audit does not trust the plan. It transcribes the final mix with faster-whisper to find when each cue word is
+really heard, and it reads the boxes the recorder measured in the live page.</p>
+</section><div class="callout"><strong>Read the entire result.</strong><p>Read every row of <code>out/audit/audit-table.md</code> and every tile of <code>out/audit/contact-sheet.png</code>. PASS, WARN and FAIL are written as text as well as shown in colour.</p></div><h2 id="files">Files</h2>
+<table>
+<thead>
+<tr>
+<th scope="col">File</th>
+<th scope="col">What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>audit-table.md</code></td>
+<td>The verdict, the loudness and blank frames, one row per cued step, the &quot;Scene checks&quot; table, and the narration diff. Read this first.</td>
+</tr>
+<tr>
+<td><code>audit.json</code></td>
+<td>The same data, for scripts: <code>moments</code> are the table's rows, <code>scenes</code> the scene checks.</td>
+</tr>
+<tr>
+<td><code>contact-sheet.png</code></td>
+<td>One thumbnail per zoom and ring moment, framed in green (PASS), amber (WARN) or red (FAIL).</td>
+</tr>
+<tr>
+<td><code>frames/</code></td>
+<td>Those frames at full size, named <code>&lt;scene&gt;-&lt;cue&gt;.png</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="the-table">The table</h2>
+<p>Each cued step is one row:</p>
+<table>
+<thead>
+<tr>
+<th scope="col">Column</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>scene, cue</td>
+<td>The step.</td>
+</tr>
+<tr>
+<td>word time</td>
+<td>When the cue word is heard in the final video (seconds), and where that time came from: <code>forced</code> (forced alignment of the script against the mix), <code>onset</code> (the phrase's first word, from where the voice starts on its clean clip), <code>free</code> (the free transcript, when alignment fell back for that phrase) or <code>plan</code> (not heard: the planned time was used).</td>
+</tr>
+<tr>
+<td>action time</td>
+<td>When the action happens in the final video.</td>
+</tr>
+<tr>
+<td>gap</td>
+<td>action time minus (word time + the step's <code>offset</code>).</td>
+</tr>
+<tr>
+<td>target label</td>
+<td>The step's selector.</td>
+</tr>
+<tr>
+<td>caption side</td>
+<td>Where the caption was at the action: <code>bottom</code>, <code>top</code>, <code>bottom-left</code>, <code>bottom-right</code>, <code>top-left</code>, <code>top-right</code>, <code>beside</code> (next to the phone) or <code>none</code>.</td>
+</tr>
+<tr>
+<td>checks</td>
+<td>Every check and its result.</td>
+</tr>
+<tr>
+<td>verdict</td>
+<td>The worst check: PASS, WARN or FAIL.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="checks">Checks</h2>
+<table class="check-table">
+<thead>
+<tr>
+<th scope="col">Check</th>
+<th scope="col">FAIL when</th>
+<th scope="col">Typical fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>sync</strong></td>
+<td>The action is more than 0.30 s from its cue word, or retiming cut it out.</td>
+<td>Move the cue to the word that names the action; use <code>offset</code> for a deliberate lead or lag. If retiming cut the action, reduce the work before it or allow more narration time. Otherwise, compare the word time and narration diff. See <a href="#sync-fails">sync fixes</a>.</td>
+</tr>
+<tr>
+<td><strong>target</strong></td>
+<td>The ring or zoom box does not contain the element's box (measured at the ring's peak), or no target was logged.</td>
+<td>Point <code>sel</code> at the element the narration names; add <code>pad</code>; make sure the element is still on screen when the ring peaks.</td>
+</tr>
+<tr>
+<td><strong>captions</strong></td>
+<td>A caption overlaps the target, the cursor's destination, a ring or an open panel by more than 0 px, judged on screen, including during a zoom. A box that covers 90% or more of the screen as shown (a full-frame target, such as a page-wide container) is not protected: no caption could avoid it.</td>
+<td>Usually automatic. If both the top and the bottom are blocked, zoom less, move the target, or split the step across a shorter phrase.</td>
+</tr>
+<tr>
+<td><strong>crop</strong></td>
+<td>The zoom leaves the frame, the target is closer than 24 px to a side of the zoom that is not on the frame edge, or the zoom cuts a nav partway. A side within 0.5 px of the frame edge is exempt (nothing lies beyond it), and on phone scenes so is a side at or past the phone screen's edge.</td>
+<td>Zoom a slightly larger element; declare the app's nav bars in <code>app.nav</code>.</td>
+</tr>
+<tr>
+<td><strong>loading</strong></td>
+<td>A spinner or skeleton was visible just before the action. WARN when the page had not settled before the step (the settle wait timed out).</td>
+<td>Seed the data first, add <code>prewarm</code> routes, or add a cue-less <code>wait</code> step before it.</td>
+</tr>
+<tr>
+<td><strong>plan</strong></td>
+<td>The plan has no zoom where a zoom step expected one, no ring box was logged for a ring step, an <code>unzoom</code> has no zoom ending within 0.5 s of it, or a scene that starts zoomed has no matching zoom.</td>
+<td>Re-render with <code>--fresh</code>; if it persists, report it.</td>
+</tr>
+<tr>
+<td><strong>word</strong></td>
+<td>(WARN) The cue word was not found in the transcript, so the planned time was used. (A misheard word is already matched by its position; this means nothing was heard there.)</td>
+<td>See <a href="audit.html#the-cue-word-was-not-heard">troubleshooting</a>: for a name, add it to <code>audit.allowList</code>; otherwise choose a more distinct cue word, or listen to how the voice says it.</td>
+</tr>
+</tbody>
+</table>
+<p>Three checks cover the whole video:</p>
+<table>
+<thead>
+<tr>
+<th scope="col">Check</th>
+<th scope="col">FAIL when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>loudness</strong></td>
+<td>The mix is outside −16 ±1 LUFS, or its true peak is above −1.5 dBTP.</td>
+</tr>
+<tr>
+<td><strong>blank frames</strong></td>
+<td>Any frame inside an app scene is near-uniform, such as a blank page between two navigations. Only the app's screen counts (the phone screen on phone scenes), captions are left out, and cards and the dissolves into and out of them are skipped. The times are listed.</td>
+</tr>
+<tr>
+<td><strong>narration</strong></td>
+<td>Never FAILs. A WARN shows a diff (<code>-&quot;expected&quot; +&quot;heard&quot;</code>) when the transcript differs from the script after normalising numbers, case and punctuation. A word or name in <code>audit.allowList</code> may be heard differently, including as one more word (for example &quot;worklist&quot; heard as &quot;work list&quot;), without a WARN. An allow-listed cue that recognition leaves out entirely is placed by position: at the gap the heard words around it leave.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="unzoom-rows">Unzoom rows</h3>
+<p>An <code>unzoom</code> step gets a row like any cued step. Its action time is the end of the zoom it closes (the nearest zoom
+end within 0.5 s of it); its target label is empty, and it has sync, captions and loading checks, but no target or
+crop check (there is nothing to aim at).</p>
+<h3 id="scene-checks">Scene checks</h3>
+<p>The &quot;Scene checks&quot; table under the rows has one row per scene that needs checks of its own:</p>
+<ul>
+<li><strong>A scene that starts zoomed</strong> (<code>zoom</code> on the scene): a target check and a crop check for that initial zoom.</li>
+<li><strong>A scene without cued steps</strong> (a chapter card, for example): a captions check.</li>
+</ul>
+<h3 id="word-times">Word times</h3>
+<p>The free transcript decides whether a cue word was heard at all, and gives the narration diff. A heard cue takes its
+time from forced alignment of the known script against the final mix, which returns one time for every script word
+(none missed or merged). The first word of a phrase after a silence takes the voice's own onset instead. A phrase the
+aligner cannot time sensibly falls back to the transcript for that phrase only, and its words show <code>free</code>. A cue that
+was not heard WARNs with the plan time, as before.</p>
+<h2 id="read-every-moment">Read every moment</h2>
+<p>Read every row of <code>audit-table.md</code> and every tile of <code>contact-sheet.png</code>, not a sample. A video can pass on most
+moments and still show a caption over a button, or a ring around the wrong element, on one. The audit is there so that
+nobody has to watch the whole video frame by frame, but only if all of it is read.</p>
+<p>The demo video in <code>examples/demo-app</code> passes with every cued moment at PASS: over five cold renders, the median gap
+between word and action was 0.007 to 0.011 s and the largest 0.030 s.</p>
+<h2 id="what-the-audit-does-not-check">What the audit does not check</h2>
+<ul>
+<li>A caption over the target of an <strong>earlier</strong> step that is still on screen. Each row protects its own step's target
+and its open panels; the previous step's element is not protected once a new step has started. Keep the zoom pointed
+at what the narration names. See <a href="audit.html#fix-failures">troubleshooting</a>.</li>
+<li>Whether the narration is a good script. It checks that the words were spoken, not that they make sense.</li>
+</ul>
+<section aria-labelledby="read-a-fail-row"><h2 id="read-a-fail-row">Read a FAIL row</h2><ol><li>Find the <strong>scene, cue</strong> and the failing check in <code>audit-table.md</code>.</li><li>Compare <strong>word time</strong>, <strong>action time</strong> and <strong>gap</strong>. A missing action time can mean “cut by retime”; <code>plan</code> means the cue was not heard.</li><li>Inspect the corresponding contact-sheet tile and the full-size image in <code>frames/</code>. Read the narration diff for missing or misheard words.</li><li>Apply the documented fix below. Use <code>--only &lt;sceneId&gt;</code> while working on one scene; use <code>--fresh</code> after changing the app itself.</li><li>Render the whole video again with the audit enabled and read every row and tile.</li></ol></section><h2 id="fix-failures">Fix failures</h2><h2 id="sync-fails">Sync FAILs</h2>
+<p>Retime places every recorded action on its cue word, so a slow page shows up as trimmed waiting, not as a late
+action. A sync FAIL has one of two causes:</p>
+<p><strong>The action time is <code>—</code> (&quot;cut by retime&quot;).</strong> The action fell inside a stretch retime removed. This happens when the
+take is far behind the voice and there is no quiet time to trim. Give the page less to do before the step (seed the
+data with <code>app.seed</code>, open slow routes in <code>prewarm</code>), or give the narration more time before the cue.</p>
+<p><strong>The gap is large but the action time is set.</strong> Speech recognition placed the cue word away from where the voice
+says it. Check the word time column against the narration diff; if the word was misheard or dropped, see the next
+item.</p>
+<h3 id="the-cue-word-was-not-heard">The cue word was not heard</h3>
+<p><strong>The cue word was not heard (<code>(plan)</code> in the word time column).</strong> A word recognition merely
+misheard is already matched by its position, so this means nothing was heard where the cue should be. The narration diff
+at the bottom of <code>audit-table.md</code> shows what was heard around it. Then:</p>
+<ul>
+<li><strong>A name or product word</strong> (recognition often drops or merges these): add it to <code>audit.allowList</code>. An allow-listed cue
+that is left out is placed by position, in the gap the heard words around it leave.</li>
+<li><strong>An ordinary word</strong>: choose a more distinct cue word for the step, one that is clearly spoken and not swallowed by
+its neighbours (for example &quot;press <strong>Sign</strong> in the corner&quot; rather than a short word at the end of a fast phrase).</li>
+<li><strong>Check how the voice says it.</strong> Listen to the scene's voice in <code>work/&lt;id&gt;/voice/&lt;scene&gt;/voice.wav</code>. If Kokoro
+mispronounces or rushes the word, respell it in the narration (for example spell out an abbreviation).</li>
+</ul>
+<p><strong>A cue at the start of a scene.</strong> A pointer step cued on one of the first words has no time to glide from the
+scene's start position. The first pointer step of a scene is then pre-positioned: the cursor is on its target from
+the first frame and the action fires on the cue, so it is not late. Only the first one is: a second early step glides
+faster from the first to still land on its word. If the cursor appearing on the target looks abrupt, put the cue a
+few words later, or set the scene's <code>cursor</code> near the target.</p>
+<p><strong>The cue is ambiguous.</strong> A cue matches whole words, case-insensitively. When the cue appears more than once, set
+<code>occ</code>. In &quot;To sign in, type your email, and press Sign in&quot;, the button is <code>{ cue: Sign in, occ: 2 }</code>.</p>
+<h2 id="caption-fails">Caption FAILs</h2>
+<p><strong>A caption covers the target.</strong> Each caption tries bottom, top, then the four corners, and takes the first position
+that covers nothing it must keep clear. When every position covers something, it takes the one that covers least, and
+the captions check in the table gives the reason, <code>no free position; &lt;side&gt; overlaps least</code> (or <code>all equal, &lt;side&gt; kept</code>). Then zoom to
+a smaller element, close a panel the step does not need, or move the step to a phrase when less is on screen. Point
+the zoom at what the narration names: a zoom on a whole page leaves no room anywhere.</p>
+<p><strong>A caption covers a panel the audit does not know.</strong> Built-in panels are dialogs, menus, listboxes and modals. Add
+the app's own pop-overs and drawers to <code>app.panels</code> (CSS selectors), and captions keep clear of them too.</p>
+<p><strong>A caption covers the previous step's target, and the audit passes.</strong> The audit protects each step's own target,
+not an earlier one that is still on screen. Keep the zoom pointed at what the narration names, so the thing being
+talked about is the thing being protected. Watch for this on the contact sheet.</p>
+<h2 id="crop-fails">Crop FAILs</h2>
+<p><strong>The zoom cuts the nav.</strong> Declare the app's navigation bars in <code>app.nav</code>:</p>
+<pre><code class="language-yaml">app:
+  nav:
+    - { selector: aside.sidebar, edge: left }
+    - { selector: header.topbar, edge: top }
+</code></pre>
+<p>A zoom then shows each declared nav whole or leaves it out.</p>
+<p><strong><code>zoom on &lt;sel&gt; became the full frame because it holds nav &lt;nav&gt;</code></strong> (a warning from render or preview), often followed
+by a target FAIL such as <code>zoom 0,0 1920x1080 does not contain target</code>. The zoom's region (the element plus <code>pad</code>)
+reached a declared nav, so it grew to show that nav whole, and that made it the whole frame: no zoom at all. Use a
+smaller <code>pad</code> (on the scene's <code>zoom</code> or the step), or zoom on an element that is clear of the nav.</p>
+<p><strong>The target is too close to the zoom's edge.</strong> Zoom a slightly larger element (its card or section), so the zoomed
+region has room around it inside the frame.</p>
+<h2 id="narration-warns">Narration WARNs</h2>
+<p>A WARN such as <code>-&quot;worklist&quot; +&quot;work list&quot;</code> means speech recognition heard the word differently. If the voice is fine,
+add the word to the scene file:</p>
+<pre><code class="language-yaml">audit:
+  allowList: [worklist]
+</code></pre>
+<p>A narration WARN never fails the render, but read it: it is also how you catch a word that was mispronounced or
+dropped. In the demo, the first word after the silent intro card (&quot;Welcome&quot;) is sometimes not heard; that WARN is
+known.</p>
+<h2 id="blank-frame-fails">Blank frame FAILs</h2>
+<p>A page that goes blank while it navigates is frozen over automatically: when recording, scenecast finds near-uniform
+frames in each take and replaces them with the last good frame before them, in the take itself. That frame is the one
+on screen at the action that started the navigation (a click on Sign in, say), so the action stays visible, and the
+blank frames right after it never reach the video. The render log says <code>record/&lt;scene&gt;: 1 blank frame run(s) in the take; froze 1 on the last good frame</code>. A blank-frame FAIL means a near-uniform frame is left in an app scene. The
+times in the audit say where to look.</p>
+<ul>
+<li><strong>The screen really is near-uniform.</strong> A zoom on a plain area, or a page that is mostly one colour, measures as
+blank (a false FAIL for what the viewer sees, but a dull shot). Zoom to a region with content (text, controls), or
+make the step show something.</li>
+<li><strong>Anything else</strong> is unexpected: blank runs in a take are frozen over, including where the video holds a frame while
+it waits for the next action. Re-render with <code>--fresh</code>, and report it if it persists.</li>
+</ul>
+<h2 id="the-cursor">The cursor</h2>
+<p><strong>The cursor sits on an input, or over what the narration is about.</strong> After a click or typing, the cursor stays
+where it acted. When the next pointer step (or the scene end) is more than <code>cursor.parkAfterSec</code> (2.5 s) away, it
+parks by itself at <code>cursor.park</code> (96 px in from the right edge by default). To move it sooner, or somewhere else, add
+a <code>{ do: park }</code> step (with <code>at</code> for the spot); to start a scene with the cursor out of the way, set the scene's
+<code>cursor</code> (for example <code>cursor: right</code>). <code>park</code> is not allowed on phone scenes: there is no cursor, and the touch
+indicator fades by itself (use <code>wait</code> to hold).</p>
+<p><strong>A hover step cannot ring what it reveals.</strong> The ring is measured as the cursor arrives, before a tooltip or hover
+menu appears. Ring the revealed element with a separate <code>ring</code> step cued a word or two later. A hover that only moves
+what it rings (a row that lifts 2 px on hover) needs nothing: its <code>ringSel</code> ring waits up to 0.4 s for the hover's
+transitions to finish and is drawn where the element comes to rest. A transition longer than that can still leave
+the ring off by the rest of the movement.</p>
+<h2 id="steps-that-fail-while-recording">Steps that fail while recording</h2>
+<ul>
+<li><strong><code>&lt;sel&gt; is not checked after the click</code></strong> (a <code>check</code> step). <code>sel</code> must be the element that holds the state: the
+<code>&lt;input type=checkbox&gt;</code> itself, or the element with <code>role=&quot;switch&quot;</code> and <code>aria-checked</code>, not its label or a wrapper.</li>
+<li><strong><code>the page did not scroll</code></strong> (a <code>scroll</code> step with <code>by</code> or <code>to</code>). <code>by</code> and <code>to</code> scroll the window. Most app
+layouts scroll inside a container (a main panel, a table), so the window does not move. Use <code>scroll</code> with <code>sel</code> on
+an element inside that container: it is scrolled into the middle of the view, whichever element scrolls.</li>
+<li><strong><code>zoom selector &quot;&lt;sel&gt;&quot; not found</code></strong> (a scene's <code>zoom</code>). The element is measured before recording starts, on
+<code>route</code>: it must be there without any step.</li>
+<li><strong><code>brand.accent &quot;…&quot; is not a CSS colour; the touch indicator uses #F5C518</code></strong> (a warning on a phone scene). The
+render goes on with the default yellow; give <code>brand.accent</code> a CSS colour (<code>#rrggbb</code>, a name, <code>rgb(…)</code>) to use yours.</li>
+</ul>
+<h2 id="loading-fails">Loading FAILs</h2>
+<p>A spinner or skeleton was visible just before the action. scenecast treats <code>[aria-busy=true]</code>, a
+<code>[role=progressbar]</code> without a value, <code>.is-loading</code>, <code>.skeleton</code> and <code>[data-scenecast-loading]</code> as loading. Seed the
+data, prewarm the route, or wait. A spinner that the action itself brings up is its result and does not fail.</p>
+<div class="next-page"><p>Keep the scene file as the source of truth.</p><a href="docs.html#scene-file-reference">Back to the scene reference <span aria-hidden="true">→</span></a></div></article></div></main>
+  <footer class="site-footer shell"><span>scenecast <span class="footer-separator" aria-hidden="true">/</span> Free and open source. MIT licensed.</span><a href="https://github.com/ldmallari/scenecast">Source on GitHub <span aria-hidden="true">↗</span></a></footer>
+</body>
+</html>

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Turn a short scene file into a narrated walkthrough of your real web app, with actions timed to words and an audit of the finished video.">
+  <title>Narrated app walkthroughs · scenecast</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header"><div class="shell header-inner">
+    <a class="wordmark" href="index.html"><span class="brand-mark" aria-hidden="true">sc</span>scenecast</a>
+    <nav aria-label="Main navigation"><a href="index.html" aria-current="page">Overview</a><a href="docs.html">Documentation</a><a href="audit.html">Audit</a><a href="https://github.com/ldmallari/scenecast">GitHub <span aria-hidden="true">↗</span></a></nav>
+  </div></header>
+  <main id="main" class="shell" tabindex="-1"><section class="hero" aria-labelledby="pitch">
+  <p class="eyebrow">Narrated walkthroughs · Rendered locally · Audited moment by moment</p>
+  <h1 id="pitch">Your app.<br>Your script.<br><span>On cue.</span></h1>
+  <p class="lead">scenecast turns a short scene file into a narrated walkthrough video of your real web app.</p>
+  <p class="hero-note">Write the narration. Name the cue words. Record the real app, with every click and keystroke timed to the voice.</p>
+  <div class="actions"><a class="button primary" href="#quick-start">Get started <span aria-hidden="true">→</span></a><a class="button" href="docs.html#scene-file-reference">Read the scene reference</a></div>
+  <p class="small muted">Free and open source. Runs on your machine. No accounts or API keys.</p>
+</section>
+<details class="demo">
+  <summary><span>From scene file to finished video</span><span class="small">Show / hide animation</span></summary>
+  <figure><img src="assets/demo.gif" width="960" height="540" alt="A scenecast walkthrough zooms into a worklist, eases out on a cue word, then ticks, fills in and signs a form while captions follow the narration."><figcaption>Part of the included demo, rendered from <a href="https://github.com/ldmallari/scenecast/blob/main/examples/demo-app/video.yaml">examples/demo-app/video.yaml</a>. This GIF has no sound; the video is narrated. Use the control above to hide the animation.</figcaption></figure>
+</details>
+<section class="section" aria-labelledby="different"><div class="section-heading"><p class="eyebrow">The details that matter</p><h2 id="different">What makes it different</h2></div>
+<div class="features">
+  <section><span class="feature-number" aria-hidden="true">01</span><h3>Actions land on their words.</h3><p>Each step names a cue word in the narration. scenecast uses word timings to land the action on that word, holding or trimming frames to absorb slow pages.</p></section>
+  <section><span class="feature-number" aria-hidden="true">02</span><h3>Scene files you can re-record.</h3><p>Narration, selectors, seed data and sign-in live in YAML. When the app changes, render again. There is no timeline to edit by hand.</p></section>
+  <section><span class="feature-number" aria-hidden="true">03</span><h3>An audit of every moment.</h3><p>The finished video is checked for timing, targets, captions, cropping, loading and loudness. You get a table, a contact sheet and an exit code.</p><a href="audit.html">Understand the audit <span aria-hidden="true">→</span></a></section>
+  <section><span class="feature-number" aria-hidden="true">04</span><h3>Captions that know the UI.</h3><p>Captions move clear of the target, cursor and open panels, including during zooms. On phone scenes, they can sit beside the phone.</p></section>
+  <section><span class="feature-number" aria-hidden="true">05</span><h3>Made for real apps.</h3><p>Use routes for feature flags, init scripts before the app loads, saved sessions for sign-in and touch input for phone scenes.</p></section>
+  <section><span class="feature-number" aria-hidden="true">06</span><h3>Local and free.</h3><p>Voice by Kokoro, recognition by faster-whisper, recording by Playwright and composition by Revideo. All dependencies use open-source licences.</p><a href="https://github.com/ldmallari/scenecast/blob/main/THIRD_PARTY.md">Third-party licences <span aria-hidden="true">↗</span></a></section>
+</div></section>
+<section id="quick-start" class="section install-section" aria-labelledby="install"><div class="section-heading"><p class="eyebrow">Start with the included demo</p><h2 id="install">Install + quick start</h2></div><p>Use macOS or Linux (WSL works), <strong>Node.js 24</strong> and <strong>pnpm 10</strong>. Allow about 2 GB for the models, Python environment and Chromium.</p><p>Run these commands in a clone of the repository. <code>doctor</code> sets up the local toolchain and models; the first run needs a network connection.</p><pre><code class="language-sh"># in a clone of this repository
+pnpm install
+pnpm -C packages/cli exec playwright install chromium
+node packages/cli/bin/scenecast.js doctor
+
+# start the demo app (an invented product, included in the repo), then render its video
+node examples/demo-app/server.mjs &amp;
+node packages/cli/bin/scenecast.js render examples/demo-app/video.yaml</code></pre><p>The render writes <code>out/demo.mp4</code>, <code>out/demo.srt</code>, <code>out/chapters.txt</code> and <code>out/audit/</code>. Open <code>out/audit/audit-table.md</code> to see every moment checked.</p><p>To make your own video, copy <code>examples/demo-app/video.yaml</code>, point <code>app.baseUrl</code> at your app, then write your narration and steps.</p><a href="docs.html">Continue to the documentation <span aria-hidden="true">→</span></a></section>
+<section class="section" aria-labelledby="how-it-works"><div class="section-heading"><p class="eyebrow">One scene file, end to end</p><h2 id="how-it-works">How it works</h2></div>
+<ol class="process">
+<li><h3>Describe the scenes.</h3><p>Set the app URL, narration and selectors. Give each visible action a cue word.</p></li>
+<li><h3>Generate the voice.</h3><p>Kokoro speaks the script locally. Word timings place each cue in the narration.</p></li>
+<li><h3>Record the app.</h3><p>Playwright drives Chromium through the steps. The recording is retimed to keep actions on their words.</p></li>
+<li><h3>Compose the video.</h3><p>Revideo adds zooms, rings, captions, cards and music, with a loudness-normalised mix.</p></li>
+<li><h3>Audit the result.</h3><p>Speech recognition checks the final mix. Read every audit row and contact-sheet tile, fix failures and render again.</p></li>
+</ol></section>
+<div class="next-page"><div><p class="eyebrow">Make your own walkthrough</p><p>Start with a scene. Refine it with the audit.</p></div><a class="button" href="docs.html">Open the documentation <span aria-hidden="true">→</span></a></div></main>
+  <footer class="site-footer shell"><span>scenecast <span class="footer-separator" aria-hidden="true">/</span> Free and open source. MIT licensed.</span><a href="https://github.com/ldmallari/scenecast">Source on GitHub <span aria-hidden="true">↗</span></a></footer>
+</body>
+</html>

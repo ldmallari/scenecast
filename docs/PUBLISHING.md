@@ -1,5 +1,7 @@
 # Before publishing
 
+GitHub Pages: after making the repository public, enable Pages with source GitHub Actions; the pages workflow publishes site/.
+
 A checklist for the maintainer. Work through it before the repository is made public. Each item is open until it is
 ticked.
 

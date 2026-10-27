@@ -1,5 +1,7 @@
 # scenecast
 
+Website: https://ldmallari.github.io/scenecast/
+
 scenecast turns a short scene file into a narrated walkthrough video of your real web app. It records the app in
 Chromium, voices your script with a local text-to-speech model, makes every click and keystroke land on the word that
 names it, and adds zoom, highlight rings, captions, title cards and music. Then it audits the finished video moment
