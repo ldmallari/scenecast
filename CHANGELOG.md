@@ -23,6 +23,10 @@ All notable changes to scenecast are listed here. The format follows
 
 ### Fixed
 
+- Captions no longer break between a hyphenated word and its noun ("your to-do / list"), or leave a clause's last
+  function word alone at the start of a line ("the team asked / for, Open"); a function word that ends a clause may end a
+  line.
+
 - The audit's zoom target check leaves out the part of a zoom's `pad` that runs off the frame, so a large pad on an
   element near the edge no longer FAILs with "zoom does not contain target".
 

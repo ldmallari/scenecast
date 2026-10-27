@@ -553,6 +553,30 @@ describe('caption breaks: possessives, abbreviations and the fallback reason', (
   });
 });
 
+describe('caption breaks: compounds and one-word clause tails (v1.2)', () => {
+  it('never breaks between a hyphenated compound and the word after it ("to-do / list")', () => {
+    for (const text of [
+      'Everything you add here goes to your to-do list, where you can tick it off later.',
+      'Then the widget keeps every item from your to-do list in view while you work today.',
+    ]) {
+      const lines = splitCaption(text).flat();
+      expect(lines.join(' ')).toBe(text);
+      for (const l of lines) expect(l, text).not.toMatch(/to-do$/);
+    }
+  });
+
+  it('a function word that ends a clause ends its line ("asked for, / …", not "asked / for, …")', () => {
+    for (const text of [
+      'This is the request your manager asked for, "Open" shows it with every note.',
+      'Then pick the item that the team asked for, "Approve" sends it on to the finance team.',
+    ]) {
+      const lines = splitCaption(text).flat();
+      expect(lines.join(' ')).toBe(text);
+      for (const l of lines) expect(l, text).not.toMatch(/^for,/);
+    }
+  });
+});
+
 describe('fix round 1: zoomed phones, quoted labels, more abbreviations', () => {
   it('a zoom on a phone scene rules out the column while the phone is magnified under it', () => {
     // A left phone zoomed on a target at the middle of its screen: magnified, the phone reaches under the column.

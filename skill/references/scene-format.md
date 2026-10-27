@@ -416,7 +416,9 @@ Captions come from the narration, shown as a sequence of rounded boxes of at mos
 A phrase is cut at clause punctuation (`, : ; — .`) first, never right after a function word ("the", "to", "your",
 …), and never between a possessive and its noun. The same holds for the line break inside a caption: rather than end a
 line on "your", the caption moves the word down, rebalancing its lines, or adds a caption when its lines would
-otherwise run past 42 characters. Only a phrase that cannot be cut any other way ends a line on a function word.
+otherwise run past 42 characters. Two more breaks are treated the same way: between a hyphenated word and the word it
+leads into ("to-do / list"), and before a function word that ends a clause ("asked / for, Open"); a function word
+that ends a clause may end a line ("asked for, / Open"). Only a phrase that cannot be cut any other way breaks there.
 
 Each caption takes the first position that covers nothing it must keep clear (the target, the cursor's destination, a
 ring, an open panel), trying bottom, top, bottom-left, bottom-right, top-left and top-right in that order. During a

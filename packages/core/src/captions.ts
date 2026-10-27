@@ -242,12 +242,36 @@ const POSSESSIVE = /^(?!['‘"“]).*\p{L}(?:['’]s|s['’])$/u;
  */
 const ABBREVIATION = /^[(\["“‘]*(?:e\.g|i\.e|etc|vs|cf|approx|incl|a\.m|p\.m|co|inc|ltd|no|st|jr|sr|mr|mrs|ms|dr)\.[)\]"”’]*,?$/iu;
 
-/** The cost of breaking after `word`. */
+const COMPOUND = /\p{L}-\p{L}/u;
+const isFunctionWord = (word: string) => FUNCTION_WORDS.has(word.toLowerCase().replace(/[^a-z]/g, ''));
+
+/**
+ * The cost of breaking after `word`. A word that ends a clause is a free break even when it is a function word
+ * ("…asked for, / Open"): it ends its clause, so a line may end on it.
+ */
 function breakCost(word: string): number {
-  if (FUNCTION_WORDS.has(word.toLowerCase().replace(/[^a-z]/g, ''))) return FUNCTION_WORD_BREAK;
-  if (POSSESSIVE.test(word)) return FUNCTION_WORD_BREAK;
   if (ABBREVIATION.test(word)) return MID_CLAUSE_BREAK;
-  return CLAUSE_END.test(word) ? 0 : MID_CLAUSE_BREAK;
+  if (CLAUSE_END.test(word)) return 0;
+  if (isFunctionWord(word)) return FUNCTION_WORD_BREAK;
+  if (POSSESSIVE.test(word)) return FUNCTION_WORD_BREAK;
+  return MID_CLAUSE_BREAK;
+}
+
+/**
+ * The cost of breaking before `words[i]`: `breakCost` of the word before, and two breaks that cost like ending on a
+ * function word, because both split what reads as one unit:
+ * - after a hyphenated compound that leads into its noun ("your to-do / list"), unless the next word is a function
+ *   word ("sign-in / to");
+ * - before a function word that ends a clause the line before does not end ("the team asked / for, Open"): it leaves the
+ *   clause's last word alone at the start of the line.
+ */
+function breakCostAt(words: string[], i: number): number {
+  const [prev, next] = [words[i - 1]!, words[i]];
+  const cost = breakCost(prev);
+  if (next === undefined || CLAUSE_END.test(prev) || ABBREVIATION.test(prev)) return cost;
+  if (COMPOUND.test(prev) && !isFunctionWord(next)) return FUNCTION_WORD_BREAK;
+  if (CLAUSE_END.test(next) && isFunctionWord(next)) return Math.max(cost, FUNCTION_WORD_BREAK);
+  return cost;
 }
 
 /**
@@ -266,7 +290,7 @@ function cheapestCut(words: string[], parts: number, piece: (i: number, j: numbe
       for (let i = k - 1; i < j; i++) {
         const before = best[k - 1]![i]!;
         if (before === Infinity) continue;
-        const c = before + piece(i, j) + (i > 0 ? breakCost(words[i - 1]!) : 0);
+        const c = before + piece(i, j) + (i > 0 ? breakCostAt(words, i) : 0);
         if (c < best[k]![j]!) {
           best[k]![j] = c;
           from[k]![j] = i;
@@ -327,7 +351,7 @@ function cueLines(words: string[], layout: CaptionLayout): { lines: string[]; fo
     return l > charsPerLine ? Infinity : imbalance(l, mean, charsPerLine);
   });
   if (!ranges) return null;
-  const forced = ranges.reduce((a, [i]) => a + (i > 0 && breakCost(words[i - 1]!) === FUNCTION_WORD_BREAK ? FUNCTION_WORD_BREAK : 0), 0);
+  const forced = ranges.reduce((a, [i]) => a + (i > 0 && breakCostAt(words, i) >= FUNCTION_WORD_BREAK ? FUNCTION_WORD_BREAK : 0), 0);
   return { lines: ranges.map(([i, j]) => words.slice(i, j).join(' ')), forced };
 }
 
