@@ -215,7 +215,9 @@ interface OverlayApi {
   moveTo(x: number, y: number, endAt: number): void;
   ripple(x: number, y: number): void;
   /** `els`: the ringed elements; the ring fades early once one of them is gone or hidden (and nothing took its place). */
-  ring(box: Box, holdMs: number, els?: Element[]): void;
+  ring(box: Box, holdMs: number, els?: Element[]): number;
+  /** Hands ring `id` the elements it rings, so it fades early once one of them is gone. */
+  watchRing(id: number, els: Element[]): void;
   ringsGone(): Promise<void>;
   flash(minMs: number): Promise<number>;
 }
@@ -794,10 +796,13 @@ async function runTake(
     r: { at: number; box: Box; hold: number; m: Measured; sels: string[]; index: number; atPeak: (b: Box | undefined) => void },
   ) => {
     const { at, box, hold, m, sels, index, atPeak } = r;
-    // The overlay is handed the ringed elements, so a ring whose element goes (a drawer closing) fades with it.
+    // Drawn now; then the overlay is handed the ringed elements, so a ring whose element goes (a drawer closing) fades
+    // with it. (Fetching them first would draw the ring a round trip late.)
     quiet(
-      Promise.all(m.els.map((el) => el.elementHandle({ timeout: 200 }).catch(() => null))).then((els) =>
-        page.evaluate(([b, ms, els]) => window.__scenecast.ring(b, ms, els.filter((e) => e !== null) as Element[]), [box, hold, els] as const),
+      page.evaluate(([b, ms]) => window.__scenecast.ring(b, ms), [box, hold] as const).then((id) =>
+        Promise.all(m.els.map((el) => el.elementHandle({ timeout: 200 }).catch(() => null))).then((els) =>
+          page.evaluate(([id, els]) => window.__scenecast.watchRing(id, els.filter((e) => e !== null) as Element[]), [id, els] as const),
+        ),
       ),
     );
     const end = epoch() + hold + 2 * RING_FADE_MS;

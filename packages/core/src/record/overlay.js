@@ -170,6 +170,9 @@
   // some apps replace <html> children wholesale; keep the overlay attached
   document.addEventListener('DOMContentLoaded', mount);
 
+  let ringIds = 0;
+  const watchers = new Map();
+
   const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
   window.__scenecast = {
@@ -236,9 +239,10 @@
       setTimeout(() => r.remove(), 500);
     },
     /**
-     * Highlight ring around a CSS-px box: fades in, holds `holdMs`, fades out. With `els` (the ringed elements), it
-     * fades out early once one of them is removed or hidden, unless an element of the same size now stands where it
-     * was (an app that re-renders the node): a ring never outlives what it rings (a drawer that closes).
+     * Highlight ring around a CSS-px box: fades in, holds `holdMs`, fades out. Returns its id. With `els` (the ringed
+     * elements, here or later through `watchRing`), it fades out early once one of them is removed or hidden, unless
+     * an element of the same size now stands where it was (an app that re-renders the node): a ring never outlives
+     * what it rings (a drawer that closes).
      */
     ring(box, holdMs, els) {
       mount();
@@ -259,8 +263,8 @@
         settleIdle();
       };
       const removeAt = setTimeout(finish, 2 * RING.fadeMs + holdMs + 50);
-      const watched = (els || []).map((e) => ({ e, rect: e.getBoundingClientRect() }));
-      if (!watched.length) return;
+      const id = ++ringIds;
+      let watched = [];
       const shown = (e) => e.isConnected && e.checkVisibility({ opacityProperty: true, visibilityProperty: true });
       const near = (a, b) => Math.abs(a.x - b.x) <= 4 && Math.abs(a.y - b.y) <= 4 && Math.abs(a.width - b.width) <= 4 && Math.abs(a.height - b.height) <= 4;
       /** Another visible element of the same size where the ringed one was (the app re-rendered it). */
@@ -271,7 +275,7 @@
         return document.elementsFromPoint(x, y).some((el) => !el.closest('[data-scenecast-overlay]') && near(el.getBoundingClientRect(), rect));
       };
       const watch = () => {
-        if (ended) return;
+        if (ended || !watched.length) return;
         if (watched.every((w) => shown(w.e) || replaced(w))) {
           requestAnimationFrame(watch);
           return;
@@ -281,7 +285,19 @@
         r.style.opacity = '0';
         setTimeout(finish, RING.fadeMs + 50);
       };
-      requestAnimationFrame(watch);
+      watchers.set(id, (list) => {
+        if (ended) return;
+        watched = list.map((e) => ({ e, rect: e.getBoundingClientRect() }));
+        requestAnimationFrame(watch);
+      });
+      setTimeout(() => watchers.delete(id), 2 * RING.fadeMs + holdMs + 100);
+      if (els && els.length) watchers.get(id)(els);
+      return id;
+    },
+    /** Hands ring `id` the elements it rings (see `ring`). */
+    watchRing(id, els) {
+      const w = watchers.get(id);
+      if (w && els.length) w(els);
     },
     /** Resolves once no ring is up and the repaints after the last one removed have run. */
     ringsGone() {
