@@ -235,8 +235,12 @@
       layer.insertBefore(r, cursor);
       setTimeout(() => r.remove(), 500);
     },
-    /** Highlight ring around a CSS-px box: fades in, holds `holdMs`, fades out. */
-    ring(box, holdMs) {
+    /**
+     * Highlight ring around a CSS-px box: fades in, holds `holdMs`, fades out. With `els` (the ringed elements), it
+     * fades out early once one of them is removed or hidden, unless an element of the same size now stands where it
+     * was (an app that re-renders the node): a ring never outlives what it rings (a drawer that closes).
+     */
+    ring(box, holdMs, els) {
       mount();
       const r = document.createElement('div');
       r.className = 'ring';
@@ -244,13 +248,40 @@
       layer.insertBefore(r, cursor);
       ringsUp++;
       requestAnimationFrame(() => requestAnimationFrame(() => (r.style.opacity = String(RING.opacity))));
-      setTimeout(() => (r.style.opacity = '0'), RING.fadeMs + holdMs);
-      setTimeout(() => {
+      let ended = false;
+      const fadeOut = setTimeout(() => (r.style.opacity = '0'), RING.fadeMs + holdMs);
+      const finish = () => {
+        if (ended) return;
+        ended = true;
         r.remove();
         ringsUp--;
         nudge();
         settleIdle();
-      }, 2 * RING.fadeMs + holdMs + 50);
+      };
+      const removeAt = setTimeout(finish, 2 * RING.fadeMs + holdMs + 50);
+      const watched = (els || []).map((e) => ({ e, rect: e.getBoundingClientRect() }));
+      if (!watched.length) return;
+      const shown = (e) => e.isConnected && e.checkVisibility({ opacityProperty: true, visibilityProperty: true });
+      const near = (a, b) => Math.abs(a.x - b.x) <= 4 && Math.abs(a.y - b.y) <= 4 && Math.abs(a.width - b.width) <= 4 && Math.abs(a.height - b.height) <= 4;
+      /** Another visible element of the same size where the ringed one was (the app re-rendered it). */
+      const replaced = ({ rect }) => {
+        const x = rect.x + rect.width / 2;
+        const y = rect.y + rect.height / 2;
+        if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return false;
+        return document.elementsFromPoint(x, y).some((el) => !el.closest('[data-scenecast-overlay]') && near(el.getBoundingClientRect(), rect));
+      };
+      const watch = () => {
+        if (ended) return;
+        if (watched.every((w) => shown(w.e) || replaced(w))) {
+          requestAnimationFrame(watch);
+          return;
+        }
+        clearTimeout(fadeOut);
+        clearTimeout(removeAt);
+        r.style.opacity = '0';
+        setTimeout(finish, RING.fadeMs + 50);
+      };
+      requestAnimationFrame(watch);
     },
     /** Resolves once no ring is up and the repaints after the last one removed have run. */
     ringsGone() {

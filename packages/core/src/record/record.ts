@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
 import { DEFAULTS, type AppConn, type CursorCfg, type Scene, type Step } from '../scene/schema.js';
-import { actionAt, DEFAULT_TRAVEL_SEC, POINTER, PROTECT_MARGIN_SEC, spotPoint, type Point, type ScheduledStep } from '../schedule.js';
+import { actionAt, DEFAULT_TRAVEL_SEC, POINTER, PROTECT_MARGIN_SEC, spotPoint, TYPE_CHAR_SEC, type Point, type ScheduledStep } from '../schedule.js';
 import { VideoClock } from './clock.js';
 import { applyAppContext, captureSessionStorage, panelSelector } from './context.js';
 import { LOADING_SELECTOR, motionSettled, settle, trackNetwork } from './settle.js';
@@ -63,11 +63,17 @@ const AIM_CHECK_MS = 40;
  * backlog drain, and the action lands on its logged time (checked against the video in the tests).
  */
 const GLIDE_LEAD_MS = 150;
+/**
+ * A step's settle stops waiting on a merely busy page (data requests, layout still moving) this long before the step
+ * is due, leaving time to find and measure its target, so a busy page does not make the step late.
+ */
+const SETTLE_PREP_MS = 150;
 /** Once a settle in a take has hit its full `maxMs`, later settles in that take are capped at this. */
 const SHORT_SETTLE_MS = 1500;
 /** Round trips used to measure the page clock against Node's. */
 const CLOCK_SAMPLES = 5;
-const TYPE_DELAY_MS = 35;
+/** Typing speed: one character every this many ms (the scheduler warns when typing would run into the next step). */
+const TYPE_DELAY_MS = TYPE_CHAR_SEC * 1000;
 /** After an upload step's click, the file chooser has this long to open. */
 const FILE_CHOOSER_MS = 2000;
 /** The files an upload step chooses (made absolute by loadScene). */
@@ -169,6 +175,11 @@ export interface TakeEvent {
   /** The settle before this step gave up (its cap ran out); the step ran anyway. */
   settleTimedOut?: boolean;
   /**
+   * The page was still busy (data requests in flight, or its layout moving) when the step was due, and the step went
+   * ahead on time rather than wait for it.
+   */
+  settleCut?: boolean;
+  /**
    * Seconds the video's clock had moved from the recorder's by `at` (the system stepped its wall clock, which the
    * video runs on, during the take): the action fired on its schedule at `at - clockShift`. Absent when none.
    */
@@ -203,7 +214,8 @@ interface OverlayApi {
   cursor(x: number, y: number): void;
   moveTo(x: number, y: number, endAt: number): void;
   ripple(x: number, y: number): void;
-  ring(box: Box, holdMs: number): void;
+  /** `els`: the ringed elements; the ring fades early once one of them is gone or hidden (and nothing took its place). */
+  ring(box: Box, holdMs: number, els?: Element[]): void;
   ringsGone(): Promise<void>;
   flash(minMs: number): Promise<number>;
 }
@@ -280,6 +292,37 @@ async function measure(page: Page, sceneId: string, index: SelOwner, sels: strin
   const els: Locator[] = [];
   for (const sel of sels) els.push(await findVisible(page, sceneId, index, sel));
   await els[0]!.scrollIntoViewIfNeeded().catch(() => {});
+  return boxesOf(els, sels, sceneId, index);
+}
+
+/**
+ * Resolves a ring step's elements and measures them. The first is scrolled into view as `measure` does, except when
+ * it already shows in part and scrolling would do harm: it is taller than the screen (it can never fit, and the page
+ * would jump), or an earlier ring is still showing (`ringHeld`: scrolling would move the page under it). Then the
+ * ring runs off the screen's edge, with a warning that says what to ring instead.
+ */
+async function measureRing(
+  page: Page,
+  sceneId: string,
+  index: number,
+  sels: string[],
+  vp: { width: number; height: number },
+  ringHeld: boolean,
+): Promise<Measured> {
+  const els: Locator[] = [];
+  for (const sel of sels) els.push(await findVisible(page, sceneId, index, sel));
+  const b = await els[0]!.boundingBox().catch(() => null);
+  const shows = !!b && b.y < vp.height && b.y + b.height > 0 && b.x < vp.width && b.x + b.width > 0;
+  const tall = !!b && b.height > vp.height + 0.5;
+  if (b && !inViewport(toBox(b), vp) && shows && (tall || ringHeld)) {
+    const why = tall
+      ? `is taller than the screen (${Math.round(b.height)} px of ${vp.height}), so it is not scrolled`
+      : 'runs past the edge of the screen and is not scrolled into view while an earlier ring is showing (that would move the page under it)';
+    console.warn(
+      `scenecast: scene "${sceneId}" step ${index}: ring target "${sels[0]}" ${why}; the ring runs off the screen. ` +
+        `Ring a smaller part of it, such as its heading${tall ? '' : ', or ring it after the earlier ring has ended'}`,
+    );
+  } else await els[0]!.scrollIntoViewIfNeeded().catch(() => {});
   return boxesOf(els, sels, sceneId, index);
 }
 
@@ -605,8 +648,13 @@ async function runTake(
   trackNetwork(page);
   // Per-take settle budget: after one settle runs out its full cap, the rest get a short one.
   let capped = false;
-  const settleTake = async (): Promise<boolean> => {
-    const ok = await settle(page, capped ? { maxMs: SHORT_SETTLE_MS } : {});
+  /**
+   * Settles the page. With `due` (Node epoch ms: when the step sets off), a page that is merely busy (data requests,
+   * a layout still moving) stops holding the step up SETTLE_PREP_MS before then, so the step is not late; `onDue` says so.
+   */
+  const settleTake = async (due?: number, onDue?: () => void): Promise<boolean> => {
+    const timing = due === undefined ? {} : { dueInMs: due - SETTLE_PREP_MS - epoch(), ...(onDue ? { onDue } : {}) };
+    const ok = await settle(page, { ...(capped ? { maxMs: SHORT_SETTLE_MS } : {}), ...timing });
     if (!ok) capped = true;
     return ok;
   };
@@ -738,7 +786,12 @@ async function runTake(
     r: { at: number; box: Box; hold: number; m: Measured; sels: string[]; index: number; atPeak: (b: Box | undefined) => void },
   ) => {
     const { at, box, hold, m, sels, index, atPeak } = r;
-    quiet(page.evaluate(([b, ms]) => window.__scenecast.ring(b, ms), [box, hold] as const));
+    // The overlay is handed the ringed elements, so a ring whose element goes (a drawer closing) fades with it.
+    quiet(
+      Promise.all(m.els.map((el) => el.elementHandle({ timeout: 200 }).catch(() => null))).then((els) =>
+        page.evaluate(([b, ms, els]) => window.__scenecast.ring(b, ms, els.filter((e) => e !== null) as Element[]), [box, hold, els] as const),
+      ),
+    );
     const end = epoch() + hold + 2 * RING_FADE_MS;
     ev.ringBox = box;
     ev.busyUntil = Math.max(ev.busyUntil ?? at, at + (hold + 2 * RING_FADE_MS) / 1000);
@@ -760,7 +813,7 @@ async function runTake(
     // The pre-positioned first step was found on a settled page just before the flash: settling again would
     // only spend the short time before its early cue.
     const prePlaced = k === 0 && readyM !== undefined && index === ready?.index;
-    if (step.settle !== false && !prePlaced && !(await settleTake())) ev.settleTimedOut = true;
+    if (step.settle !== false && !prePlaced && !(await settleTake(due, () => (ev.settleCut = true)))) ev.settleTimedOut = true;
     // A ring that ends before this step must be off screen in the take before it goes ahead. (One that
     // ends just before the step needs no wait: the step's own glide or ring repaints the page anyway.)
     if (ringGoneAt && ringGoneAt + RINGS_GONE_MARGIN_MS <= due) {
@@ -804,19 +857,22 @@ async function runTake(
       ev.target = m.union;
       ev.cursorTo = touch ? touchBox(cursor) : cursorBox(cursor);
       const at = ev.at;
-      if (ringM) {
+      /**
+       * Draws the `ringSel` ring once the action has had its effect: the hover or the click may move what it rings (a
+       * row that lifts, a dialog that re-centres as it grows). Measured once that has settled (at most 0.4 s), the
+       * ring holds the element where it comes to rest, as the audit checks it at the ring's peak. Elements gone by
+       * then (a click that navigated) keep the box measured before the action.
+       */
+      const ringAfterAction = async () => {
+        if (!ringM) return;
+        await motionSettled(ringM.els, HOVER_SETTLE_MAX_MS);
+        ringM = await boxesOf(ringM.els, ringSels, scene.id, index).catch(() => ringM!);
+        const ringAt = Math.max(at, videoNow());
+        if (ringAt > at) ev.ringAt = ringAt;
         const hold = step.ringMs ?? RING_HOLD_MS;
-        let ringAt = at;
-        if (step.do === 'hover') {
-          // The hover may move what it rings (a row that lifts 2 px): measured once that has settled, the ring holds
-          // the element where it comes to rest, as the audit checks it at the ring's peak.
-          await motionSettled(ringM.els, HOVER_SETTLE_MAX_MS);
-          ringM = await boxesOf(ringM.els, ringSels, scene.id, index);
-          ringAt = Math.max(at, videoNow());
-          if (ringAt > at) ev.ringAt = ringAt;
-        }
         drawRing(ev, { at: ringAt, box: padBox(ringM.union, step.pad), hold, m: ringM, sels: ringSels, index, atPeak: (b) => void (b && (ev.ringTarget = b)) });
-      }
+      };
+      if (step.do === 'hover') await ringAfterAction();
       if (step.do === 'click' || step.do === 'type' || step.do === 'upload' || (step.do === 'check' && !wasChecked)) {
         // A phone taps (a check too, like any other press there); the indicator's press is its feedback.
         const press = async () => {
@@ -830,11 +886,14 @@ async function runTake(
         // An upload's click opens the file chooser, answered with its files.
         if (step.do === 'upload') await clickAndChoose(page, press, step, `scene "${scene.id}" step ${index}`);
         else await press();
+        await ringAfterAction(); // before the typing: the ring marks the click
         if (step.do === 'type' && step.text) {
           await page.keyboard.type(step.text, { delay: TYPE_DELAY_MS });
           ev.busyUntil = Math.max(ev.busyUntil ?? at, videoNow());
         }
       }
+      // A check that needed no click (already ticked) still rings.
+      if (step.do === 'check' && wasChecked) await ringAfterAction();
       if (step.do === 'check') {
         ev.clicked = !wasChecked;
         if (!(await becomesChecked(m.els[0]!)))
@@ -859,7 +918,7 @@ async function runTake(
       }
       ev.cursorTo = cursorBox(to);
     } else if (step.do === 'ring' || step.do === 'zoom') {
-      const m = await measure(page, scene.id, index, sels);
+      const m = step.do === 'ring' ? await measureRing(page, scene.id, index, sels, where.viewport, ringGoneAt > epoch()) : await measure(page, scene.id, index, sels);
       const box = padBox(m.union, step.pad);
       ev.loadingBefore = (await snapshot(page, panelSel)).loading;
       await sleepUntil(due);

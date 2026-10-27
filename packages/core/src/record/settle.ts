@@ -14,6 +14,13 @@ export interface SettleOpts {
   quietMs?: number;
   /** Give up (and carry on) after this long. */
   maxMs?: number;
+  /**
+   * When the step that waits is due, in ms from now. From then on only a page that is really not ready holds the
+   * step up (a document loading, or a visible loading indicator); data requests and a layout still moving no longer
+   * do, so a busy page does not make the step late. `onDue` is called when the settle ends early for this reason.
+   */
+  dueInMs?: number;
+  onDue?: () => void;
 }
 
 export interface NetState {
@@ -59,39 +66,61 @@ function pending(net: NetState, maxMs: number): number {
   return n;
 }
 
-/** In-page check: two equal `body` rects one frame apart, and no visible loading indicator. */
-async function pageIsStill(page: Page): Promise<boolean> {
+/**
+ * In-page check: two equal `body` rects one frame apart, and no visible loading indicator. With `layout` false, only
+ * that the document has loaded and shows no loading indicator.
+ */
+async function pageIsStill(page: Page, layout = true): Promise<boolean> {
   try {
-    return await page.evaluate(async (loadingSel) => {
-      const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
-      if (!document.body || document.readyState === 'loading') return false;
-      const a = document.body.getBoundingClientRect();
-      await frame();
-      await frame();
-      const b = document.body.getBoundingClientRect();
-      if (a.x !== b.x || a.y !== b.y || a.width !== b.width || a.height !== b.height) return false;
-      for (const el of document.querySelectorAll(loadingSel)) {
-        if (el.closest('[data-scenecast-overlay]')) continue;
-        const r = el.getBoundingClientRect();
-        if (r.width > 0 && r.height > 0 && el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
-      }
-      return true;
-    }, LOADING_SELECTOR);
+    return await page.evaluate(
+      async ([loadingSel, layout]) => {
+        const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+        if (!document.body || document.readyState === 'loading') return false;
+        if (layout) {
+          const a = document.body.getBoundingClientRect();
+          await frame();
+          await frame();
+          const b = document.body.getBoundingClientRect();
+          if (a.x !== b.x || a.y !== b.y || a.width !== b.width || a.height !== b.height) return false;
+        }
+        for (const el of document.querySelectorAll(loadingSel)) {
+          if (el.closest('[data-scenecast-overlay]')) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0 && el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+        }
+        return true;
+      },
+      [LOADING_SELECTOR, layout] as const,
+    );
   } catch {
     return false; // navigation in flight destroyed the context
   }
 }
 
+/** Counted document requests (navigations) younger than `maxMs`. */
+function pendingDocuments(net: NetState, maxMs: number): number {
+  const now = performance.now();
+  let n = 0;
+  for (const [r, started] of net.inflight) if (now - started < maxMs && r.resourceType() === 'document') n++;
+  return n;
+}
+
 /**
  * Wait until the page is settled: no document/xhr/fetch requests in flight for `quietMs` (streams
  * and requests older than `maxMs` don't count), a stable layout (two equal
- * `body` rects), and no visible loading indicator. Returns false if `maxMs` ran out first; the
- * caller carries on either way.
+ * `body` rects), and no visible loading indicator. Once `dueInMs` has passed, see `SettleOpts.dueInMs`.
+ * Returns false if `maxMs` ran out first; the caller carries on either way.
  */
-export async function settle(page: Page, { quietMs = 350, maxMs = 9000 }: SettleOpts = {}): Promise<boolean> {
+export async function settle(page: Page, { quietMs = 350, maxMs = 9000, dueInMs, onDue }: SettleOpts = {}): Promise<boolean> {
   const net = trackNetwork(page);
   const deadline = performance.now() + maxMs;
+  const due = dueInMs === undefined ? Infinity : performance.now() + dueInMs;
   while (performance.now() < deadline) {
+    // The step is due: it goes ahead unless a document is still loading or a loading indicator shows.
+    if (performance.now() >= due && pendingDocuments(net, maxMs) === 0 && (await pageIsStill(page, false))) {
+      onDue?.();
+      return true;
+    }
     const quietFor = performance.now() - net.lastActivity;
     const busy = pending(net, maxMs);
     if (busy === 0 && quietFor >= quietMs) {
@@ -99,7 +128,8 @@ export async function settle(page: Page, { quietMs = 350, maxMs = 9000 }: Settle
       await new Promise((r) => setTimeout(r, 30));
     } else {
       const wait = busy === 0 ? quietMs - quietFor : 50;
-      await new Promise((r) => setTimeout(r, Math.max(10, Math.min(wait, deadline - performance.now()))));
+      const untilDue = due > performance.now() ? due - performance.now() : Infinity;
+      await new Promise((r) => setTimeout(r, Math.max(10, Math.min(wait, untilDue, deadline - performance.now()))));
     }
   }
   return false;

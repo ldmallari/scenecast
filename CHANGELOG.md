@@ -18,6 +18,16 @@ All notable changes to scenecast are listed here. The format follows
 
 ### Fixed
 
+- A step is no longer late because the page was busy: from just before the step is due, only a document still
+  loading or a visible loading indicator holds it up; data requests and a layout still moving no longer do.
+- A `ringSel` ring on a click (and on type, check and upload) is measured after the click has had its effect, so an
+  element that moves when clicked (a dialog that grows and re-centres) stays inside its ring.
+- A ring fades out early when its element is removed or hidden, instead of floating over what comes next.
+- A ring on an element taller than the screen, or one that would scroll the page while an earlier ring is showing,
+  no longer scrolls the page; the render warns and suggests ringing a smaller part.
+- The render warns when a `type` step's typing would still be going as the next step sets off.
+- Takes recorded by 1.1.0 are recorded again (the record stage's cache version is 4); voice and music are kept.
+
 - A step without a cue now starts after the step before it has acted, not while that step's cursor is still gliding,
   so it can no longer act first (which failed the render with "action is scheduled before the previous action").
 - Steps that could only fail once recorded are reported after the voice is made and before anything is recorded, all

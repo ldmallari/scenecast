@@ -21,6 +21,7 @@ import {
   scanBlank,
   scanFlash,
   schedule,
+  scheduleWarnings,
   sceneWarnings,
   sessionStoragePath,
   splitPhrases,
@@ -230,6 +231,7 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
       const { voice } = voices.get(scene.id)!;
       const scheduled = schedule(scene, voice, scheduleOptsFor(scene, spec.cursor, voice.duration));
       problems.push(...checkSchedule(scene, scheduled, voice.duration + DEFAULTS.video.breathSec));
+      for (const w of scheduleWarnings(scene, scheduled)) log(`warning: ${w}`);
       schedules.set(scene.id, scheduled);
     }
     if (problems.length) throw new Error(`the steps cannot be recorded as scheduled:\n${problems.join('\n')}`);
@@ -317,10 +319,11 @@ export async function prepare(file: string, opts: RenderOptions = {}): Promise<P
 /**
  * The record stage's own version, part of its cache key: bump it when takes recorded before a change must be
  * recorded again (2: blank frames are frozen in the take; 3: a hover's ringSel ring waits for the hover to settle,
- * and declared navs are logged with their selectors). The global cache version stays, so voice and music clips are
- * kept.
+ * and declared navs are logged with their selectors; 4: every ringSel ring is drawn after its action has had its
+ * effect, rings fade with their elements, a busy page no longer makes a step late, tall ring targets are not
+ * scrolled). The global cache version stays, so voice and music clips are kept.
  */
-export const RECORD_STAGE_VERSION = 3;
+export const RECORD_STAGE_VERSION = 4;
 
 /** The files a scene's take depends on (their contents join the record stage's key): the app's, and the scene's uploads (setup's too). */
 export function recordStageFiles(app: VideoSpec['app'], scene: Scene): string[] {

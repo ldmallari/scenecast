@@ -312,9 +312,14 @@ What each action does:
   the field, then types `text` one character at a time.
   A `hover` cannot ring an element that the hover itself reveals (a tooltip, a menu that opens on hover): the ring is
   measured as the cursor arrives, before it appears. Ring it from the next step instead, for example
-  `{ cue: …, do: ring, sel: ".tooltip" }`. A hover that moves what it rings (a row that lifts or grows on hover) is
-  fine: a hover's `ringSel` ring waits for the transitions and animations on those elements and their ancestors to
-  finish (at most 0.4 s after the cue) and is drawn round them where they come to rest.
+  `{ cue: …, do: ring, sel: ".tooltip" }`. An action that moves what it rings is fine: a row that lifts on hover, or
+  a dialog that grows and re-centres when an option is clicked. A `ringSel` ring (on a hover, click, type, check or
+  upload) is drawn once the action has had its effect: after the layout change and the transitions and animations on
+  those elements and their ancestors (at most 0.4 s after the cue), round them where they come to rest. On a `type`
+  step it is drawn after the click into the field, before the typing.
+  `type` types one character every 35 ms. When the typing would still be going as the next step sets off, the render
+  warns (`typing "…" (24 characters, 0.84 s) runs until 2.14 s, after step 1 … is due to start at 1.68 s`): that step
+  would start late, so start typing on an earlier word, or shorten the text.
 - **check.** Ticks a checkbox or switch: the cursor glides to it, and it is clicked only when it is not already
   checked, so a re-render over seeded data that already has it ticked stays the same. The recording fails when it
   is still unchecked afterwards (`scene "<id>" step <i>: <sel> is not checked after the click`). `sel` must be the
@@ -345,7 +350,11 @@ What each action does:
 - **unzoom.** Eases the zoom out, starting on its cue (it needs a `zoom` step before it in the scene, or the scene's
   own `zoom`, which it then ends). It has no `sel`.
   Use it to end a zoom on a word ("…comes **first**") instead of after a fixed `ms`.
-- **ring.** Draws a highlight ring around the element.
+- **ring.** Draws a highlight ring around the element. A ring fades out early when its element is removed or hidden
+  (a drawer that closes), so it never floats over what comes next. The element is scrolled into view first, unless
+  it already shows in part and is taller than the screen, or an earlier ring is still showing (scrolling would move
+  the page under that ring): then the ring runs off the screen's edge and the render warns
+  (`ring target "<sel>" is taller than the screen …`); ring a smaller part, such as the card's heading.
 - **park.** Glides the cursor to a [spot](#cursor) out of the way (`at`, default `cursor.park`). Not allowed on phone
   scenes, which have no cursor (use `wait` to hold). Parking also happens by itself; see [cursor](#cursor).
 - **goto.** Opens a path in the app.
@@ -370,7 +379,9 @@ problem is named, all at once, with what to change (see
 
 Before each step the recorder waits for the page to settle: no document, XHR or fetch requests in flight, a stable
 layout, and no visible loading indicator (`[aria-busy=true]`, `[role=progressbar]` without a value, `.is-loading`,
-`.skeleton` or `[data-scenecast-loading]`). Open panels (`[role=dialog]`, `[role=menu]`, `[role=listbox]`,
+`.skeleton` or `[data-scenecast-loading]`). The wait never makes a step late for a page that is merely busy: from
+0.15 s before the step is due, only a page still loading a document or showing a loading indicator holds it up, and
+data requests or a layout still moving no longer do. Open panels (`[role=dialog]`, `[role=menu]`, `[role=listbox]`,
 `[aria-modal=true]`, `[data-scenecast-panel]`, or a selector in `app.panels`) are measured so captions keep clear of them.
 
 ## cursor

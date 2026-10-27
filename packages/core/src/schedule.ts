@@ -30,6 +30,9 @@ export interface ScheduleOpts {
 /** Steps that move the cursor to act. Every one gets travel before its action; every other step gets none. */
 export const POINTER: ReadonlySet<Step['do']> = new Set<Step['do']>(['click', 'hover', 'type', 'check', 'upload', 'park']);
 
+/** Typing speed: a `type` step types one character every this many seconds after its click. */
+export const TYPE_CHAR_SEC = 0.035;
+
 /** Default cursor travel: every glide takes this long, whatever the distance, so the scheduler's arithmetic holds. */
 export const DEFAULT_TRAVEL_SEC = 0.52;
 
@@ -176,6 +179,28 @@ export function checkSchedule(scene: Scene, scheduled: ScheduledStep[], sceneEnd
             ? `give it a cue, or take ${sec(upTo05(at - sceneEnd))} off the ms of the steps before it`
             : `cue it on an earlier word, or reduce its offset`),
       );
+  });
+  return out;
+}
+
+/**
+ * Notes that do not stop the render: a `type` step whose typing (one character every 35 ms after its click) is still
+ * going when the next step sets off. The recorder finishes typing first, so that step starts late.
+ */
+export function scheduleWarnings(scene: Scene, scheduled: ScheduledStep[]): string[] {
+  const out: string[] = [];
+  const steps = [...scheduled].sort((a, b) => a.index - b.index);
+  steps.forEach((s, k) => {
+    const next = steps[k + 1];
+    if (s.step.do !== 'type' || !s.step.text || !next) return;
+    const typed = actionAt(s) + s.step.text.length * TYPE_CHAR_SEC;
+    if (next.startAt >= typed - 0.05) return;
+    const text = s.step.text.length > 30 ? `${s.step.text.slice(0, 27)}...` : s.step.text;
+    out.push(
+      `scene "${scene.id}" step ${s.index}: typing "${text}" (${s.step.text.length} characters, ${sec(s.step.text.length * TYPE_CHAR_SEC)}) ` +
+        `runs until ${sec(typed)}, after step ${next.index} (${describeStep(next)}) is due to start at ${sec(next.startAt)}, so that ` +
+        `step will be about ${sec(typed - next.startAt)} late; start typing on an earlier word, or shorten the text`,
+    );
   });
   return out;
 }

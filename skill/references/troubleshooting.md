@@ -171,11 +171,32 @@ a `{ do: park }` step (with `at` for the spot); to start a scene with the cursor
 `cursor` (for example `cursor: right`). `park` is not allowed on phone scenes: there is no cursor, and the touch
 indicator fades by itself (use `wait` to hold).
 
-**A hover step cannot ring what it reveals.** The ring is measured as the cursor arrives, before a tooltip or hover
-menu appears. Ring the revealed element with a separate `ring` step cued a word or two later. A hover that only moves
-what it rings (a row that lifts 2 px on hover) needs nothing: its `ringSel` ring waits up to 0.4 s for the hover's
-transitions to finish and is drawn where the element comes to rest. A transition longer than that can still leave
-the ring off by the rest of the movement.
+**A hover step cannot ring what it reveals.** The `ringSel` elements are found as the cursor sets off, before a
+tooltip or hover menu appears. Ring the revealed element with a separate `ring` step cued a word or two later. An
+action that only moves what it rings (a row that lifts 2 px on hover, a dialog that re-centres when an option is
+clicked) needs nothing: its `ringSel` ring waits up to 0.4 s for the layout and the transitions to finish and is drawn
+where the element comes to rest. A transition longer than that can still leave the ring off by the rest of the
+movement.
+
+## Rings
+
+- **`ring target "<sel>" is taller than the screen …; the ring runs off the screen`** (a warning). The element can
+  never be shown whole, so the page is not scrolled for it. Ring a smaller part: the card's heading, or its first
+  rows.
+- **`ring target "<sel>" runs past the edge of the screen and is not scrolled into view while an earlier ring is
+  showing`** (a warning). Scrolling would move the page under the earlier ring and fail its target check. Ring a
+  smaller part, or cue this ring after the earlier one has ended (shorten that ring's `ms`).
+- **A ring around something that has gone.** A ring fades out by itself when its element is removed or hidden (a
+  drawer that closes). A ring that stays over the wrong content means its element is still there, only covered:
+  close the cover later, or shorten the ring's `ms`.
+
+## Late steps
+
+- **`typing "…" runs until …, after step <n> … is due to start`** (a warning). Typing takes 35 ms a character, and the
+  next step starts only once it is done. Start typing on an earlier word, or shorten the text.
+- **A step is late after a heavy page change.** A step no longer waits for data requests or a moving layout past its
+  own time; only a document still loading or a visible loading indicator holds it up. If the audit still shows it
+  late with a `loading` WARN or FAIL, seed the data or add a `wait` earlier in the scene.
 
 ## Steps that fail while recording
 

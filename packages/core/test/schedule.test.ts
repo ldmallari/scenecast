@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { actionAt, checkSchedule, cueWordIndex, FIRST_ACTION_SEC, POINTER, schedule, spotPoint, travelSecFor } from '../src/schedule.js';
+import { actionAt, checkSchedule, cueWordIndex, FIRST_ACTION_SEC, POINTER, schedule, scheduleWarnings, spotPoint, travelSecFor } from '../src/schedule.js';
 import type { Scene, Step } from '../src/scene/schema.js';
 import type { SceneVoice } from '../src/voice.js';
 
@@ -286,6 +286,29 @@ describe('checkSchedule: problems found before anything is recorded', () => {
       'scene "s2" step 2: ring (no cue) would act at 3.40 s, after the scene ends at 2.45 s (its narration plus a short ' +
         'breath); give it a cue, or take 0.95 s off the ms of the steps before it',
     ]);
+  });
+});
+
+describe('scheduleWarnings', () => {
+  it('warns when typing is still going as the next step sets off, saying by how much', () => {
+    const n = 'Give it a short subject, then pick a category.';
+    const words = n.split(' ');
+    const v: SceneVoice = { duration: 5, phrases: [], words: words.map((w, k) => ({ w, start: 0.4 + k * 0.3, end: 0.6 + k * 0.3 })) };
+    const sc = (cue: string) =>
+      ({ id: 's3', kind: 'app', viewport: 'desktop', narration: n, steps: [
+        { cue, do: 'type', sel: '#subject', text: 'Screen flickers at start' },
+        { cue: 'pick', do: 'click', sel: '#category' },
+      ] }) as Scene;
+    // "short" at 1.30 s: 24 characters type until 2.14 s; the click on "pick" (2.20 s) sets off at 1.68 s.
+    const late = sc('short');
+    expect(scheduleWarnings(late, schedule(late, v, { travelSec: (st) => travelSecFor(st) }))).toEqual([
+      'scene "s3" step 0: typing "Screen flickers at start" (24 characters, 0.84 s) runs until 2.14 s, after step 1 ' +
+        '(click on "pick") is due to start at 1.68 s, so that step will be about 0.46 s late; start typing on an earlier ' +
+        'word, or shorten the text',
+    ]);
+    // Typing from "Give" ends at 1.24 s, before the click sets off.
+    const early = sc('Give');
+    expect(scheduleWarnings(early, schedule(early, v, { travelSec: (st) => travelSecFor(st) }))).toEqual([]);
   });
 });
 

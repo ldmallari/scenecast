@@ -492,7 +492,84 @@ describe('recordScene', () => {
     }
     for (const [k, v] of Object.entries({ x: name.x - 6, y: name.y - 6, w: name.w + 12, h: name.h + 12 }))
       near(ev.ringBox![k as keyof typeof name], v);
-    expect(ev.busyUntil! - ev.at).toBeCloseTo((1200 + 300) / 1000, 6);
+    // Drawn once the click has had its effect (a frame or two after it), and held from then.
+    expect(ev.ringAt ?? ev.at).toBeGreaterThanOrEqual(ev.at);
+    expect((ev.ringAt ?? ev.at) - ev.at).toBeLessThanOrEqual(0.5);
+    expect(ev.busyUntil! - (ev.ringAt ?? ev.at)).toBeCloseTo((1200 + 300) / 1000, 6);
+  }, 60_000);
+
+  it("a click's ringSel ring is measured after the click, where the element comes to rest", async () => {
+    // v1.2: selecting an option grows the dialog, which moves what the ring is around. Here the click on #agree
+    // inserts a 40 px note above the box, pushing #name down.
+    const grow: AppConn = {
+      ...app,
+      initScript:
+        "document.addEventListener('click', (e) => { if (e.target && e.target.id === 'agree') {" +
+        " const n = document.createElement('p'); n.textContent = 'Thanks.'; n.style.height = '40px';" +
+        " document.querySelector('.sign-panel h2').after(n); } }, true);",
+    };
+    const steps: Step[] = [{ do: 'click', sel: '#agree', ringSel: '#name' }];
+    const take = await recordScene(scene('ringmoves', '/form', steps), sched(steps, [0.5]), grow, path.join(work, 'takes'));
+    const ev = take.events[0]!;
+    const [ring, el] = [ev.ringBox!, ev.ringTarget!];
+    expect(ring.y, `ring ${ring.x},${ring.y} vs element ${el.x},${el.y}`).toBeLessThanOrEqual(el.y + 0.5);
+    expect(ring.y + ring.h).toBeGreaterThanOrEqual(el.y + el.h - 0.5);
+  }, 60_000);
+
+  it('a ring fades with its element when the element goes before the hold ends', async () => {
+    const steps: Step[] = [
+      { do: 'click', sel: '#menu-button' },
+      { do: 'ring', sel: '#account-menu', ms: 2500 },
+      { do: 'click', sel: '#menu-button' }, // closes the menu half-way through the ring's hold
+    ];
+    const take = await recordScene(scene('ringfades', '/dashboard', steps), sched(steps, [0.3, 1.2, 1.3]), app, path.join(work, 'takes'));
+    const [, ring, close] = take.events as [TakeEvent, TakeEvent, TakeEvent];
+    const rb = ring.ringBox!;
+    // A point on the ring's bottom border, away from the cursor's path to the button above it.
+    const track = pixelTrack(take.file, rb.x + rb.w / 2, rb.y + rb.h - 1);
+    const magenta = track.findIndex(([r, g, b]) => r > 200 && g < 80 && b > 200);
+    const frameAt = (t: number) => magenta + Math.round(t * VIDEO_FPS);
+    const isRing = ([r, g, b]: [number, number, number]) => r > 200 && g > 150 && b < 120;
+    expect(track.slice(frameAt(ring.at + 0.25), frameAt(close.at)).some(isRing)).toBe(true);
+    // Without its element the ring would hold until ring.at + 2.65 s.
+    const after = track.slice(frameAt(close.at + 0.45), frameAt(ring.at + 2.5));
+    expect(after.length).toBeGreaterThan(5);
+    expect(after.filter(isRing)).toEqual([]);
+  }, 60_000);
+
+  it('a ring on an element taller than the screen does not scroll the page under an earlier ring', async () => {
+    const tall: AppConn = {
+      ...app,
+      initScript:
+        "document.addEventListener('DOMContentLoaded', () => { const s = document.createElement('style');" +
+        " s.textContent = '.agreement { min-height: 1500px }'; document.head.appendChild(s); })",
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const steps: Step[] = [
+        { do: 'ring', sel: '.sign-panel h2', ms: 1500 },
+        { do: 'ring', sel: '.agreement', ms: 600 },
+      ];
+      const take = await recordScene(scene('ringtall', '/form', steps), sched(steps, [0.4, 1.0]), tall, path.join(work, 'takes'));
+      const first = take.events[0]!;
+      // The first ring's element, measured at its peak, is still inside the ring drawn round it.
+      expect(first.target!.y).toBeGreaterThanOrEqual(first.ringBox!.y - 0.5);
+      expect(first.target!.y + first.target!.h).toBeLessThanOrEqual(first.ringBox!.y + first.ringBox!.h + 0.5);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('scene "ringtall" step 1: ring target ".agreement" is taller than the screen'));
+    } finally {
+      warn.mockRestore();
+    }
+  }, 60_000);
+
+  it('a step goes ahead on its time while the page is merely busy with data requests', async () => {
+    // A page that polls every 100 ms is never network-quiet: the settle used to hold the step for its whole 9 s cap.
+    const busy: AppConn = { ...app, initScript: "setInterval(() => fetch('/poll?' + Date.now()).catch(() => {}), 100);" };
+    const steps: Step[] = [{ do: 'wait', ms: 100 }, { do: 'click', sel: '#menu-button' }];
+    const take = await recordScene(scene('busy', '/dashboard', steps), sched(steps, [0.3, 1.0]), busy, path.join(work, 'takes'));
+    const click = take.events[1]!;
+    expect(click.settleCut).toBe(true);
+    const late = fired(click) - (1.0 + DEFAULT_TRAVEL_SEC);
+    expect(late, `late by ${late.toFixed(3)} s`).toBeLessThanOrEqual(0.15);
   }, 60_000);
 
   it('ringMs sets the ring hold', async () => {
