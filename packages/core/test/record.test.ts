@@ -598,6 +598,21 @@ describe('recordScene', () => {
     expect(ring.settleCut).toBeUndefined();
   }, 60_000);
 
+  it("a click that removes its ringSel element does not stall the take", async () => {
+    // Playwright's default 30 s wait on a gone element used to hold the take twice over (motion wait, then re-measure).
+    const removes: AppConn = {
+      ...app,
+      initScript: "document.addEventListener('click', (e) => { if (e.target && e.target.id === 'agree') document.getElementById('name').remove(); }, true);",
+    };
+    const steps: Step[] = [{ cue: 'tick', do: 'click', sel: '#agree', ringSel: '#name' }];
+    const started = performance.now();
+    const take = await recordScene(scene('ringgone2', '/form', steps), sched(steps, [0.5]), removes, path.join(work, 'takes'));
+    expect((performance.now() - started) / 1000).toBeLessThan(20);
+    const ev = take.events[0]!;
+    expect(ev.ringBox).toBeDefined(); // drawn at the box measured before the click
+    expect((ev.ringAt ?? ev.at) - ev.at).toBeLessThanOrEqual(1);
+  }, 120_000);
+
   it('ringMs sets the ring hold', async () => {
     const steps: Step[] = [{ do: 'click', sel: '#agree', ringSel: '#name', ringMs: 600 }];
     const take = await recordScene(scene('ringms', '/form', steps), sched(steps, [0.5]), app, path.join(work, 'takes'));

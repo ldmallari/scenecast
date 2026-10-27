@@ -273,10 +273,18 @@ interface Measured {
 }
 
 /** Boxes of already-resolved elements: the first one's, and the union of all. */
-async function boxesOf(els: Locator[], sels: string[], sceneId: string, index: SelOwner): Promise<Measured> {
+/**
+ * How long measuring an already-found element may wait for it. The elements were visible a moment ago; one that has
+ * gone (a click removed it) must not hold the take for Playwright's default 30 s.
+ */
+const BOX_TIMEOUT_MS = 1000;
+/** The same for the ring re-measures (after the action, at the peak): their elements may well have gone. */
+const RING_BOX_TIMEOUT_MS = 300;
+
+async function boxesOf(els: Locator[], sels: string[], sceneId: string, index: SelOwner, timeout = BOX_TIMEOUT_MS): Promise<Measured> {
   const boxes: Box[] = [];
   for (const [i, el] of els.entries()) {
-    const b = await el.boundingBox();
+    const b = await el.boundingBox({ timeout }).catch(() => null);
     if (!b) throw new Error(`scene "${sceneId}" ${ownerName(index)} selector "${sels[i]}" not found`);
     boxes.push(toBox(b));
   }
@@ -800,7 +808,7 @@ async function runTake(
     const peakAt = epoch() + ringPeakSec(hold) * 1000;
     peakMeasures.push(
       sleepUntil(peakAt)
-        .then(() => boxesOf(m.els, sels, scene.id, index))
+        .then(() => boxesOf(m.els, sels, scene.id, index, RING_BOX_TIMEOUT_MS))
         .then((now) => atPeak(now.union))
         .catch(() => atPeak(undefined)),
     );
@@ -868,7 +876,7 @@ async function runTake(
       const ringAfterAction = async () => {
         if (!ringM) return;
         await motionSettled(ringM.els, HOVER_SETTLE_MAX_MS);
-        ringM = await boxesOf(ringM.els, ringSels, scene.id, index).catch(() => ringM!);
+        ringM = await boxesOf(ringM.els, ringSels, scene.id, index, RING_BOX_TIMEOUT_MS).catch(() => ringM!);
         const ringAt = Math.max(at, videoNow());
         if (ringAt > at) ev.ringAt = ringAt;
         const hold = step.ringMs ?? RING_HOLD_MS;

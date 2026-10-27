@@ -167,7 +167,7 @@ export async function motionSettled(els: Locator[], maxMs: number): Promise<void
             await Promise.race([Promise.all(moving.map((a) => a.finished.catch(() => {}))), new Promise((r) => setTimeout(r, left))]);
             await frame();
           }
-        }, maxMs)
+        }, maxMs, { timeout: maxMs + 200 })
         .catch(() => {}),
     ),
   );
