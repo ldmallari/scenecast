@@ -59,6 +59,7 @@ mobile apps, or Windows without WSL.
 
    | Audit says | Fix |
    |---|---|
+   | the steps cannot be recorded as scheduled: … | Each line says what to change: cue a later word, add the `offset` it gives, move the step above the one it names, or shorten the `ms` before it. |
    | sync: gap over 0.30 s | Put the cue on the word that names the action. A late action means a slow page: seed the data, `prewarm` the route, or add a `wait` earlier. |
    | word: cue not heard (WARN) | Nothing was heard where the cue is (a misheard word is already matched). For a name, add it to `audit.allowList`; otherwise choose a more distinct cue word, or listen to `work/<id>/voice/<scene>/voice.wav` and respell what the voice gets wrong. |
    | target: box does not contain target | Fix `sel` so it matches the element named, add `pad`, make sure the element is still there when the ring peaks. |

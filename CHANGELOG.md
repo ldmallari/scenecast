@@ -9,38 +9,33 @@ All notable changes to scenecast are listed here. The format follows
 
 ### Added
 
-- A warning before composing when a zoom leaves no caption position free, with how much of the zoomed height its
-  target fills.
-
-- `app.seedInputs`: data files the seed reads; their contents join the recordings' cache key.
-
 - An `upload` step: `{ cue: attach, do: upload, sel: ".dropzone", file: ./quote.pdf }` clicks the button, label or
   drop zone on its cue and answers the file chooser with the file (or files). Files are checked when the scene file
   loads, and their contents are part of the recording's cache key. The demo app has a New request drawer with a drop
   zone to try it on.
 - Scene `setup` steps: untimed, unfilmed steps that run after `route` opens and before recording starts, so a scene
   can start part-way through a flow (an open drawer, step 2 of a wizard) without an init script that fakes the state.
+- Steps that could only fail once recorded are reported after the voice is made and before anything is recorded, all
+  at once, each with what to change: a step on a scene's first word, a step that would act before the step above it,
+  and a step that would run past the end of its scene.
+- A warning when a `type` step's typing would still be going as the next step sets off.
+- A warning before composing when a zoom leaves no caption position free, with how much of the zoomed height its
+  target fills.
+- `app.seedInputs`: data files the seed reads; their contents join the recordings' cache key.
+
+### Changed
+
+- A step without a cue starts once the step before it has acted (plus that step's `ms`), not while that step's cursor
+  is still gliding. A first step without a cue acts 0.2 s into the scene, once the take has started.
+- Takes recorded by 1.1.0 are recorded again on the next render (the record stage's cache version is 4); the voice and
+  music are kept.
 
 ### Fixed
 
-- Retime no longer prints "quiet window (0.00 s) is shorter than the 0.00 s to cut" for cuts too small to show.
-
-- Captions no longer break between a hyphenated word and its noun ("your to-do / list"), or leave a clause's last
-  function word alone at the start of a line ("the team asked / for, Open"); a function word that ends a clause may end a
-  line.
-
-- The audit's zoom target check leaves out the part of a zoom's `pad` that runs off the frame, so a large pad on an
-  element near the edge no longer FAILs with "zoom does not contain target".
-
-- A take whose flash marker is missing (rare, and gone on the next try) is recorded once more by itself instead of
-  failing the render.
-
-- A changed seed records every scene again: the files a seed command names (`scripts/seed.mjs` in
-  `node scripts/seed.mjs`) are part of the recordings' cache key, as a seed script path already was.
-
-- A cue with a symbol in it, such as `Save & close`, matches the narration: words with no letter or digit
-  count on neither side.
-
+- Forced alignment no longer drops a whole phrase to the free transcript when two adjacent words get the same start:
+  the later word starts one alignment frame on, so the phrase keeps its forced word times.
+- A step without a cue can no longer act before the step above it, which failed the render after recording with
+  "action is scheduled before the previous action".
 - A step is no longer late because the page was busy: from just before the step is due, only a document still
   loading or a visible loading indicator holds it up; data requests and a layout still moving no longer do.
 - A `ringSel` ring on a click (and on type, check and upload) is measured after the click has had its effect, so an
@@ -48,18 +43,18 @@ All notable changes to scenecast are listed here. The format follows
 - A ring fades out early when its element is removed or hidden, instead of floating over what comes next.
 - A ring on an element taller than the screen, or one that would scroll the page while an earlier ring is showing,
   no longer scrolls the page; the render warns and suggests ringing a smaller part.
-- The render warns when a `type` step's typing would still be going as the next step sets off.
-- Takes recorded by 1.1.0 are recorded again (the record stage's cache version is 4); voice and music are kept.
-
-- A step without a cue now starts after the step before it has acted, not while that step's cursor is still gliding,
-  so it can no longer act first (which failed the render with "action is scheduled before the previous action").
-- Steps that could only fail once recorded are reported after the voice is made and before anything is recorded, all
-  at once, each with what to change: a step on a scene's first word, a step that would act before the step above it,
-  and a step that would run past the end of its scene. A first step without a cue now acts 0.2 s into the scene,
-  once the take has started.
-
-- Forced alignment no longer drops a whole phrase to the free transcript when two adjacent words get the same start:
-  the later word starts one alignment frame on, so the phrase keeps its forced word times.
+- A cue with a symbol in it, such as `Save & close`, matches the narration: words with no letter or digit
+  count on neither side.
+- A changed seed records every scene again: the files a seed command names (`scripts/seed.mjs` in
+  `node scripts/seed.mjs`) are part of the recordings' cache key, as a seed script path already was.
+- A take whose flash marker is missing (rare, and gone on the next try) is recorded once more by itself instead of
+  failing the render.
+- The audit's zoom target check leaves out the part of a zoom's `pad` that runs off the frame, so a large pad on an
+  element near the edge no longer FAILs with "zoom does not contain target".
+- Captions no longer break between a hyphenated word and its noun ("your to-do / list"), or leave a clause's last
+  function word alone at the start of a line ("the team asked / for, Open"); a function word that ends a clause may end a
+  line.
+- Retime no longer prints "quiet window (0.00 s) is shorter than the 0.00 s to cut" for cuts too small to show.
 
 ## [1.1.0] - 2026-10-28
 
