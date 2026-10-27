@@ -202,7 +202,8 @@ describe('work dir lock', () => {
     });
 
   it('a process that throws or is stopped by a signal leaves no lock behind', async () => {
-    for (const then of ["throw new Error('boom');", 'setInterval(() => {}, 1000);']) {
+    // The throw waits a moment, so the parent sees the lock before the child's exit handler removes it.
+    for (const then of ["setTimeout(() => { throw new Error('boom'); }, 300);", 'setInterval(() => {}, 1000);']) {
       const dir = path.join(work, `v-${then.length}`);
       const r = await child(dir, then);
       expect(r.sawLock, then).toBe(true);
