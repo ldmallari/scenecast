@@ -119,11 +119,15 @@ Recording happens in real time, so a render takes several times the length of th
   demo took 4 to 5 minutes);
 - a re-run with nothing changed: under a second, as every stage comes from the cache.
 
-## Use it from Claude Code
+## Use it with an AI coding agent
 
-[`skill/`](skill/) is a Claude Code skill. It walks Claude through writing the script and the scene file, rendering,
-reading every row of the audit, and fixing what fails. Copy the folder to `~/.claude/skills/scenecast/` (or your
-project's `.claude/skills/`) to use it.
+[`skill/`](skill/) holds plain instructions ([`skill/SKILL.md`](skill/SKILL.md) and its references) that walk an agent
+through writing the script and the scene file, rendering, reading every row of the audit, and fixing what fails.
+
+- **Claude Code:** copy the folder to `~/.claude/skills/scenecast/` (or your project's `.claude/skills/`), then ask,
+  for example, "make a walkthrough video of our sign-up flow".
+- **Codex or any other agent:** any agent that can read files and run shell commands can use it. Tell it to read
+  `skill/SKILL.md` and follow it.
 
 ## Development
 

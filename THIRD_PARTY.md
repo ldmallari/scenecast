@@ -49,6 +49,15 @@ font licence (SIL OFL 1.1) and ship with its licence text.
 |---|---|---|
 | `Inter` 4.1 (`InterVariable.woff2`, licence in `Inter-OFL.txt`) | OFL-1.1 | https://github.com/rsms/inter/releases/tag/v4.1 |
 
+## Icons on the website
+
+The website (`site/`) inlines a few SVG icons:
+
+| Icons | Licence | Source |
+|---|---|---|
+| Line icons: arrow-right, arrow-up-right, arrow-down, copy, check, play, pause (Lucide 0.469.0) | ISC | https://github.com/lucide-icons/lucide |
+| GitHub mark (Octicons 19.15.1, `mark-github`) | MIT | https://github.com/primer/octicons |
+
 ## Code derived from other projects
 
 `py/scenecast_py/kokoro.py` is a small Kokoro inference wrapper written for scenecast (the kokoro-onnx package itself

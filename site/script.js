@@ -6,10 +6,12 @@ document.querySelectorAll('pre').forEach((pre, index) => {
   block.className = 'code-block';
   pre.before(block);
   block.append(pre);
+  const ICON_COPY = '<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/> <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+  const ICON_CHECK = '<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"/></svg>';
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'copy-button';
-  button.textContent = 'Copy';
+  button.innerHTML = ICON_COPY + '<span>Copy</span>';
   button.setAttribute('aria-label', `Copy code block ${index + 1}`);
   const status = document.createElement('div');
   status.className = 'copy-status';
@@ -25,10 +27,10 @@ document.querySelectorAll('pre').forEach((pre, index) => {
     clearTimeout(reset);
     try {
       await navigator.clipboard.writeText(code.textContent);
-      button.textContent = 'Copied';
+      button.innerHTML = ICON_CHECK + '<span>Copied</span>';
       status.textContent = 'Copied to clipboard.';
       reset = setTimeout(() => {
-        button.textContent = 'Copy';
+        button.innerHTML = ICON_COPY + '<span>Copy</span>';
         status.textContent = '';
       }, 2500);
     } catch {
@@ -73,7 +75,7 @@ if (demo && toggle) {
     } else {
       demo.play().catch(() => {});
     }
-    toggle.textContent = paused ? 'Play demo' : 'Pause demo';
+    toggle.innerHTML = (paused ? '<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polygon points="6 3 20 12 6 21 6 3"/></svg>' : '<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="14" y="4" width="4" height="16" rx="1"/> <rect x="6" y="4" width="4" height="16" rx="1"/></svg>') + '<span>' + (paused ? 'Play demo' : 'Pause demo') + '</span>';
     toggle.setAttribute('aria-pressed', String(paused));
   }
   if (paused) {

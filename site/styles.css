@@ -455,3 +455,20 @@ code, pre, kbd, samp { font-variant-ligatures: none; font-feature-settings: "lig
   html { scroll-behavior: auto; }
   *, ::before, ::after { transition: none !important; animation: none !important; }
 }
+
+/* Icons: Lucide (ISC) line icons and the GitHub mark (Octicons, MIT), inline SVG in currentColor. */
+.i { width: 1.05em; height: 1.05em; flex: none; vertical-align: -0.16em; }
+.i-gh { width: 1.1em; height: 1.1em; }
+a:has(> .i), button:has(> .i) { display: inline-flex; align-items: center; gap: .45em; }
+.copy-button .i, .demo-toggle .i { width: .95em; height: .95em; }
+@media (prefers-reduced-motion: no-preference) {
+  a:hover > .i:not(.i-gh):last-child { transform: translateX(2px); transition: transform .15s ease; }
+}
+
+/* Coding-agent section */
+.agent-section { padding-top: 40px; }
+.agent-steps { margin: 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 14px; max-width: 76ch; }
+.agent-steps li { counter-increment: step; position: relative; padding: 16px 18px 16px 52px; background: var(--surface, #fff); border: 1px solid var(--line); border-radius: 12px; font-size: .9375rem; line-height: 1.75; }
+.agent-steps li::before { content: counter(step); position: absolute; left: 18px; top: 16px; font: 600 .8125rem/1.75 var(--mono); color: var(--accent, #c2401f); }
+.footer-credit { margin-top: 4px; font-size: .8125rem; }
+.footer-credit a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
