@@ -30,7 +30,7 @@
       <div class="brand"><a class="wordmark" href="index.html" aria-label="scenecast home"><img src="assets/brand/logo.svg" alt="scenecast" width="284" height="58"></a><p class="brand-tagline">We make app walkthroughs land on cue.</p></div>
       <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="docs.html" aria-current="page">Docs</a><a href="audit.html">Audit</a><a class="github-nav" href="https://github.com/ldmallari/scenecast"><svg class="i i-gh" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>GitHub<span class="source-chip"> open source</span></a></nav>
     </div></header>
-  <main id="main" tabindex="-1"><header class="page-heading shell"><h1>From a scene file<br>to a walkthrough.</h1><p class="lead">Set up the toolchain, record the demo, then describe your own app.</p></header><div class="shell reading-shell"><div class="docs-layout"><aside class="toc"><nav aria-label="On this page"><p class="eyebrow">On this page</p><ul><li><a href="#getting-started">Getting started</a></li><li><a href="#your-first-scene">Your first scene</a></li><li><a href="#commands">Commands</a></li><li><a href="#scene-file-reference">Scene file reference</a></li><li><a href="#top-level">Top level</a></li><li><a href="#cards">cards</a></li><li><a href="#card-pages">Card pages</a></li><li><a href="#brand">brand</a></li><li><a href="#app">app</a></li><li><a href="#init-scripts-and-routes">Init scripts and routes</a></li><li><a href="#voice">voice</a></li><li><a href="#scenes">scenes</a></li><li><a href="#steps">steps</a></li><li><a href="#cursor">cursor</a></li><li><a href="#phone-scenes">Phone scenes</a></li><li><a href="#captions">Captions</a></li><li><a href="#output">Output</a></li></ul></nav></aside><article class="prose">
+  <main id="main" tabindex="-1"><header class="page-heading shell"><h1>From a scene file<br>to a walkthrough.</h1><p class="lead">Set up the toolchain, record the demo, then describe your own app.</p></header><div class="shell reading-shell"><div class="docs-layout"><aside class="toc"><nav aria-label="On this page"><p class="eyebrow">On this page</p><ul><li><a href="#getting-started">Getting started</a></li><li><a href="#your-first-scene">Your first scene</a></li><li><a href="#commands">Commands</a></li><li><a href="#scene-file-reference">Scene file reference</a></li><li><a href="#top-level">Top level</a></li><li><a href="#cards">cards</a></li><li><a href="#card-pages">Card pages</a></li><li><a href="#brand">brand</a></li><li><a href="#app">app</a></li><li><a href="#init-scripts-and-routes">Init scripts and routes</a></li><li><a href="#voice">voice</a></li><li><a href="#scenes">scenes</a></li><li><a href="#setup">setup</a></li><li><a href="#steps">steps</a></li><li><a href="#cursor">cursor</a></li><li><a href="#phone-scenes">Phone scenes</a></li><li><a href="#captions">Captions</a></li><li><a href="#output">Output</a></li></ul></nav></aside><article class="prose">
 <section aria-labelledby="getting-started"><h2 id="getting-started">Getting started</h2><p>Use macOS or Linux (WSL works), <strong>Node.js 24</strong> and <strong>pnpm 10</strong>. Allow about 2 GB for the models, Python environment and Chromium.</p><p>Run these commands in a clone of the repository. <code>doctor</code> sets up the local toolchain and models; the first run needs a network connection.</p><pre><code class="language-sh"># in a clone of this repository
 pnpm install
 pnpm -C packages/cli exec playwright install chromium
@@ -38,7 +38,7 @@ node packages/cli/bin/scenecast.js doctor
 
 # start the demo app (an invented product, included in the repo), then render its video
 node examples/demo-app/server.mjs &amp;
-node packages/cli/bin/scenecast.js render examples/demo-app/video.yaml</code></pre><p>The render writes <code>out/demo.mp4</code>, <code>out/demo.srt</code>, <code>out/chapters.txt</code> and <code>out/audit/</code>. Open <code>out/audit/audit-table.md</code> to see every moment checked.</p><p>On Linux, Chromium may need system libraries. This step requires admin rights:</p><pre><code class="language-sh">pnpm -C packages/cli exec playwright install --with-deps chromium</code></pre><p><code>scenecast doctor</code> installs uv in <code>~/.local/bin/uv</code> (or <code>~/.cache/scenecast/bin/uv</code>), the Python environment in <code>py/.venv</code>, and models and NLTK data in <code>~/.cache/scenecast/</code>. <code>scenecast render</code> performs the same setup on first use if you skip doctor.</p></section>
+node packages/cli/bin/scenecast.js render examples/demo-app/video.yaml</code></pre><p>The render writes <code>out/demo.mp4</code>, <code>out/demo.srt</code>, <code>out/chapters.txt</code> and <code>out/audit/</code>. Open <code>out/audit/audit-table.md</code> to see every moment checked.</p><p>On Linux, Chromium may need system libraries. This step requires admin rights:</p><pre><code class="language-sh">pnpm -C packages/cli exec playwright install --with-deps chromium</code></pre><p><code>scenecast doctor</code> installs uv in <code>~/.local/bin/uv</code> (or <code>~/.cache/scenecast/bin/uv</code>), the Python environment in <code>py/.venv</code>, and models and NLTK data in <code>~/.cache/scenecast/</code>. <code>scenecast render</code> performs the same setup on first use if you skip doctor.</p><p><strong>The render stops with &quot;No usable sandbox!&quot; (Linux).</strong> Ubuntu 23.10 and later, and CI runners built on it, block the unprivileged user namespaces Chromium's sandbox needs. scenecast therefore runs the final render's Chromium without its sandbox on Linux, as Playwright already does for the recording; the page it loads is scenecast's own, built locally. Set <code>SCENECAST_CHROME_SANDBOX=1</code> to keep the sandbox on a system that allows it.</p></section>
 <section aria-labelledby="your-first-scene"><h2 id="your-first-scene">Your first scene</h2><p>Copy <code>examples/demo-app/video.yaml</code>, set <code>app.baseUrl</code> to your running app, then edit the narration and steps. A step’s <code>cue</code> must appear in its scene’s narration.</p><pre><code class="language-yaml">- id: sign-in
   kind: app
   route: /login
@@ -53,7 +53,8 @@ node packages/cli/bin/scenecast.js render examples/demo-app/video.yaml</code></p
 scenecast login &lt;video.yaml&gt;          sign in by hand and save app.storageState
 scenecast render &lt;video.yaml&gt; [--only &lt;sceneId&gt;] [--no-audit] [--keep-work] [--fresh]
                               [--out &lt;dir&gt;] [--work &lt;dir&gt;]
-scenecast preview &lt;video.yaml&gt;        open the composed video in the Revideo player</code></pre><p>Stages whose inputs have not changed are reused from <code>work/&lt;id&gt;/</code>. Use <code>--fresh</code> after the app itself changes: the cache does not track the app. Use <code>--only &lt;sceneId&gt;</code> while refining one scene.</p><p>Recording runs in real time. Composition takes about 2× the video length; a whole cold render takes about 3.5 to 7×. A run with nothing changed reuses every stage and can finish in under a second.</p></section><h2 id="scene-file-reference">Scene file reference</h2>
+scenecast preview &lt;video.yaml&gt;        open the composed video in the Revideo player
+scenecast --version                   print the version</code></pre><p>Stages whose inputs have not changed are reused from <code>work/&lt;id&gt;/</code>. The cache is keyed on the scene file, the saved session, the login hook, the seed script (or the files a seed command names) and <code>app.seedInputs</code>, not on the app itself or its database. Use <code>--fresh</code> after the app itself changes, or when its data changed some other way than through those files. Use <code>--only &lt;sceneId&gt;</code> while refining one scene.</p><p>Recording runs in real time. Composition takes about 2× the video length; a whole cold render takes about 3.5 to 7×. A run with nothing changed reuses every stage and can finish in under a second. The first render after updating to 1.2 makes every scene's voice and recording again, so the alignment and recording fixes reach videos cached by 1.1; the music is kept.</p></section><h2 id="scene-file-reference">Scene file reference</h2>
 <p>A scene file (<code>video.yaml</code>; <code>.yml</code> and <code>.json</code> work too) describes one video: the app to record, the brand, the
 voice, and an ordered list of scenes. Each scene has its narration and the steps to perform while it is spoken. Every
 step names a <strong>cue</strong>, a word or phrase in the narration, and scenecast times the step so that it lands on that word.</p>
@@ -349,7 +350,7 @@ not drawn on it.</li>
 <tr>
 <td><code>login</code></td>
 <td>no</td>
-<td>Steps that sign in, run before each signed-in scene is recorded (scenes reused from the cache don't sign in), untimed and not recorded. They use the same step format as scenes (<code>goto</code>, <code>type</code>, <code>click</code>, <code>press</code>, <code>hover</code>, <code>wait</code>).</td>
+<td>Steps that sign in, run before each signed-in scene is recorded (scenes reused from the cache don't sign in), untimed and not recorded. They use the same step format as scenes (<code>goto</code>, <code>type</code>, <code>click</code>, <code>check</code>, <code>upload</code>, <code>press</code>, <code>hover</code>, <code>scroll</code>, <code>wait</code>).</td>
 </tr>
 <tr>
 <td><code>storageState</code></td>
@@ -364,7 +365,12 @@ not drawn on it.</li>
 <tr>
 <td><code>seed</code></td>
 <td>no</td>
-<td>Runs once before the first recording, in the scene file's folder, with <code>SCENECAST_BASE_URL</code> set. A single word naming a file that exists (relative to the scene file), such as <code>./seed.mjs</code>, is a script: <code>.js</code>, <code>.mjs</code>, <code>.cjs</code> and <code>.ts</code> run with <code>node</code>, <code>.sh</code> with <code>sh</code>, anything else directly. Anything else, such as <code>node scripts/seed.mjs</code> or <code>python db/seed.py</code>, runs as a shell command. A single word that looks like a path but names no file (<code>./nope.mjs</code>) is an error when the scene file loads. Seeding is skipped when every recording is reused from the cache.</td>
+<td>Runs once before the first recording, in the scene file's folder, with <code>SCENECAST_BASE_URL</code> set. A single word naming a file that exists (relative to the scene file), such as <code>./seed.mjs</code>, is a script: <code>.js</code>, <code>.mjs</code>, <code>.cjs</code> and <code>.ts</code> run with <code>node</code>, <code>.sh</code> with <code>sh</code>, anything else directly. Anything else, such as <code>node scripts/seed.mjs</code> or <code>python db/seed.py</code>, runs as a shell command. A single word that looks like a path but names no file (<code>./nope.mjs</code>) is an error when the scene file loads. Seeding is skipped when every recording is reused from the cache. The seed script, and every word of a seed command that names a file (<code>scripts/seed.mjs</code> in <code>node scripts/seed.mjs</code>), are part of the recordings' cache key: change one and every scene is recorded again.</td>
+</tr>
+<tr>
+<td><code>seedInputs</code></td>
+<td>no</td>
+<td>More files the seed reads (its data, for example <code>./seed/people.json</code>), relative to the scene file. Their contents join the recordings' cache key too. A missing one is a load error.</td>
 </tr>
 <tr>
 <td><code>nav</code></td>
@@ -524,6 +530,11 @@ exactly one time, whatever its punctuation, hyphens or numbers (&quot;sign-in&qu
 <td>Paths to open, and wait on, before <code>route</code>, so caches are warm when recording starts.</td>
 </tr>
 <tr>
+<td><code>setup</code></td>
+<td>no</td>
+<td>App scenes: steps run after <code>route</code> opens and before recording starts, untimed and not filmed, so the scene starts part-way through a flow (an open drawer, step 2 of a wizard). See <a href="#setup">setup</a>.</td>
+</tr>
+<tr>
 <td><code>seconds</code></td>
 <td>title scenes: yes</td>
 <td>The card's minimum length. It runs longer if the narration needs it.</td>
@@ -531,7 +542,7 @@ exactly one time, whatever its punctuation, hyphens or numbers (&quot;sign-in&qu
 <tr>
 <td><code>zoom</code></td>
 <td>no</td>
-<td>App scenes: <code>{ sel, pad }</code>. The scene starts zoomed on this element (measured before recording starts), until its first <code>zoom</code> or <code>unzoom</code> step, or the scene end. A selector that matches nothing fails the recording (<code>scene &quot;&lt;id&gt;&quot; zoom selector &quot;&lt;sel&gt;&quot; not found</code>). A zoom that grows to hold a declared nav and so becomes the full frame prints a warning (<code>scene &quot;&lt;id&gt;&quot;: zoom on &lt;sel&gt; became the full frame because it holds nav &lt;nav&gt;</code>).</td>
+<td>App scenes: <code>{ sel, pad }</code>. The scene starts zoomed on this element (measured before recording starts, after <code>setup</code>), until its first <code>zoom</code> or <code>unzoom</code> step, or the scene end. A selector that matches nothing fails the recording (<code>scene &quot;&lt;id&gt;&quot; zoom selector &quot;&lt;sel&gt;&quot; not found</code>). A zoom that grows to hold a declared nav and so becomes the full frame prints a warning (<code>scene &quot;&lt;id&gt;&quot;: zoom on &lt;sel&gt; became the full frame because it holds nav &lt;nav&gt;</code>).</td>
 </tr>
 <tr>
 <td><code>cursor</code></td>
@@ -545,6 +556,30 @@ exactly one time, whatever its punctuation, hyphens or numbers (&quot;sign-in&qu
 </tr>
 </tbody>
 </table></div>
+<h3 id="setup">setup</h3>
+<p>Some places in an app have no URL: a drawer opened by a button, step 3 of a wizard, a form half filled in. <code>setup</code>
+gets the page there before the take starts, the way <code>app.login</code> signs in: its steps run as fast as possible after
+<code>route</code> has opened and settled, the page settles after each one, and none of it is in the video. The scene's first
+frame shows the result.</p>
+<pre><code class="language-yaml">- id: attach
+  kind: app
+  route: /requests
+  setup:
+    - { do: click, sel: &quot;#new-request&quot; }
+    - { do: type, sel: &quot;#request-title&quot;, text: A new monitor }
+    - { do: click, sel: &quot;#wizard-next&quot; }
+  narration: Attach a quote, and send the request.
+  steps:
+    - { cue: Attach, do: upload, sel: &quot;.dropzone&quot;, file: ./quote.pdf }
+    - { cue: send, do: click, sel: &quot;#wizard-submit&quot; }
+</code></pre>
+<p>Setup steps use the step format without <code>cue</code>, <code>occ</code> or <code>offset</code>: <code>click</code>, <code>type</code> (fills the field at once),
+<code>hover</code>, <code>check</code>, <code>upload</code>, <code>press</code>, <code>scroll</code>, <code>wait</code> and <code>goto</code>. What only matters on camera (<code>zoom</code>, <code>ring</code>,
+<code>unzoom</code>, <code>park</code>, and the fields <code>ring</code>, <code>ringSel</code>, <code>ringMs</code>, <code>glideMs</code>, <code>pad</code>, <code>at</code>) is a load error; make it a scene
+step. <code>click</code>, <code>check</code> and <code>hover</code> need <code>sel</code>. The scene's <code>zoom</code> and the declared navs are measured after
+setup, so a scene can start zoomed on the drawer setup opened. A setup selector that matches nothing fails the
+recording with <code>scene &quot;&lt;id&gt;&quot; setup step &lt;i&gt; selector &quot;&lt;sel&gt;&quot; not found</code>. Prefer <code>setup</code> to an <code>app.initScript</code>
+that fakes the state: it drives the app as a person would, so it keeps working when the app's internals change.</p>
 <p>The video is an intro card (3 s by default, music only), then every scene in order, then an outro card (3 s) with
 <code>title</code>. See <a href="#cards">cards</a>.
 A render with <code>--only &lt;id&gt;</code> leaves out the intro and outro cards and writes <code>&lt;output&gt;-&lt;id&gt;.mp4</code> and <code>&lt;output&gt;-&lt;id&gt;.srt</code>.</p>
@@ -561,11 +596,11 @@ A render with <code>--only &lt;id&gt;</code> leaves out the intro and outro card
 <tbody>
 <tr>
 <td><code>do</code></td>
-<td><code>click</code>, <code>type</code>, <code>hover</code>, <code>check</code>, <code>scroll</code>, <code>press</code>, <code>zoom</code>, <code>unzoom</code>, <code>ring</code>, <code>park</code>, <code>wait</code> or <code>goto</code>.</td>
+<td><code>click</code>, <code>type</code>, <code>hover</code>, <code>check</code>, <code>upload</code>, <code>scroll</code>, <code>press</code>, <code>zoom</code>, <code>unzoom</code>, <code>ring</code>, <code>park</code>, <code>wait</code> or <code>goto</code>.</td>
 </tr>
 <tr>
 <td><code>cue</code></td>
-<td>A word or phrase from the narration (case-insensitive, whole words). The step lands on its first word.</td>
+<td>A word or phrase from the narration (case-insensitive, whole words; punctuation and symbols such as <code>&amp;</code> do not count, so <code>Save &amp; close</code> matches &quot;Save &amp; close&quot;). The step lands on its first word.</td>
 </tr>
 <tr>
 <td><code>occ</code></td>
@@ -577,11 +612,15 @@ A render with <code>--only &lt;id&gt;</code> leaves out the intro and outro card
 </tr>
 <tr>
 <td><code>sel</code></td>
-<td>A CSS selector, or a list of them. <code>click</code>, <code>type</code>, <code>hover</code>, <code>zoom</code> and <code>ring</code> need one. With a list, the box is the union of all matches and the pointer aims at the first.</td>
+<td>A CSS selector, or a list of them. <code>click</code>, <code>type</code>, <code>hover</code>, <code>check</code>, <code>upload</code>, <code>zoom</code> and <code>ring</code> need one. With a list, the box is the union of all matches and the pointer aims at the first.</td>
 </tr>
 <tr>
 <td><code>text</code></td>
 <td>What <code>type</code> types, the key <code>press</code> presses (default <code>Enter</code>), or the path <code>goto</code> opens.</td>
+</tr>
+<tr>
+<td><code>file</code></td>
+<td><code>upload</code>: the file to choose, or a list of files, relative to the scene file. A file that does not exist is a load error (<code>scene &quot;&lt;id&gt;&quot; step &lt;i&gt;: upload file not found: &lt;path&gt;</code>).</td>
 </tr>
 <tr>
 <td><code>ms</code></td>
@@ -597,7 +636,7 @@ A render with <code>--only &lt;id&gt;</code> leaves out the intro and outro card
 </tr>
 <tr>
 <td><code>ringSel</code></td>
-<td><code>click</code>, <code>type</code>, <code>hover</code> and <code>check</code>: ring this element instead of the step's target (a selector or a list). Implies <code>ring: true</code>.</td>
+<td><code>click</code>, <code>type</code>, <code>hover</code>, <code>check</code> and <code>upload</code>: ring this element instead of the step's target (a selector or a list). Implies <code>ring: true</code>.</td>
 </tr>
 <tr>
 <td><code>ringMs</code></td>
@@ -605,7 +644,7 @@ A render with <code>--only &lt;id&gt;</code> leaves out the intro and outro card
 </tr>
 <tr>
 <td><code>glideMs</code></td>
-<td><code>click</code>, <code>type</code>, <code>hover</code>, <code>check</code> and <code>park</code>: how long the cursor takes to get there (default 520).</td>
+<td><code>click</code>, <code>type</code>, <code>hover</code>, <code>check</code>, <code>upload</code> and <code>park</code>: how long the cursor takes to get there (default 520).</td>
 </tr>
 <tr>
 <td><code>by</code></td>
@@ -631,14 +670,26 @@ A render with <code>--only &lt;id&gt;</code> leaves out the intro and outro card
 the field, then types <code>text</code> one character at a time.
 A <code>hover</code> cannot ring an element that the hover itself reveals (a tooltip, a menu that opens on hover): the ring is
 measured as the cursor arrives, before it appears. Ring it from the next step instead, for example
-<code>{ cue: …, do: ring, sel: &quot;.tooltip&quot; }</code>. A hover that moves what it rings (a row that lifts or grows on hover) is
-fine: a hover's <code>ringSel</code> ring waits for the transitions and animations on those elements and their ancestors to
-finish (at most 0.4 s after the cue) and is drawn round them where they come to rest.</li>
+<code>{ cue: …, do: ring, sel: &quot;.tooltip&quot; }</code>. An action that moves what it rings is fine: a row that lifts on hover, or
+a dialog that grows and re-centres when an option is clicked. A <code>ringSel</code> ring (on a hover, click, type, check or
+upload) is drawn once the action has had its effect: after the layout change and the transitions and animations on
+those elements and their ancestors (at most 0.4 s after the cue), round them where they come to rest. On a <code>type</code>
+step it is drawn after the click into the field, before the typing.
+<code>type</code> types one character every 35 ms. When the typing would run so long that the next step acts late (a glide
+that sets off late shrinks to half its length, which absorbs a little), the render warns (<code>typing &quot;…&quot; (24 characters, 0.84 s) runs until 2.14 s, after step 1 … is due to start at 1.68 s</code>): that step
+would start late, so start typing on an earlier word, or shorten the text.</li>
 <li><strong>check.</strong> Ticks a checkbox or switch: the cursor glides to it, and it is clicked only when it is not already
 checked, so a re-render over seeded data that already has it ticked stays the same. The recording fails when it
 is still unchecked afterwards (<code>scene &quot;&lt;id&gt;&quot; step &lt;i&gt;: &lt;sel&gt; is not checked after the click</code>). <code>sel</code> must be the
 element that carries the state: the <code>&lt;input type=checkbox&gt;</code> itself, or the element with <code>role=&quot;switch&quot;</code> (or
 <code>role=&quot;checkbox&quot;</code>) and <code>aria-checked</code>, not a label or a wrapper around it.</li>
+<li><strong>upload.</strong> Chooses a file the way a viewer would: the cursor glides to <code>sel</code> (the button, label or drop zone that
+opens the file chooser) and clicks it on the cue, and the file chooser that opens is answered with <code>file</code> (no
+dialog shows in the video). <code>sel</code> must be something visible that opens the chooser when clicked, not a hidden
+<code>&lt;input type=file&gt;</code>; a click that opens no chooser within 2 s fails the recording (<code>clicking &quot;&lt;sel&gt;&quot; opened no file chooser; point sel at the button, label or drop zone that opens it</code>). The files' contents are part of the cache
+key, so changing a file records the scene again. <code>upload</code> works in <code>app.login</code> too.
+<pre><code class="language-yaml">- { cue: attach, do: upload, sel: &quot;.dropzone&quot;, file: ./files/quote.pdf }
+</code></pre></li>
 <li><strong>press.</strong> Presses a key (<code>text</code>, default <code>Enter</code>).</li>
 <li><strong>scroll.</strong> With <code>sel</code>, scrolls the element into the middle of the view (in whatever container scrolls it). With
 <code>by</code> or <code>to</code>, scrolls the <strong>window</strong>; with none of them, it scrolls the window down by most of a screen. <code>by</code> and
@@ -650,11 +701,17 @@ frame's 16:9 shape, magnifies at most 2.5×, keeps 24 px of space around the tar
 shows a declared nav whole or not at all. A target too big to need a zoom gets the full frame. When holding a
 declared nav whole is what makes the region the full frame (a large <code>pad</code> reaching a top bar, say), render and
 preview print a warning: <code>scene &quot;&lt;id&gt;&quot; step &lt;i&gt;: zoom on &lt;sel&gt; became the full frame because it holds nav &lt;nav&gt;</code>
-(see <a href="audit.html#crop-fails">troubleshooting</a>).</li>
+(see <a href="audit.html#crop-fails">troubleshooting</a>). When a caption finds no free position while a zoom is
+held, render and preview warn before composing: <code>zoom on &lt;sel&gt; leaves no caption position free (its target fills
+N% of the zoomed height)</code>.</li>
 <li><strong>unzoom.</strong> Eases the zoom out, starting on its cue (it needs a <code>zoom</code> step before it in the scene, or the scene's
 own <code>zoom</code>, which it then ends). It has no <code>sel</code>.
 Use it to end a zoom on a word (&quot;…comes <strong>first</strong>&quot;) instead of after a fixed <code>ms</code>.</li>
-<li><strong>ring.</strong> Draws a highlight ring around the element.</li>
+<li><strong>ring.</strong> Draws a highlight ring around the element. A ring fades out early when its element is removed or hidden
+(a drawer that closes), so it never floats over what comes next. The element is scrolled into view first, unless
+it already shows in part and is taller than the screen, or an earlier ring is still showing (scrolling would move
+the page under that ring): then the ring runs off the screen's edge and the render warns
+(<code>ring target &quot;&lt;sel&gt;&quot; is taller than the screen …</code>); ring a smaller part, such as the card's heading.</li>
 <li><strong>park.</strong> Glides the cursor to a <a href="#cursor">spot</a> out of the way (<code>at</code>, default <code>cursor.park</code>). Not allowed on phone
 scenes, which have no cursor (use <code>wait</code> to hold). Parking also happens by itself; see <a href="#cursor">cursor</a>.</li>
 <li><strong>goto.</strong> Opens a path in the app.</li>
@@ -663,11 +720,28 @@ scenes, which have no cursor (use <code>wait</code> to hold). Parking also happe
 <p>The first pointer step of a scene that comes too soon after the scene starts for a glide is <strong>pre-positioned</strong>: the
 cursor is already on its target from the first frame, and the action fires on its cue. On a phone scene, a
 pre-positioned first tap's touch indicator appears at the tap without fading in.</p>
-<p>A step without a <code>cue</code> runs right after the step before it (plus that step's <code>ms</code>). Only steps with a cue are checked
-for sync by the audit, so give a cue to every step a viewer should see happen on a word.</p>
+<p>A step without a <code>cue</code> starts with the step before it (plus that step's <code>ms</code>), but never acts before that step does:
+a faster glide waits, and a ring or key press after a click comes once the click has landed. A first step without a
+cue acts 0.2 s into the scene, once the take has started. Only steps with a cue are checked for sync by the audit, so give a cue to every step a viewer should
+see happen on a word.</p>
+<p>Once the voice is made, and before anything is recorded, every scene's steps are checked against their times. Each
+problem is named, all at once, with what to change (see
+<a href="audit.html#the-steps-cannot-be-recorded-as-scheduled">troubleshooting</a>):</p>
+<ul>
+<li>a step that would act in the scene's first 0.12 s (a click on a first word at 0 s), while the flash marker that
+starts the take still shows;</li>
+<li>a step that would act before the step listed above it (steps run in the order they are listed).</li>
+</ul>
+<p>Two more cases are warnings, and the render goes on: a step that acts between 0.12 and 0.2 s (it usually records, but
+may still fall inside the flash marker), and a step that acts after the scene ends (its narration plus a short
+breath), which is not shown.</p>
 <p>Before each step the recorder waits for the page to settle: no document, XHR or fetch requests in flight, a stable
 layout, and no visible loading indicator (<code>[aria-busy=true]</code>, <code>[role=progressbar]</code> without a value, <code>.is-loading</code>,
-<code>.skeleton</code> or <code>[data-scenecast-loading]</code>). Open panels (<code>[role=dialog]</code>, <code>[role=menu]</code>, <code>[role=listbox]</code>,
+<code>.skeleton</code> or <code>[data-scenecast-loading]</code>). The wait never makes a cued step late for a page that is merely busy:
+from 0.15 s before the step is due (and at least 0.35 s after the step before it), only a page still loading a document
+or showing a loading indicator holds it up, and data requests or a layout still moving no longer do. A step without a
+cue has no word to be late for, so it always waits for the page to settle (a ring after a click that loads a drawer's
+content is measured on the loaded drawer). Open panels (<code>[role=dialog]</code>, <code>[role=menu]</code>, <code>[role=listbox]</code>,
 <code>[aria-modal=true]</code>, <code>[data-scenecast-panel]</code>, or a selector in <code>app.panels</code>) are measured so captions keep clear of them.</p>
 <h2 id="cursor">cursor</h2>
 <div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
@@ -714,7 +788,9 @@ fades out. <code>brand.accent</code> may be any CSS colour; one that is not a co
 A phrase is cut at clause punctuation (<code>, : ; — .</code>) first, never right after a function word (&quot;the&quot;, &quot;to&quot;, &quot;your&quot;,
 …), and never between a possessive and its noun. The same holds for the line break inside a caption: rather than end a
 line on &quot;your&quot;, the caption moves the word down, rebalancing its lines, or adds a caption when its lines would
-otherwise run past 42 characters. Only a phrase that cannot be cut any other way ends a line on a function word.</p>
+otherwise run past 42 characters. Two more breaks are treated the same way: between a hyphenated word and the word it
+leads into (&quot;to-do / list&quot;), and before a function word that ends a clause (&quot;asked / for, Open&quot;); a function word
+that ends a clause may end a line (&quot;asked for, / Open&quot;). Only a phrase that cannot be cut any other way breaks there.</p>
 <p>Each caption takes the first position that covers nothing it must keep clear (the target, the cursor's destination, a
 ring, an open panel), trying bottom, top, bottom-left, bottom-right, top-left and top-right in that order. During a
 zoom they are placed against what is on screen at that moment. A box that covers 90% or more of the screen as shown
