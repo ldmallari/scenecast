@@ -1,8 +1,28 @@
 import { z } from 'zod';
 import { cueWordIndex } from '../schedule.js';
+import { parseNarration, sayMapProblems, SPEED_MAX, SPEED_MIN, type Speech } from '../speech.js';
+import { voicePlan } from '../voice.js';
 
 export const DEFAULTS = {
-  voice: { name: 'af_heart', lang: 'en-us', speed: 0.9, phraseGapSec: 0.2, clauseGapSec: 0.15 },
+  voice: {
+    name: 'af_heart',
+    lang: 'en-us',
+    speed: 0.9,
+    phraseGapSec: 0.2,
+    clauseGapSec: 0.15,
+    /** All-caps words of 2-6 letters (and a trailing s) that no dictionary knows are spelled out letter by letter. */
+    acronyms: true,
+    /** 'sentence' (default): the phrases of a sentence in one Kokoro call, cut apart at their breaks, so the
+     * intonation runs on and every full stop still lands; 'scene': the whole scene (at one speed) in one call, which
+     * also runs on across sentence ends; 'phrase': one call per phrase (1.x). */
+    flow: 'sentence',
+    /** Faint room tone under the voice track instead of digital silence: false, true (ROOM_TONE_DB) or a dBFS level. */
+    roomTone: true,
+    /** A soft 80 Hz high-pass, a gentle de-esser and light compression on each scene's voice. */
+    polish: true,
+  },
+  /** The room tone's level when `voice.roomTone` is true, dBFS (RMS) in the final mix. */
+  roomToneDb: -60,
   video: {
     width: 1920,
     height: 1080,
@@ -161,13 +181,33 @@ const AppConnSchema = z.object({
   nav: z.array(z.object({ selector: z.string().min(1), edge: z.enum(['left', 'top']) }).strict()).optional(),
 }).strict();
 
+const SpeedSchema = z
+  .number({ invalid_type_error: `speed is a number from ${SPEED_MIN} to ${SPEED_MAX}` })
+  .min(SPEED_MIN, `speed is at least ${SPEED_MIN}`)
+  .max(SPEED_MAX, `speed is at most ${SPEED_MAX}`);
+
 const VoiceSchema = z.object({
   name: z.string().default(DEFAULTS.voice.name),
   lang: z.string().default(DEFAULTS.voice.lang),
-  speed: z.number().positive().default(DEFAULTS.voice.speed),
+  speed: SpeedSchema.default(DEFAULTS.voice.speed),
   phraseGapSec: z.number().nonnegative().default(DEFAULTS.voice.phraseGapSec),
   clauseGapSec: z.number().nonnegative().default(DEFAULTS.voice.clauseGapSec),
+  acronyms: z.boolean().default(DEFAULTS.voice.acronyms),
+  flow: z.enum(['phrase', 'sentence', 'scene'], {
+    errorMap: () => ({ message: 'voice.flow is phrase, sentence or scene' }),
+  }).default(DEFAULTS.voice.flow),
+  roomTone: z
+    .union([z.boolean(), z.number().min(-90, 'roomTone is a level from -90 to -40 dBFS').max(-40, 'roomTone is a level from -90 to -40 dBFS (-60 is faint)')])
+    .default(DEFAULTS.voice.roomTone),
+  polish: z.boolean().default(DEFAULTS.voice.polish),
 }).strict();
+
+/**
+ * How words are said: a key (a word or a few words, matched case-sensitively on word boundaries) and either the
+ * words to say instead ("S K U") or misaki phonemes in slashes ("/sˈibɑl/"). A key mapped to itself is said as a
+ * word (no automatic acronym).
+ */
+const SayMapSchema = z.record(z.string(), z.string({ invalid_type_error: 'a say: value is text: words to say, or phonemes in slashes' }));
 
 const SceneSchema = z.object({
   id: z.string().min(1),
@@ -189,7 +229,17 @@ const SceneSchema = z.object({
   zoom: z.object({ sel: SelSchema, pad: z.number().nonnegative().optional() }).strict().optional(),
   cursor: CursorSpotSchema.optional(),
   seconds: z.number().positive().optional(),
-}).strict();
+  /** Pronunciations for this scene; a key here overrides the same key in the video's `say:`. */
+  say: SayMapSchema.optional(),
+  /** This scene's voice speed (overrides `voice.speed`). */
+  voice: z.object({ speed: SpeedSchema.optional() }).strict().optional(),
+}).strict().transform((scene, ctx): typeof scene & { speech?: Speech } => {
+  // The narration's markup is parsed once: `narration` is the clean text from here on (captions, cues, audit),
+  // and `speech` keeps the marks for the voice.
+  const { speech, errors } = parseNarration(scene.narration);
+  for (const e of errors) ctx.addIssue({ code: 'custom', path: ['narration'], message: `scene "${scene.id}": narration: ${e}` });
+  return { ...scene, narration: speech.text, speech };
+});
 
 /**
  * Number of non-overlapping occurrences of `cue` in `narration`, counted exactly as the scheduler finds them:
@@ -215,8 +265,19 @@ export const VideoSpecSchema = z
     cursor: CursorSchema.default({}),
     phone: PhoneSchema.default({}),
     scenes: z.array(SceneSchema).min(1),
-    /** Names and words speech recognition may spell differently without a narration WARN. */
-    audit: z.object({ allowList: z.array(z.string().trim().min(1)).default([]) }).strict().optional(),
+    /** Pronunciations for every scene (see SayMapSchema). */
+    say: SayMapSchema.optional(),
+    audit: z
+      .object({
+        /** Names and words speech recognition may spell differently without a narration WARN. */
+        allowList: z.array(z.string().trim().min(1)).default([]),
+        /** Words the voice may have said differently from the script: a WARN (default), a FAIL, or not checked. */
+        pronunciation: z.enum(['warn', 'fail', 'off'], {
+          errorMap: () => ({ message: 'audit.pronunciation is warn, fail or off' }),
+        }).default('warn'),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((spec, ctx) => {
@@ -228,7 +289,16 @@ export const VideoSpecSchema = z
       if (n > 1)
         ctx.addIssue({ code: 'custom', path: ['app', 'routes', k], message: `app.routes[${k}]: use one of json, body, module` });
     });
+    if (spec.say) for (const message of sayMapProblems(spec.say, 'say')) ctx.addIssue({ code: 'custom', path: ['say'], message });
     spec.scenes.forEach((scene, si) => {
+      if (scene.say)
+        for (const message of sayMapProblems(scene.say, `scene "${scene.id}" say`))
+          ctx.addIssue({ code: 'custom', path: ['scenes', si, 'say'], message });
+      try {
+        voicePlan(scene, spec.voice, spec.say);
+      } catch (e) {
+        ctx.addIssue({ code: 'custom', path: ['scenes', si, 'narration'], message: (e as Error).message });
+      }
       if (scene.kind === 'title') {
         for (const key of ['seconds'] as const) {
           if (scene[key] === undefined) {
@@ -255,7 +325,7 @@ export const VideoSpecSchema = z
     });
   });
 
-type SceneIn = z.infer<typeof SceneSchema>;
+type SceneIn = z.output<typeof SceneSchema>;
 
 /** What a setup step may do: everything but what only matters on camera. */
 const SETUP_KINDS: ReadonlySet<string> = new Set(['click', 'type', 'hover', 'check', 'upload', 'press', 'wait', 'goto', 'scroll']);

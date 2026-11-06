@@ -70,6 +70,30 @@ function loudnormFilter(s: LoudnormStats, target: number): string {
   );
 }
 
+/** Room tone: brown noise (seeded, so every render is the same), shaped low: 60 Hz to 1 kHz. */
+const ROOM_TONE_SEED = 7;
+const ROOM_TONE_SHAPE = 'highpass=f=60,lowpass=f=1000';
+
+/** The ffmpeg source for `sec` seconds of room tone at amplitude `amp` (mono, 48 kHz). */
+function roomToneSource(sec: string, amp: number): string {
+  return `anoisesrc=d=${sec}:c=brown:r=${SAMPLE_RATE}:a=${amp.toFixed(6)}:s=${ROOM_TONE_SEED},${ROOM_TONE_SHAPE}`;
+}
+
+/** RMS level (dBFS) of a filter graph's output, from ffmpeg's astats. */
+async function rmsDb(ffmpeg: string, source: string): Promise<number> {
+  const { err } = await runFfmpeg(ffmpeg, ['-hide_banner', '-nostdin', '-f', 'lavfi', '-i', `${source},astats=measure_overall=RMS_level:measure_perchannel=none`, '-f', 'null', '-']);
+  const m = /RMS level dB:\s*(-?[\d.]+)/.exec(err);
+  if (!m) throw new Error('mix: could not measure the room tone level');
+  return Number(m[1]);
+}
+
+/** The amplitude that puts the room tone at `db` dBFS RMS (measured once on 10 s of it: the source is seeded). */
+export async function roomToneAmplitude(db: number, ffmpeg?: string): Promise<number> {
+  const bin = ffmpeg ?? (await ffmpegPath());
+  const at1 = await rmsDb(bin, roomToneSource('10', 1));
+  return Math.min(1, 10 ** ((db - at1) / 20));
+}
+
 /**
  * Adds the only audio the video gets: voice (one WAV covering the whole timeline) plus an optional music bed
  * at -29 LUFS that ducks 6 dB under the voice, normalised to -16 LUFS / TP -1.5. The video stream is copied.
@@ -80,8 +104,9 @@ export async function mix(
   voiceWav: string,
   musicWav: string | null,
   out: string,
-  /** Internal test hook: `duck: false` leaves the music un-ducked. */
-  opts: { duck?: boolean } = {},
+  /** `roomToneDb`: faint room tone under the voice at this level (dBFS RMS, after the voice is at its target),
+   * instead of digital silence (`voice.roomTone`). Internal test hook: `duck: false` leaves the music un-ducked. */
+  opts: { duck?: boolean; roomToneDb?: number } = {},
 ): Promise<{ lufs: number; truePeak: number }> {
   for (const [what, file] of [['video', videoIn], ['voice', voiceWav], ['music', musicWav]] as const) {
     if (file !== null && !fs.existsSync(file)) throw new Error(`mix: ${what} file not found: ${file}`);
@@ -101,7 +126,25 @@ export async function mix(
     const common = ['-hide_banner', '-nostdin', '-y'];
     const t = dur.toFixed(3);
 
-    if (musicWav === null) {
+    const tone = opts.roomToneDb === undefined ? null : await roomToneAmplitude(opts.roomToneDb, ffmpeg);
+    // The room tone joins the voice once the voice is at its target, so its level holds in the final mix.
+    const toneIn = (voice: string) =>
+      tone === null
+        ? { graph: [] as string[], out: voice }
+        : {
+            graph: [`${roomToneSource(t, tone)},${STEREO},afade=t=in:d=0.5,afade=t=out:st=${Math.max(0, dur - 0.5).toFixed(3)}:d=0.5[tone]`,
+              `[${voice}][tone]amix=inputs=2:duration=first:normalize=0[vt]`],
+            out: 'vt',
+          };
+    if (musicWav === null && tone !== null) {
+      const voiceGain = L.voiceLufs - (await measureLufs(voiceWav, ffmpeg));
+      const ti = toneIn('v');
+      await runFfmpeg(ffmpeg, [
+        ...common, '-i', voiceWav,
+        '-filter_complex', [`[0:a]${STEREO},apad,atrim=0:${t},volume=${voiceGain.toFixed(3)}dB[v]`, ...ti.graph].join(';'),
+        '-map', `[${ti.out}]`, '-t', t, '-c:a', 'pcm_f32le', premix,
+      ]);
+    } else if (musicWav === null) {
       await runFfmpeg(ffmpeg, [
         ...common, '-i', voiceWav,
         '-af', `${STEREO},apad,atrim=0:${t}`, '-c:a', 'pcm_f32le', premix,
@@ -113,8 +156,10 @@ export async function mix(
       if (!Number.isFinite(voiceGain)) throw new Error(`voice track ${voiceWav} is silent`);
       if (!Number.isFinite(musicGain)) throw new Error(`music track ${musicWav} is silent`);
       const fade = Math.min(L.musicFadeSec, dur / 2);
+      const ti = toneIn('v0');
       const graph = [
-        `[0:a]${STEREO},apad,atrim=0:${t},volume=${voiceGain.toFixed(3)}dB,asplit=2[v][sc]`,
+        `[0:a]${STEREO},apad,atrim=0:${t},volume=${voiceGain.toFixed(3)}dB,asplit=2[${tone === null ? 'v' : 'v0'}][sc]`,
+        ...ti.graph.map((g) => g.replace('[vt]', '[v]')),
         `[1:a]${STEREO},atrim=0:${t},asetpts=N/SR/TB,volume=${musicGain.toFixed(3)}dB,` +
           `afade=t=in:st=0:d=${fade},afade=t=out:st=${(dur - fade).toFixed(3)}:d=${fade}[m]`,
         `${opts.duck === false ? '[sc]anullsink;[m]acopy[ducked]' : `[m][sc]sidechaincompress=threshold=${DUCK_THRESHOLD.toFixed(5)}:ratio=${DUCK_RATIO}:attack=40:release=400:makeup=1[ducked]`}`,

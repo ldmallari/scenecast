@@ -7,7 +7,8 @@ import { outputTimeOf, type Segment } from './retime.js';
 import { DEFAULTS, type Brand, type PhoneAlign, type Scene } from './scene/schema.js';
 import { actionAt, cueWordIndex, type ScheduledStep } from './schedule.js';
 import { ensureToolchain, runPy } from './toolchain.js';
-import type { SceneVoice } from './voice.js';
+import { sceneSaySpans, type SceneVoice } from './voice.js';
+import type { SayMap } from './speech.js';
 
 /** A zoom or ring of the plan: scene seconds, and a box in frame px (take px on phone scenes). */
 export interface AuditTimed {
@@ -70,8 +71,13 @@ export interface AuditOpts {
   loudness: { lufs: number; truePeak: number };
   /** The video's work dir (work/<id>); the audit goes to `<workDir>/audit`. */
   workDir: string;
-  /** The scene file's audit settings: `audit.allowList` is read from here. */
-  spec?: { audit?: { allowList: string[] } };
+  /** The scene file's audit settings (`audit.allowList`, `audit.pronunciation`), and its voice and `say:`, which
+   * tell the pronunciation check how words were meant to be said. */
+  spec?: {
+    audit?: { allowList: string[]; pronunciation?: 'warn' | 'fail' | 'off' };
+    voice?: { phraseGapSec: number; clauseGapSec: number; speed: number };
+    say?: SayMap;
+  };
   /** Overrides the scene file's allow-list (names speech recognition may spell differently without a WARN). */
   allowList?: string[];
   /** A transcript of the final mix (seconds on the video clock). Without it faster-whisper makes one. */
@@ -119,6 +125,8 @@ export function buildAuditInput(
   const align: PhoneAlign = opts.plan.phoneAlign ?? 'center';
   const phoneRect = phoneScreen(align);
 
+  const voiceCfg = opts.spec?.voice ?? DEFAULTS.voice;
+  const say = (scene: Scene) => sceneSaySpans(scene, voiceCfg, opts.spec?.say);
   const scenes = opts.scenes.map(({ scene, planIndex, scheduled, take, flashTime, voice }) => {
     const ps = opts.plan.scenes[planIndex];
     const start = starts[planIndex]!;
@@ -143,7 +151,7 @@ export function buildAuditInput(
     }));
     if (scene.kind === 'title') {
       if (!ps || ps.kind !== 'card') throw new Error(`audit: title scene "${scene.id}" has no card at plan index ${planIndex}`);
-      const base = { id: scene.id, kind: 'title', start: round(start), end: round(start + ps.duration), narration: scene.narration, cues, phrases };
+      const base = { id: scene.id, kind: 'title', start: round(start), end: round(start + ps.duration), narration: scene.narration, say: say(scene), cues, phrases };
       return { ...base, zooms: [], navBox: null, navs: [], initialZoom: null, events: [], moments: [] };
     }
     if (!ps || ps.kind !== 'app') throw new Error(`audit: scene "${scene.id}" has no app scene at plan index ${planIndex}`);
@@ -271,6 +279,7 @@ export function buildAuditInput(
       start: round(start),
       end: round(start + ps.duration),
       narration: scene.narration,
+      say: say(scene),
       cues,
       phrases,
       zooms: zooms.map((z) => ({ ...z, start: round(start + z.start), end: round(start + z.end) })),
@@ -305,6 +314,7 @@ export function buildAuditInput(
     loudness: opts.loudness,
     music: opts.plan.brand.music ? { licence: opts.plan.brand.music.licence } : null,
     allowList: opts.allowList ?? opts.spec?.audit?.allowList ?? [],
+    pronunciation: opts.spec?.audit?.pronunciation ?? 'warn',
     scenes,
   };
 }

@@ -27,7 +27,9 @@ mobile apps, or Windows without WSL.
 
 2. **Write the script first.** Write the narration scene by scene, in plain spoken sentences. In each sentence, name
    the thing that happens on screen with a word the viewer will hear at that moment: "press **Sign in**", "tick the
-   **box**", "open the **account menu**". Those words become cues. Keep one idea per scene.
+   **box**", "open the **account menu**". Those words become cues. Keep one idea per scene. Names, acronyms and
+   product words the voice may say wrongly get a `say:` entry (`SKU: S K U`, or phonemes `Sibal: "/sˈibɑl/"`); a
+   beat the viewer needs to see something gets `[pause 0.5]`. Captions and cues keep the script's own words.
 
 3. **Write `video.yaml`.** Use [references/scene-format.md](references/scene-format.md). For each action, add a step
    with `cue` (the word from the narration), `do` (click, type, check, upload, zoom, unzoom, ring, park, …) and `sel`
@@ -73,6 +75,7 @@ mobile apps, or Windows without WSL.
    | plan: unzoom has no zoom end near it | Put a `zoom` before the `unzoom` in the same scene, and drop the zoom's `ms`. |
    | loading: spinner visible | Seed, prewarm, or wait before the step. |
    | narration WARN, e.g. `-"worklist" +"work list"` | If the voice is right, add the word to `audit.allowList`. If a word was really dropped, rewrite the sentence. |
+   | pronunciation WARN: expected "Mira", heard "Myra" | Listen at that time. If the voice said it wrongly, add the suggested `say:` entry (edit the phonemes) and render again; if the voice was right, allow-list the name. |
 
    More in [references/troubleshooting.md](references/troubleshooting.md).
 

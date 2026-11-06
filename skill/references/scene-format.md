@@ -102,11 +102,12 @@ scenes:
 | `brand` | yes | Colours, font and card text. See [brand](#brand). |
 | `app` | yes | How to reach and sign in to the app. See [app](#app). |
 | `voice` | no | The narrator. See [voice](#voice). |
+| `say` | no | How words are said, in every scene. See [pronunciation](#pronunciation). |
 | `scenes` | yes | At least one scene. See [scenes](#scenes). |
 | `cards` | no | The intro and outro cards. See [cards](#cards). |
 | `cursor` | no | Where the cursor starts and parks. See [cursor](#cursor). |
 | `phone` | no | `align`: where a phone scene's phone sits, `left` (default), `center` or `right`. See [phone scenes](#phone-scenes). |
-| `audit` | no | `allowList`: names and words that speech recognition may spell differently, or leave out, without a narration WARN (for example `[Demo Co]`). An allow-listed cue word that is left out is placed by position, in the gap the heard words around it leave. |
+| `audit` | no | `allowList`: names and words that speech recognition may spell differently, or leave out, without a narration WARN (for example `[Demo Co]`). An allow-listed cue word that is left out is placed by position, in the gap the heard words around it leave. `pronunciation`: `warn` (default), `fail` or `off`: what the audit does when it hears a word said differently from the script (see [the audit reference](audit.md#pronunciation)). |
 
 ## cards
 
@@ -221,14 +222,56 @@ Both apply to every browser context scenecast opens on the app: the recording, t
 | `speed` | `0.9` | Speaking rate (1.0 is Kokoro's normal speed). |
 | `phraseGapSec` | `0.2` | Silence between phrases, in seconds. |
 | `clauseGapSec` | `0.15` | Silence after a phrase that ends at `:` or `;`. `0` gives the v1 rhythm. |
+| `acronyms` | `true` | An all-caps word of 2 to 6 letters (an `s` may follow, as in `IDs`) that misaki's dictionary does not know is spelled out letter by letter: `SKU` is "S K U", but `NASA`, `SCUBA`, `OK` and `ID` stay words. `false` reads such words as words. |
+| `flow` | `sentence` | `sentence`: the phrases of one sentence are voiced in one go and cut apart at their breaks, so the intonation runs on across a clause break and every full stop still lands. `scene`: the same for all of a scene's phrases that share a speed; it also runs on across sentence ends, so a short opening line ("Welcome to Demo Co.") can sound rushed. `phrase`: each phrase is voiced on its own (as in 1.x). The gaps between phrases, and so every cue time, stay as designed. A group that can't be cut cleanly is voiced phrase by phrase, with a log line. |
+| `roomTone` | `true` | `true` lays faint room tone (seeded, low brown noise at about −60 dBFS) under the whole voice track instead of digital silence; `false` turns it off; a number sets its level in dBFS (−90 to −40). |
+| `polish` | `true` | Light processing on each scene's voice: a soft 80 Hz high-pass, a gentle de-esser and light compression. The loudness target is unchanged. `false` turns it off. |
+
+A scene can set its own speed: `voice: { speed: 0.85 }` on the scene overrides `voice.speed` for that scene.
 
 The narration is split into phrases at sentence ends (`.`, `!`, `?`, `…`), and after `:` or `;` when both sides have
 at least 3 words (so "To sign the work agreement: tick the box, …" is two phrases, but a short list such as "speed;
 care" stays whole). A sentence longer than about 140 characters is split again at commas, with `phraseGapSec` between
-the parts.
+the parts. A `[pause]` and a speed change split a phrase too (see [delivery](#delivery)).
 
 Each word's time comes from forced alignment of the known script against the voice, so every narration word has
 exactly one time, whatever its punctuation, hyphens or numbers ("sign-in", "$1,500", "9:30").
+
+### Pronunciation
+
+`say:` tells the voice how to say a word or a few words. The key is matched case-sensitively, on whole words
+(punctuation around the words doesn't matter). The value is either the words to say instead, or
+[misaki](https://github.com/hexgrad/misaki) phonemes between slashes. A key mapped to itself is read as a word
+(turning off the automatic acronym for that word). `say:` on the video applies to every scene; `say:` on a scene
+overrides the same keys for that scene.
+
+```yaml
+say:
+  SKU: S K U                # replacement words
+  Sibal: "/sˈibɑl/"         # misaki phonemes
+  YAML: YAML                # a word, not Y A M L
+scenes:
+  - id: intro
+    say: { SKU: Stock Keeping Unit }   # this scene only
+    narration: Ask [Mira](/mˈiɹə/) about it, or [GIF](say: jiff) us.
+```
+
+In the narration itself, `[word](/phonemes/)` and `[word](say: other words)` do the same for one place.
+
+Captions, cues and the audit always use the script's own words: the caption shows "SKU", a cue `SKU` lands on it, and
+the word's time spans whatever was said for it. A `say:` entry that would run across a phrase break (a sentence end,
+a clause break or a pause) is an error; give each part its own.
+
+### Delivery
+
+| Markup | Effect |
+|---|---|
+| `[pause 0.6]` | Silence at that point, in seconds (more than 0, at most 5). It ends the phrase there, and the gap before the next phrase is exactly the pause, so the cues after it stay on their words. A pause on a phrase break replaces that break's gap. |
+| `{speed 0.85}…{/speed}` | The voice speed (0.5 to 2) for the words in between. Kokoro takes one speed per phrase, so a speed change ends the phrase, with a 0.05 s join. |
+| `*word*` | Stress: misaki's primary stress mark on the word. It is audible on words that are normally unstressed ("find *your* profile", "save *and* close": the word gets longer and stressed). Kokoro has no other emphasis control, so a word that already carries stress (`*save*`) sounds the same. |
+
+All markup is removed from captions and from cue matching: a cue never names markup, and `*help*` is matched by the
+cue `help`.
 
 ## scenes
 
@@ -237,7 +280,9 @@ exactly one time, whatever its punctuation, hyphens or numbers ("sign-in", "$1,5
 | `id` | yes | Unique within the file. Used in file names, errors, the audit, and `--only <id>`. |
 | `kind` | yes | `app` (a recording of the app) or `title` (a narrated chapter card). |
 | `title` | no | The chapter name in `chapters.txt`. On a `title` scene, it is the card's text. Defaults to `id`. |
-| `narration` | yes | What the narrator says. Every cue must appear in it. |
+| `narration` | yes | What the narrator says. Every cue must appear in it. It may hold [pronunciation](#pronunciation) and [delivery](#delivery) markup. |
+| `say` | no | Pronunciations for this scene; its keys override the video's `say:`. See [pronunciation](#pronunciation). |
+| `voice` | no | `{ speed }`: this scene's voice speed (overrides `voice.speed`). |
 | `steps` | no | What happens on screen. See [steps](#steps). |
 | `route` | no | The path opened before recording (default `/`). |
 | `viewport` | no | `desktop` (1920×1080, the default) or `phone` (390×844 in a drawn phone outline). |

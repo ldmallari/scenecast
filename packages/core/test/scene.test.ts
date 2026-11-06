@@ -66,8 +66,8 @@ describe('scene loader', () => {
       scenes: [{ id: 's1', kind: 'app', narration: 'Hi Mira Solano.' }],
     };
     expect(VideoSpecSchema.parse(base).audit).toBeUndefined();
-    expect(VideoSpecSchema.parse({ ...base, audit: { allowList: ['Mira Solano'] } }).audit).toEqual({ allowList: ['Mira Solano'] });
-    expect(VideoSpecSchema.parse({ ...base, audit: {} }).audit).toEqual({ allowList: [] });
+    expect(VideoSpecSchema.parse({ ...base, audit: { allowList: ['Mira Solano'] } }).audit).toEqual({ allowList: ['Mira Solano'], pronunciation: 'warn' });
+    expect(VideoSpecSchema.parse({ ...base, audit: {} }).audit).toEqual({ allowList: [], pronunciation: 'warn' });
     expect(() => VideoSpecSchema.parse({ ...base, audit: { allowList: 'Mira' } })).toThrow();
   });
 });

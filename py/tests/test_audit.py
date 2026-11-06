@@ -328,7 +328,7 @@ def test_outputs_and_music_licence(tmp_path):
     out = tmp_path / "audit"
     saved = json.loads((out / "audit.json").read_text())
     assert saved["pass"] == v["pass"] is True
-    assert saved["counts"] == {"pass": 3, "warn": 0, "fail": 0}  # 1 moment + narration + loudness
+    assert saved["counts"] == {"pass": 4, "warn": 0, "fail": 0}  # 1 moment + narration + loudness + pronunciation
     assert saved["music"] == {"licence": "CC BY 4.0, Example Artist"}
     table = (out / "audit-table.md").read_text()
     assert "CC BY 4.0, Example Artist" in table.split("| scene |")[0]

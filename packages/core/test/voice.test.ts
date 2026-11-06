@@ -83,9 +83,15 @@ describe.skipIf(!findUv())('buildVoice (fake TTS)', () => {
       const input = JSON.parse(fs.readFileSync(path.join(dir, 'voice', 'input.json'), 'utf8'));
       expect(input.scenes[0]).toEqual({
         id: 's1',
-        phrases: ['Welcome to the dashboard.', 'Tick the box, type your name, and press Sign.'],
+        phrases: [
+          { text: 'Welcome to the dashboard.', speed: 0.9, spans: [], stress: [] },
+          { text: 'Tick the box, type your name, and press Sign.', speed: 0.9, spans: [], stress: [] },
+        ],
         gaps: [0, 0.2],
+        groups: [0, 1],
       });
+      // The mix's room tone is not a voice-stage option (changing it never re-voices).
+      expect(input.voice).not.toHaveProperty('roomTone');
     } finally {
       if (prev === undefined) delete process.env.SCENECAST_FAKE_TTS;
       else process.env.SCENECAST_FAKE_TTS = prev;
@@ -105,7 +111,7 @@ describe.skipIf(!process.env.SCENECAST_E2E)('buildVoice e2e (real Kokoro + whisp
 });
 
 describe('the voice stage version', () => {
-  it('is 3: two words on one start are split by a frame (align.separate_ties), so voices cached by 1.1 are re-made', () => {
-    expect(VOICE_ALIGN_VERSION).toBe(3);
+  it('is 4: phrases carry pronunciation spans, speed and stress (1.3), so voices cached by 1.2 are re-made', () => {
+    expect(VOICE_ALIGN_VERSION).toBe(4);
   });
 });
