@@ -24,9 +24,9 @@ import {
   scheduleWarnings,
   sceneWarnings,
   sessionStoragePath,
-  splitPhrases,
   stepFiles,
-  phraseGaps,
+  voicePlan,
+  voiceStageOptions,
   VOICE_ALIGN_VERSION,
   type AuditCounts,
   type Scene,
@@ -139,11 +139,11 @@ async function voiceStage(spec: VideoSpec, scenes: Scene[], cache: StageCache, l
   const out = new Map<string, { wav: string; voice: SceneVoice }>();
   const misses: { scene: Scene; key: string }[] = [];
   for (const scene of scenes) {
-    // The gaps are in the key on their own (not only through spec.voice), so a change in how phrases split re-voices.
+    // The plan (phrases with their spans, speed and stress, the gaps and groups) is in the key on its own (not only
+    // through spec.voice), so a change in how phrases split, or in a `say:` entry that applies, re-voices.
     const input = {
-      voice: spec.voice,
-      phrases: splitPhrases(scene.narration),
-      gaps: phraseGaps(scene.narration, spec.voice),
+      voice: voiceStageOptions(spec.voice),
+      ...voicePlan(scene, spec.voice, spec.say),
       align: VOICE_ALIGN_VERSION,
       fake: process.env.SCENECAST_FAKE_TTS === '1',
     };
@@ -471,13 +471,16 @@ async function composeAndAudit(
     outputs: (r) => [r.wav],
   });
 
+  const rt = spec.voice.roomTone;
+  const roomToneDb = rt === false ? undefined : rt === true ? DEFAULTS.roomToneDb : rt;
   const { result: mixed } = await cache.run({
     name: 'mix',
-    input: { music: spec.brand.music ? 'user' : 'synth' },
+    // roomTone joins the key only when it is on, so mixes cached by 1.2 stay valid.
+    input: { music: spec.brand.music ? 'user' : 'synth', ...(roomToneDb === undefined ? {} : { roomToneDb }) },
     files: [composed.file, track.wav, music],
     run: async (dir) => {
       const file = path.join(dir, `${name}.mp4`);
-      return { file, ...(await mix(composed.file, track.wav, music, file)) };
+      return { file, ...(await mix(composed.file, track.wav, music, file, roomToneDb === undefined ? {} : { roomToneDb })) };
     },
     outputs: (r) => [r.file],
   });
@@ -505,7 +508,7 @@ async function composeAndAudit(
     const loudness = { lufs: mixed.lufs, truePeak: mixed.truePeak };
     const { result } = await cache.run({
       name: 'audit',
-      input: { plan, scenes, loudness, allowList: spec.audit?.allowList ?? [] },
+      input: { plan, scenes, loudness, allowList: spec.audit?.allowList ?? [], pronunciation: spec.audit?.pronunciation ?? 'warn', say: spec.say ?? {} },
       files: [mixed.file],
       run: async () => {
         const r = await audit({ video: mixed.file, plan, scenes, loudness, workDir, spec });

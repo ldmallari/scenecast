@@ -128,6 +128,34 @@ describe('mix', () => {
     expect(await stream(path.join(dir, 'short.mp4'))).toMatch(/Duration: 00:00:10\.0/);
   }, 120_000);
 
+  it('room tone fills the voice gaps at about -60 dBFS, the same on every run, and leaves the loudness on target', async () => {
+    const rms = async (file: string) => {
+      // The voice is quiet from 2.5 to 5 s; measure the middle of that gap.
+      const { err } = await runFfmpeg(ffmpeg, ['-hide_banner', '-nostdin', '-ss', '3', '-t', '1.5', '-i', file, '-af', 'astats=measure_overall=RMS_level:measure_perchannel=none', '-f', 'null', '-']);
+      const v = /RMS level dB:\s*(-?[\d.]+|-inf)/.exec(err)![1]!;
+      return v === '-inf' ? -Infinity : Number(v);
+    };
+    const silent = path.join(dir, 'tone-off.mp4');
+    const a = path.join(dir, 'tone-a.mp4');
+    const b = path.join(dir, 'tone-b.mp4');
+    await mix(video, voice, null, silent);
+    const { lufs } = await mix(video, voice, null, a, { roomToneDb: -60 });
+    await mix(video, voice, null, b, { roomToneDb: -60 });
+    expect(await rms(silent)).toBeLessThan(-90);
+    const level = await rms(a);
+    expect(level).toBeGreaterThan(-64);
+    expect(level).toBeLessThan(-56);
+    expect(lufs).toBeGreaterThanOrEqual(-17);
+    expect(lufs).toBeLessThanOrEqual(-15);
+    const pcm = async (file: string) =>
+      (await runFfmpeg(ffmpeg, ['-hide_banner', '-nostdin', '-i', file, '-af', 'astats=measure_overall=RMS_level:measure_perchannel=none', '-f', 'null', '-'])).err.match(/RMS level dB:.*/)![0];
+    expect(await pcm(a)).toBe(await pcm(b));
+    // With music, the tone sits under the bed too and the loudness stays on target.
+    const withMusic = await mix(video, voice, pad, path.join(dir, 'tone-music.mp4'), { roomToneDb: -60 });
+    expect(withMusic.lufs).toBeGreaterThanOrEqual(-17);
+    expect(withMusic.lufs).toBeLessThanOrEqual(-15);
+  }, 120_000);
+
   it('fails early on missing inputs', async () => {
     await expect(mix(video, voice, path.join(dir, 'nope.wav'), path.join(dir, 'x.mp4'))).rejects.toThrow(/music file not found: .*nope\.wav/);
     await expect(mix(video, path.join(dir, 'nope.wav'), null, path.join(dir, 'x.mp4'))).rejects.toThrow(/voice file not found/);

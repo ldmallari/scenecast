@@ -30,7 +30,7 @@
       <div class="brand"><a class="wordmark" href="index.html" aria-label="scenecast home"><img src="assets/brand/logo.svg" alt="scenecast" width="284" height="58"></a><p class="brand-tagline">We make app walkthroughs land on cue.</p></div>
       <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="docs.html" aria-current="page">Docs</a><a href="audit.html">Audit</a><a class="github-nav" href="https://github.com/ldmallari/scenecast"><svg class="i i-gh" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>GitHub<span class="source-chip"> open source</span></a></nav>
     </div></header>
-  <main id="main" tabindex="-1"><header class="page-heading shell"><h1>From a scene file<br>to a walkthrough.</h1><p class="lead">Set up the toolchain, record the demo, then describe your own app.</p></header><div class="shell reading-shell"><div class="docs-layout"><aside class="toc"><nav aria-label="On this page"><p class="eyebrow">On this page</p><ul><li><a href="#getting-started">Getting started</a></li><li><a href="#your-first-scene">Your first scene</a></li><li><a href="#commands">Commands</a></li><li><a href="#scene-file-reference">Scene file reference</a></li><li><a href="#top-level">Top level</a></li><li><a href="#cards">cards</a></li><li><a href="#card-pages">Card pages</a></li><li><a href="#brand">brand</a></li><li><a href="#app">app</a></li><li><a href="#init-scripts-and-routes">Init scripts and routes</a></li><li><a href="#voice">voice</a></li><li><a href="#scenes">scenes</a></li><li><a href="#setup">setup</a></li><li><a href="#steps">steps</a></li><li><a href="#cursor">cursor</a></li><li><a href="#phone-scenes">Phone scenes</a></li><li><a href="#captions">Captions</a></li><li><a href="#output">Output</a></li></ul></nav></aside><article class="prose">
+  <main id="main" tabindex="-1"><header class="page-heading shell"><h1>From a scene file<br>to a walkthrough.</h1><p class="lead">Set up the toolchain, record the demo, then describe your own app.</p></header><div class="shell reading-shell"><div class="docs-layout"><aside class="toc"><nav aria-label="On this page"><p class="eyebrow">On this page</p><ul><li><a href="#getting-started">Getting started</a></li><li><a href="#your-first-scene">Your first scene</a></li><li><a href="#commands">Commands</a></li><li><a href="#scene-file-reference">Scene file reference</a></li><li><a href="#top-level">Top level</a></li><li><a href="#cards">cards</a></li><li><a href="#card-pages">Card pages</a></li><li><a href="#brand">brand</a></li><li><a href="#app">app</a></li><li><a href="#init-scripts-and-routes">Init scripts and routes</a></li><li><a href="#voice">voice</a></li><li><a href="#pronunciation">Pronunciation</a></li><li><a href="#delivery">Delivery</a></li><li><a href="#scenes">scenes</a></li><li><a href="#setup">setup</a></li><li><a href="#steps">steps</a></li><li><a href="#cursor">cursor</a></li><li><a href="#phone-scenes">Phone scenes</a></li><li><a href="#captions">Captions</a></li><li><a href="#output">Output</a></li></ul></nav></aside><article class="prose">
 <section aria-labelledby="getting-started"><h2 id="getting-started">Getting started</h2><p>Use macOS or Linux (WSL works), <strong>Node.js 24</strong> and <strong>pnpm 10</strong>. Allow about 2 GB for the models, Python environment and Chromium.</p><p>Run these commands in a clone of the repository. <code>doctor</code> sets up the local toolchain and models; the first run needs a network connection.</p><pre><code class="language-sh"># in a clone of this repository
 pnpm install
 pnpm -C packages/cli exec playwright install chromium
@@ -54,7 +54,7 @@ scenecast login &lt;video.yaml&gt;          sign in by hand and save app.storage
 scenecast render &lt;video.yaml&gt; [--only &lt;sceneId&gt;] [--no-audit] [--keep-work] [--fresh]
                               [--out &lt;dir&gt;] [--work &lt;dir&gt;]
 scenecast preview &lt;video.yaml&gt;        open the composed video in the Revideo player
-scenecast --version                   print the version</code></pre><p>Stages whose inputs have not changed are reused from <code>work/&lt;id&gt;/</code>. The cache is keyed on the scene file, the saved session, the login hook, the seed script (or the files a seed command names) and <code>app.seedInputs</code>, not on the app itself or its database. Use <code>--fresh</code> after the app itself changes, or when its data changed some other way than through those files. Use <code>--only &lt;sceneId&gt;</code> while refining one scene.</p><p>Recording runs in real time. Composition takes about 2× the video length; a whole cold render takes about 3.5 to 7×. A run with nothing changed reuses every stage and can finish in under a second. The first render after updating to 1.2 makes every scene's voice and recording again, so the alignment and recording fixes reach videos cached by 1.1; the music is kept.</p></section><h2 id="scene-file-reference">Scene file reference</h2>
+scenecast --version                   print the version</code></pre><p>Stages whose inputs have not changed are reused from <code>work/&lt;id&gt;/</code>. The cache is keyed on the scene file, the saved session, the login hook, the seed script (or the files a seed command names) and <code>app.seedInputs</code>, not on the app itself or its database. Use <code>--fresh</code> after the app itself changes, or when its data changed some other way than through those files. Use <code>--only &lt;sceneId&gt;</code> while refining one scene.</p><p>Recording runs in real time. Composition takes about 2× the video length; a whole cold render takes about 3.5 to 7×. A run with nothing changed reuses every stage and can finish in under a second. The first render after updating to 1.3 makes every scene's voice again (the voice stage's cache version is 4); the recordings and music are kept.</p></section><h2 id="scene-file-reference">Scene file reference</h2>
 <p>A scene file (<code>video.yaml</code>; <code>.yml</code> and <code>.json</code> work too) describes one video: the app to record, the brand, the
 voice, and an ordered list of scenes. Each scene has its narration and the steps to perform while it is spoken. Every
 step names a <strong>cue</strong>, a word or phrase in the narration, and scenecast times the step so that it lands on that word.</p>
@@ -181,6 +181,11 @@ scenes:
 <td>The narrator. See <a href="#voice">voice</a>.</td>
 </tr>
 <tr>
+<td><code>say</code></td>
+<td>no</td>
+<td>How words are said, in every scene. See <a href="#pronunciation">pronunciation</a>.</td>
+</tr>
+<tr>
 <td><code>scenes</code></td>
 <td>yes</td>
 <td>At least one scene. See <a href="#scenes">scenes</a>.</td>
@@ -203,7 +208,7 @@ scenes:
 <tr>
 <td><code>audit</code></td>
 <td>no</td>
-<td><code>allowList</code>: names and words that speech recognition may spell differently, or leave out, without a narration WARN (for example <code>[worklist]</code>). An allow-listed cue word that is left out is placed by position, in the gap the heard words around it leave.</td>
+<td><code>allowList</code>: names and words that speech recognition may spell differently, or leave out, without a narration WARN (for example <code>[worklist]</code>). An allow-listed cue word that is left out is placed by position, in the gap the heard words around it leave. <code>pronunciation</code>: <code>warn</code> (default), <code>fail</code> or <code>off</code>: what the audit does when it hears a word said differently from the script (see <a href="audit.html#pronunciation">the audit</a>).</td>
 </tr>
 </tbody>
 </table></div>
@@ -466,14 +471,79 @@ where the video is made.</p>
 <td><code>0.15</code></td>
 <td>Silence after a phrase that ends at <code>:</code> or <code>;</code>. <code>0</code> gives the v1 rhythm.</td>
 </tr>
+<tr>
+<td><code>acronyms</code></td>
+<td><code>true</code></td>
+<td>An all-caps word of 2 to 6 letters (an <code>s</code> may follow, as in <code>IDs</code>) that misaki's dictionary does not know is spelled out letter by letter: <code>SKU</code> is &quot;S K U&quot;, but <code>NASA</code>, <code>SCUBA</code>, <code>OK</code> and <code>ID</code> stay words. <code>false</code> reads such words as words.</td>
+</tr>
+<tr>
+<td><code>flow</code></td>
+<td><code>phrase</code></td>
+<td><code>phrase</code>: each phrase is voiced on its own (as in 1.x). <code>sentence</code>: the phrases of one sentence are voiced in one go and cut apart at their breaks, so the intonation runs on across a clause break. <code>scene</code>: the same for all of a scene's phrases that share a speed. The gaps between phrases, and so every cue time, stay as designed. A group that can't be cut cleanly is voiced phrase by phrase, with a log line.</td>
+</tr>
+<tr>
+<td><code>roomTone</code></td>
+<td><code>false</code></td>
+<td><code>true</code> lays faint room tone (seeded, low brown noise at about −60 dBFS) under the whole voice track instead of digital silence; a number sets its level in dBFS (−90 to −40).</td>
+</tr>
+<tr>
+<td><code>polish</code></td>
+<td><code>false</code></td>
+<td>Light processing on each scene's voice: a soft 80 Hz high-pass, a gentle de-esser and light compression. The loudness target is unchanged.</td>
+</tr>
 </tbody>
 </table></div>
 <p>The narration is split into phrases at sentence ends (<code>.</code>, <code>!</code>, <code>?</code>, <code>…</code>), and after <code>:</code> or <code>;</code> when both sides have
 at least 3 words (so &quot;To sign the work agreement: tick the box, …&quot; is two phrases, but a short list such as &quot;speed;
 care&quot; stays whole). A sentence longer than about 140 characters is split again at commas, with <code>phraseGapSec</code> between
-the parts.</p>
+the parts. A <code>[pause]</code> and a speed change split a phrase too (see <a href="#delivery">delivery</a>).</p>
+<p>A scene can set its own speed: <code>voice: { speed: 0.85 }</code> on the scene overrides <code>voice.speed</code> for that scene.</p>
 <p>Each word's time comes from forced alignment of the known script against the voice, so every narration word has
 exactly one time, whatever its punctuation, hyphens or numbers (&quot;sign-in&quot;, &quot;$1,500&quot;, &quot;9:30&quot;).</p>
+<h3 id="pronunciation">Pronunciation</h3>
+<p><code>say:</code> tells the voice how to say a word or a few words. The key is matched case-sensitively, on whole words
+(punctuation around the words doesn't matter). The value is either the words to say instead, or
+<a href="https://github.com/hexgrad/misaki">misaki</a> phonemes between slashes. A key mapped to itself is read as a word
+(turning off the automatic acronym for that word). <code>say:</code> on the video applies to every scene; <code>say:</code> on a scene
+overrides the same keys for that scene.</p>
+<pre><code class="language-yaml">say:
+  SKU: S K U                # replacement words
+  Sibal: &quot;/sˈibɑl/&quot;         # misaki phonemes
+  YAML: YAML                # a word, not Y A M L
+scenes:
+  - id: intro
+    say: { SKU: Stock Keeping Unit }   # this scene only
+    narration: Ask [Mira](/mˈiɹə/) about it, or [GIF](say: jiff) us.
+</code></pre>
+<p>In the narration itself, <code>[word](/phonemes/)</code> and <code>[word](say: other words)</code> do the same for one place.</p>
+<p>Captions, cues and the audit always use the script's own words: the caption shows &quot;SKU&quot;, a cue <code>SKU</code> lands on it, and
+the word's time spans whatever was said for it. A <code>say:</code> entry that would run across a phrase break (a sentence end,
+a clause break or a pause) is an error; give each part its own.</p>
+<h3 id="delivery">Delivery</h3>
+<div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
+<thead>
+<tr>
+<th scope="col">Markup</th>
+<th scope="col">Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>[pause 0.6]</code></td>
+<td>Silence at that point, in seconds (more than 0, at most 5). It ends the phrase there, and the gap before the next phrase is exactly the pause, so the cues after it stay on their words. A pause on a phrase break replaces that break's gap.</td>
+</tr>
+<tr>
+<td><code>{speed 0.85}…{/speed}</code></td>
+<td>The voice speed (0.5 to 2) for the words in between. Kokoro takes one speed per phrase, so a speed change ends the phrase, with a 0.05 s join.</td>
+</tr>
+<tr>
+<td><code>*word*</code></td>
+<td>Stress: misaki's primary stress mark on the word. It is audible on words that are normally unstressed (&quot;find <em>your</em> profile&quot;, &quot;save <em>and</em> close&quot;: the word gets longer and stressed). Kokoro has no other emphasis control, so a word that already carries stress (<code>*save*</code>) sounds the same.</td>
+</tr>
+</tbody>
+</table></div>
+<p>All markup is removed from captions and from cue matching: a cue never names markup, and <code>*help*</code> is matched by the
+cue <code>help</code>.</p>
 <h2 id="scenes">scenes</h2>
 <div class="reference-table" role="region" aria-label="Reference table, scroll horizontally for all columns" tabindex="0"><table>
 <thead>
@@ -502,7 +572,17 @@ exactly one time, whatever its punctuation, hyphens or numbers (&quot;sign-in&qu
 <tr>
 <td><code>narration</code></td>
 <td>yes</td>
-<td>What the narrator says. Every cue must appear in it.</td>
+<td>What the narrator says. Every cue must appear in it. It may hold <a href="#pronunciation">pronunciation</a> and <a href="#delivery">delivery</a> markup.</td>
+</tr>
+<tr>
+<td><code>say</code></td>
+<td>no</td>
+<td>Pronunciations for this scene; its keys override the video's <code>say:</code>. See <a href="#pronunciation">pronunciation</a>.</td>
+</tr>
+<tr>
+<td><code>voice</code></td>
+<td>no</td>
+<td><code>{ speed }</code>: this scene's voice speed (overrides <code>voice.speed</code>).</td>
 </tr>
 <tr>
 <td><code>steps</code></td>

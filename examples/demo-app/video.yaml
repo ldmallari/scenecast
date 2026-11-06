@@ -43,6 +43,10 @@ app:
     - { selector: header.topbar, edge: top }
 audit:
   allowList: [Demo Co]
+# How words are said, for every scene: the words to say instead, or misaki phonemes in slashes. Captions and cues
+# keep the script's words. A scene can have its own say: too (its keys win).
+say:
+  Demo Co: "/dˈɛmO kˈO/"
 
 scenes:
   - id: sign-in
@@ -61,8 +65,9 @@ scenes:
     kind: app
     title: Your worklist
     route: /dashboard
+    # [pause 0.3] holds the voice for 0.3 s at that point; the cues after it stay on their words.
     narration: >-
-      Your dashboard opens on the worklist, with everything that needs you today.
+      Your dashboard opens on the worklist, [pause 0.3] with everything that needs you today.
       Each item shows when it is due, so the most urgent work comes first.
     steps:
       - { cue: worklist, do: ring, sel: ".worklist", pad: 10 }

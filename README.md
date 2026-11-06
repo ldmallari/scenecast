@@ -32,8 +32,12 @@ no sound; the video is narrated.*
 - **An audit of every moment.** After the render, scenecast transcribes the final video with Whisper and checks every
   cued step: was the action within 0.30 s of its word, does the ring or zoom contain the element, does any caption
   cover the target, the cursor or an open panel, is the zoom cropped, was a spinner or a blank page showing, is the
-  loudness right. The result is a table, a contact sheet and an exit code. The included demo passes every cued moment,
+  loudness right, and was every word said as written. The result is a table, a contact sheet and an exit code. The included demo passes every cued moment,
   with a median gap of about 0.01 s between word and action and a largest gap of 0.030 s, over five cold renders.
+- **Say it right.** A `say:` map (or inline `[word](/phonemes/)`) fixes how names and product words are said, unknown
+  acronyms are spelled out letter by letter, and `[pause 0.6]`, `{speed 0.85}…{/speed}` and `*word*` shape the delivery
+  line by line. Captions and cues keep the script's own words. The audit lists any word it heard said differently,
+  with a `say:` entry to fix it.
 - **Captions that know the UI.** Captions move out of the way of whatever is being clicked, typed into or highlighted
   (to the top, a corner, or beside the phone on phone scenes), including while the view is zoomed in. They break at
   the narration's clauses, and the voice pauses briefly there too.

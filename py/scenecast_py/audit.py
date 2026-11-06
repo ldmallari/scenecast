@@ -9,7 +9,9 @@ clock, all boxes are {x, y, w, h} in 1920x1080 frame pixels):
                                               # scene at a time from 0.5 s before the scene to its end
    "outDir": str, "rules": {...}, "loudness": {"lufs", "truePeak"}, "music": {"licence"} | null,
    "allowList": [str],
+   "pronunciation": "warn" | "fail" | "off",   # the pronunciation check's verdict when it flags a word (warn)
    "scenes": [{"id", "start", "end", "narration",
+               "say": [{"from", "to", "text"?, "ph"?}],      # pronunciation spans on narration word indices
                "screen": box?,                               # the app's screen: the frame, or the phone screen
                "cues": [{"start", "end", "side", "box", "text", "reason"?}],  # side: bottom, top, a corner
                                                               # (bottom-left, ...) or beside; box is where it is drawn
@@ -45,6 +47,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scenecast_py import pronounce
 from scenecast_py.align import align_phrases
 from scenecast_py.narration import SceneSpeech, normalise_words, number_to_words  # noqa: F401 (re-exported)
 
@@ -634,13 +637,30 @@ def write_table(path, verdict):
     lines += ["", "## Narration", "", "| scene | verdict | diff |", "|---|---|---|"]
     for n in verdict["narration"]:
         lines.append(f'| {_cell(n["scene"])} | {n["verdict"]} | {_cell(n["diff"] or "matches the script")} |')
+    pron = verdict.get("pronunciation")
+    if pron and pron["mode"] != "off":
+        lines += ["", "## Pronunciation", "",
+                  f'Words heard differently from the script — {pron["verdict"]}' +
+                  ("" if pron["words"] else ": none"), ""]
+        if pron["words"]:
+            lines += ["| scene | time | expected | heard | similarity | suggested say: |", "|---|---|---|---|---|---|"]
+            for w in pron["words"]:
+                sug = f'`{w["suggestion"]}`' if w.get("suggestion") else (w.get("note") or "—")
+                lines.append(f'| {_cell(w["scene"])} | {w["time"]:.3f} | {_cell(w["expected"])} | {_cell(w["heard"])} '
+                             f'| {w["similarity"]:.2f} | {_cell(sug)} |')
     if verdict["contactSheet"]:
         lines += ["", "## Frames", "", "Contact sheet: `contact-sheet.png`", ""]
         lines += [f'- `{f["file"]}` — {f["kind"]} at {f["time"]:.2f} s ({f["verdict"]})' for f in verdict["frames"]]
     path.write_text("\n".join(lines) + "\n")
 
 
-def run(data, transcriber=transcribe, aligner=align_phrases):
+def _g2p():
+    from scenecast_py.g2p import make_g2p
+
+    return make_g2p()
+
+
+def run(data, transcriber=transcribe, aligner=align_phrases, g2p_factory=_g2p):
     out_dir = Path(data["outDir"])
     out_dir.mkdir(parents=True, exist_ok=True)
     rules = data["rules"]
@@ -649,7 +669,8 @@ def run(data, transcriber=transcribe, aligner=align_phrases):
         if not data.get("video") or not data.get("whisperModel") or not data.get("ffmpeg"):
             raise SystemExit("audit: no transcript given and no video/whisperModel/ffmpeg to make one")
 
-    rows, narration, scene_rows, alignment = [], [], [], []
+    rows, narration, scene_rows, alignment, misheard = [], [], [], [], []
+    mode = data.get("pronunciation") or "warn"
     for scene in data["scenes"]:
         heard = words if words is not None else transcriber(
             data["video"], data["whisperModel"], data["ffmpeg"], start=max(0.0, scene["start"] - PRE_ROLL_SEC), end=scene["end"])
@@ -663,7 +684,10 @@ def run(data, transcriber=transcribe, aligner=align_phrases):
             scene_rows.append(scene_row)
         diff = speech.diff()
         narration.append({"scene": scene["id"], "verdict": WARN if diff else PASS, "diff": "; ".join(diff)})
+        if mode != "off":
+            misheard += pronounce.check_scene(scene, speech, g2p_factory, scene.get("say"))
     loudness = audit_loudness(data["loudness"], rules)
+    pron = {"mode": mode, "verdict": pronounce.verdict(misheard, mode, PASS, WARN, FAIL), "words": misheard}
 
     frames, sheet = [], None
     blank = None  # checked only when there is a video to read
@@ -673,7 +697,8 @@ def run(data, transcriber=transcribe, aligner=align_phrases):
         if "blank" in rules:
             blank = blank_frames(*grey_frames(data["video"], data["ffmpeg"], rules), data["scenes"], rules)
 
-    verdicts = [r["verdict"] for r in rows + scene_rows + narration] + [loudness["verdict"]] + ([blank["verdict"]] if blank else [])
+    verdicts = ([r["verdict"] for r in rows + scene_rows + narration] + [loudness["verdict"]]
+                + ([blank["verdict"]] if blank else []) + ([pron["verdict"]] if mode != "off" else []))
     counts = {"pass": verdicts.count(PASS), "warn": verdicts.count(WARN), "fail": verdicts.count(FAIL)}
     verdict = {
         "pass": counts["fail"] == 0,
@@ -684,6 +709,7 @@ def run(data, transcriber=transcribe, aligner=align_phrases):
         "moments": rows,
         "scenes": scene_rows,
         "narration": narration,
+        "pronunciation": pron,
         "alignment": alignment,
         "frames": frames,
         "contactSheet": sheet,

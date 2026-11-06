@@ -82,7 +82,7 @@ class Kokoro:
         self._voices = np.load(voices_path)
         self._g2p = {}
 
-    def _phonemise(self, text: str, lang: str) -> str:
+    def _g2p_for(self, lang: str):
         if not lang.lower().startswith("en"):
             raise ValueError(f'unsupported voice lang "{lang}" (English only: en-us, en-gb)')
         british = lang.lower() in ("en-gb", "en_gb", "b")
@@ -90,7 +90,14 @@ class Kokoro:
             from scenecast_py.g2p import make_g2p
 
             self._g2p[british] = make_g2p(british=british)
-        phonemes, _ = self._g2p[british](text)
+        return self._g2p[british]
+
+    def lexicon(self, lang: str):
+        """misaki's dictionary for `lang` (scenecast_py.speech decides acronyms with it)."""
+        return self._g2p_for(lang).lexicon
+
+    def _phonemise(self, text: str, lang: str) -> str:
+        phonemes, _ = self._g2p_for(lang)(text)
         return phonemes
 
     @staticmethod

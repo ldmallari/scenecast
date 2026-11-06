@@ -7,6 +7,49 @@ All notable changes to scenecast are listed here. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-06
+
+### Added
+
+- Pronunciation control. `say:` on the video (and on a scene, whose keys win) maps a word or a few words, matched
+  case-sensitively on whole words, to the words to say instead (`SKU: S K U`) or to misaki phonemes in slashes
+  (`Sibal: "/sˈibɑl/"`). In the narration, `[word](/phonemes/)` and `[word](say: other words)` do the same for one
+  place. Captions, cues, word times and the audit keep the script's own words: the aligner times what was said and
+  maps it back onto the script word it stands for.
+- Automatic acronyms, as an explicit rule: an all-caps word of 2 to 6 letters (an `s` may follow, as in `IDs`) that
+  misaki's dictionary does not know is spelled out letter by letter; `NASA`, `SCUBA`, `OK` and `ID` stay words.
+  `say: { YAML: YAML }` reads one word as a word, and `voice.acronyms: false` turns the rule off.
+- Delivery markup in the narration: `[pause 0.6]` (silence, in the word timeline, so later cues stay on their words),
+  `{speed 0.85}…{/speed}` (a span's speed), and `*word*` (misaki's primary stress: audible on normally unstressed
+  words such as "your" or "and"; Kokoro has no other emphasis control, so a word that is already stressed sounds the
+  same). `voice: { speed }` on a scene overrides the video's speed. All markup is removed from captions and cue
+  matching, and bad markup is a load error that says what to write.
+- A pronunciation check in the audit: words the transcript heard as something else (after normalising case,
+  punctuation, numbers, spelled-out letters and split compounds, and leaving out filler, allow-listed names,
+  homophones and recognition slips) are listed in a "Pronunciation" section with their time, what was expected, what
+  was heard and a suggested `say:` entry. A WARN by default; `audit.pronunciation: fail` makes it a FAIL, `off`
+  skips it.
+- A more natural voice, on by default: `voice.flow: sentence` (the default; `scene` and `phrase` are the other choices) voices a sentence's (or a scene's) phrases
+  in one call and cuts them apart at their breaks, so the intonation runs on, with the designed gaps and every cue time
+  kept (a group that can't be cut cleanly is voiced phrase by phrase); `voice.roomTone` lays faint, seeded room tone
+  (about −60 dBFS) under the voice track instead of digital silence; `voice.polish` adds a soft 80 Hz high-pass, a
+  gentle de-esser and light compression (numpy only). `flow: phrase, roomTone: false, polish: false` gives the 1.2
+  sound back.
+- The demo video shows a `say:` entry and a `[pause]`.
+
+### Changed
+
+- The first render after updating makes every scene's voice again (the voice stage's cache version is 4), because
+  phrases now reach the voice with their pronunciation, speed and stress. Recordings and music are kept. A scene file
+  without the new fields says the same words as before; an unknown all-caps word is now spelled out by scenecast's
+  rule rather than left to misaki's part-of-speech guess (they agree for common acronyms).
+- The audit's counts include the pronunciation check (one more PASS or WARN), and its cache key includes
+  `audit.pronunciation` and `say:`, so the audit runs once more after updating.
+
+### Fixed
+
+- Asterisks round a word in a narration (`*word*`) are no longer shown in captions.
+
 ## [1.2.0] - 2026-10-28
 
 ### Added
@@ -140,7 +183,8 @@ The first release.
   sync, retime cuts, caption overlaps, the composer's render worker, audit target checks, seed commands that run as
   written, and strict scene files that reject unknown keys.
 
-[Unreleased]: https://github.com/ldmallari/scenecast/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/ldmallari/scenecast/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/ldmallari/scenecast/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ldmallari/scenecast/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ldmallari/scenecast/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ldmallari/scenecast/releases/tag/v1.0.0

@@ -2,6 +2,7 @@ export * from './scene/schema.js';
 export * from './scene/load.js';
 export * from './toolchain.js';
 export * from './voice.js';
+export * from './speech.js';
 export * from './schedule.js';
 export * from './record/record.js';
 export * from './record/context.js';

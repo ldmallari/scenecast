@@ -76,6 +76,21 @@ starts one alignment frame (0.02 s) on, and the phrase stays forced. A phrase th
 its words show `free`. A cue that
 was not heard WARNs with the plan time, as before.
 
+### Pronunciation
+
+The "Pronunciation" section lists script words that the transcript heard as something else, most likely because the
+voice said them differently: the time, what the script says, what was heard, how alike the two sound (0 to 1), and a
+`say:` entry to start from (an acronym's letters, or misaki's phonemes for the word, to edit). To keep false alarms
+rare, it skips filler ("um"), allow-listed names, words heard as the same letters or the same compound ("S K U" for
+SKU, "work list" for worklist), homophones (the same misaki sound), words that were left out or added, and words heard
+as something that sounds nothing like them (a recognition slip). A word with a `say:` entry is compared with what the
+entry says.
+
+It is a WARN by default, so it never fails a render. `audit.pronunciation: fail` makes it a FAIL; `off` skips it. To
+fix a flagged word, listen to that moment, then add a `say:` entry (see
+[pronunciation](scene-format.md#pronunciation)) or an inline `[word](/phonemes/)`, or allow-list the name if the voice
+was right and the recogniser was wrong.
+
 ## Read every moment
 
 Read every row of `audit-table.md` and every tile of `contact-sheet.png`, not a sample. A video can pass on most

@@ -2,10 +2,13 @@
 
 Usage: python -m scenecast_py.voice --spec <input.json> --out <dir>
 
-input.json: {"voice": {"name", "lang", "speed", "phraseGapSec"},
+input.json: {"voice": {"name", "lang", "speed", "phraseGapSec", "acronyms"?, "flow"?, "polish"?},
              "models": {"kokoro", "voices", "whisper"} | null,
-             "scenes": [{"id": str, "phrases": [str, ...], "gaps": [float, ...]?}]}
+             "scenes": [{"id": str, "phrases": [str | phrase, ...], "gaps": [float, ...]?, "groups": [int, ...]?}]}
 `gaps[i]` is the silence before phrase i (gaps[0] is 0); without `gaps`, phraseGapSec goes between every phrase.
+A phrase is a string or {text, speed, spans, stress} (scenecast_py.speech): `text` is the script, and the spans say
+how some of its words are said. Phrases with the same `groups` number are voiced in one Kokoro call and cut apart at
+their breaks (`voice.flow`), when that can be done safely.
 Writes <dir>/<scene>.wav (24 kHz mono) and <dir>/timeline.json. Times are seconds from scene start.
 
 Word times come from forced alignment of each phrase clip against its known text (scenecast_py.align). A phrase
@@ -35,23 +38,119 @@ class FakeTTS:
         return np.zeros(SAMPLE_RATE, dtype=np.float32)
 
 
-def build_scene(phrases, tts, gap_sec, voice="af_heart", speed=1.0, lang="en-us", gaps=None):
+def _clip(tts, phrase, voice, speed, lang, lexicon, acronyms):
+    from scenecast_py.speech import tts_text, units
+
+    us = units(phrase, lexicon, acronyms)
+    return np.asarray(tts.create(tts_text(us), voice=voice, speed=phrase.get("speed") or speed, lang=lang), dtype=np.float32)
+
+
+def build_scene(phrases, tts, gap_sec, voice="af_heart", speed=1.0, lang="en-us", gaps=None, groups=None,
+                model=None, lexicon=None, acronyms=True):
     """Synthesise each phrase and join them with silence: `gaps[i]` seconds before phrase i (gaps[0] is ignored), or
-    `gap_sec` between every phrase when `gaps` is None. Returns (audio, timeline)."""
+    `gap_sec` between every phrase when `gaps` is None. Phrases that share a `groups` number are voiced together and
+    cut apart (`context_clips`, which needs the forced-alignment `model`); a group that can't be cut safely is voiced
+    phrase by phrase. Returns (audio, timeline); each timeline phrase's `text` is its script text."""
+    from scenecast_py.speech import as_phrase
+
+    phrases = [as_phrase(p) for p in phrases]
     if gaps is not None and len(gaps) != len(phrases):
         raise ValueError(f"{len(gaps)} gaps for {len(phrases)} phrases")
+    if groups is not None and len(groups) != len(phrases):
+        raise ValueError(f"{len(groups)} groups for {len(phrases)} phrases")
+    clips = [None] * len(phrases)
+    k = 0
+    while k < len(phrases):
+        g = k + 1
+        while groups is not None and g < len(phrases) and groups[g] == groups[k]:
+            g += 1
+        if g - k > 1 and model is not None:
+            got = context_clips(tts, model, phrases[k:g], voice, speed, lang, lexicon, acronyms)
+            if got is not None:
+                clips[k:g] = got
+        for i in range(k, g):
+            if clips[i] is None:
+                clips[i] = _clip(tts, phrases[i], voice, speed, lang, lexicon, acronyms)
+        k = g
     parts, spans, cursor = [], [], 0
-    for i, text in enumerate(phrases):
+    for i, (p, clip) in enumerate(zip(phrases, clips)):
         if i:
             gap = np.zeros(round((gap_sec if gaps is None else gaps[i]) * SAMPLE_RATE), dtype=np.float32)
             parts.append(gap)
             cursor += len(gap)
-        clip = np.asarray(tts.create(text, voice=voice, speed=speed, lang=lang), dtype=np.float32)
-        spans.append({"text": text, "start": cursor / SAMPLE_RATE, "end": (cursor + len(clip)) / SAMPLE_RATE})
+        span = {"text": p["text"], "start": cursor / SAMPLE_RATE, "end": (cursor + len(clip)) / SAMPLE_RATE}
+        if p["spans"] or p["stress"]:
+            span["say"] = {"spans": p["spans"], "stress": p["stress"]}
+        spans.append(span)
         parts.append(clip)
         cursor += len(clip)
     audio = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
     return audio, {"duration": cursor / SAMPLE_RATE, "phrases": spans}
+
+
+CUT_FRAME = 240  # 10 ms at 24 kHz: the step the cut point is searched in
+CUT_AFTER_WORD_SEC = 0.05  # a cut comes at least this long after the last word of a phrase starts
+CUT_QUIET_DB = -30  # the cut point must be this far under the group's loudest 10 ms
+
+
+def cut_points(audio, bounds, sr=SAMPLE_RATE):
+    """Sample indices to cut `audio` at, one per boundary: the quietest 10 ms frame between the start of a phrase's
+    last word (plus 50 ms) and the start of the next phrase's first word. `bounds` is [(last word start, next word
+    start)] in seconds. Returns None when a boundary has no room or no quiet point (under -30 dB of the loudest frame)."""
+    n = len(audio) // CUT_FRAME
+    if n == 0:
+        return None
+    frames = audio[: n * CUT_FRAME].astype(np.float64).reshape(n, CUT_FRAME)
+    db = 10 * np.log10(np.mean(frames**2, axis=1) + 1e-12)
+    peak = float(db.max())
+    out, prev = [], 0
+    for last_start, next_start in bounds:
+        lo = max(int((last_start + CUT_AFTER_WORD_SEC) * sr) // CUT_FRAME, prev // CUT_FRAME + 1)
+        hi = min(int(next_start * sr) // CUT_FRAME, n)
+        if hi <= lo:
+            return None
+        f = lo + int(np.argmin(db[lo:hi]))
+        if db[f] - peak > CUT_QUIET_DB:
+            return None
+        prev = f * CUT_FRAME + CUT_FRAME // 2
+        out.append(prev)
+    return out
+
+
+def context_clips(tts, model, phrases, voice, speed, lang, lexicon=None, acronyms=True):
+    """The phrases voiced in one call (so the intonation runs on across their breaks) and cut apart: one clip per
+    phrase, trimmed like a phrase voiced alone, or None (logged) when the group can't be cut safely."""
+    from scenecast_py import align
+    from scenecast_py.kokoro import trim_silence
+    from scenecast_py.speech import spoken_text, tts_text, units
+
+    us = [units(p, lexicon, acronyms) for p in phrases]
+    text = " ".join(tts_text(u) for u in us)
+    where = f'"{phrases[0]["text"][:40]}" + {len(phrases) - 1} more'
+    audio = np.asarray(tts.create(text, voice=voice, speed=phrases[0].get("speed") or speed, lang=lang), dtype=np.float32)
+    try:
+        spoken = " ".join(spoken_text(u) for u in us)
+        got = align.align_text(model, resample_16k(np.concatenate([np.zeros(round(ALIGN_PAD_SEC * SAMPLE_RATE), np.float32), audio])),
+                               spoken, offset=-ALIGN_PAD_SEC)
+        if [w["w"] for w in got] != spoken.split():
+            raise align.AlignmentError("the word count differs")
+    except Exception as e:  # noqa: BLE001 (the group is voiced phrase by phrase instead)
+        _log(f"{where}: voiced phrase by phrase (the group could not be aligned: {e})")
+        return None
+    bounds, k = [], 0
+    for u in us[:-1]:
+        k += sum(len(x["spoken"]) for x in u)
+        bounds.append((got[k - 1]["start"], got[k]["start"]))
+    cuts = cut_points(audio, bounds)
+    if cuts is None:
+        _log(f"{where}: voiced phrase by phrase (no quiet point between two of its phrases)")
+        return None
+    edges = [0, *cuts, len(audio)]
+    clips = [trim_silence(audio[a:b]) for a, b in zip(edges, edges[1:])]
+    if any(len(c) < CUT_FRAME * 10 for c in clips):
+        _log(f"{where}: voiced phrase by phrase (a cut left a piece under 0.1 s)")
+        return None
+    return clips
 
 
 def fallback_word_times(text, start, end):
@@ -139,7 +238,8 @@ def _round(scene):
     r = lambda t: round(float(t), 3)  # noqa: E731
     return {
         "duration": r(scene["duration"]),
-        "phrases": [{**p, "start": r(p["start"]), "end": r(p["end"]), **({"onset": r(p["onset"])} if "onset" in p else {})}
+        "phrases": [{**{k: v for k, v in p.items() if k != "say"}, "start": r(p["start"]), "end": r(p["end"]),
+                     **({"onset": r(p["onset"])} if "onset" in p else {})}
                     for p in scene["phrases"]],
         "words": [{**w, "start": r(w["start"]), "end": r(w["end"])} for w in scene["words"]],
     }
@@ -168,14 +268,20 @@ def _log(message):
 
 def _forced_phrase(model, audio, p, pad):
     """Forced word times for one phrase clip (padded with `pad` of silence each side), kept inside the phrase, or
-    raises AlignmentError (or anything the aligner raised)."""
+    raises AlignmentError (or anything the aligner raised). The aligner hears what was said (a replacement's words);
+    the times come back one per script word (scenecast_py.speech.map_times)."""
     from scenecast_py import align
+    from scenecast_py.speech import map_times, spoken_text, units
 
+    say = p.get("say") or {}
+    us = units({"text": p["text"], "spans": say.get("spans") or [], "stress": []})
+    spoken = spoken_text(us)
     silence = np.zeros(round(pad * SAMPLE_RATE), dtype=np.float32)
     clip = audio[round(p["start"] * SAMPLE_RATE):round(p["end"] * SAMPLE_RATE)]
-    got = align.align_text(model, resample_16k(np.concatenate([silence, clip, silence])), p["text"], offset=p["start"] - pad)
-    if [w["w"] for w in got] != p["text"].split():
+    got = align.align_text(model, resample_16k(np.concatenate([silence, clip, silence])), spoken, offset=p["start"] - pad)
+    if [w["w"] for w in got] != spoken.split():
         raise align.AlignmentError("the word count differs")
+    got = map_times(us, p["text"].split(), got)
     words = []
     for w in got:
         start = min(max(w["start"], p["start"]), p["end"])
@@ -256,13 +362,19 @@ def run(spec, out_dir, fake=False):
         tts = Kokoro(models["kokoro"], models["voices"])
         whisper = whisper_model(models["whisper"])
 
+    lexicon = tts.lexicon(v["lang"]) if hasattr(tts, "lexicon") else None
     scenes = {}
     for scene in spec["scenes"]:
         audio, tl = build_scene(scene["phrases"], tts, v["phraseGapSec"], v["name"], v["speed"], v["lang"],
-                                gaps=scene.get("gaps"))
+                                gaps=scene.get("gaps"), groups=scene.get("groups"), model=whisper, lexicon=lexicon,
+                                acronyms=v.get("acronyms", True))
+        tl["words"] = scene_words(whisper, audio, tl["phrases"])
+        if v.get("polish"):
+            from scenecast_py.polish import polish
+
+            audio = polish(audio, SAMPLE_RATE)  # after alignment: it moves no sound in time, so the times stand
         wav = out_dir / f"{scene['id']}.wav"
         sf.write(str(wav), audio, SAMPLE_RATE, subtype="PCM_16")
-        tl["words"] = scene_words(whisper, audio, tl["phrases"])
         scenes[scene["id"]] = _round(tl)
 
     timeline = {"scenes": scenes}
