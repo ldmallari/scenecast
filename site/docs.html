@@ -478,21 +478,22 @@ where the video is made.</p>
 </tr>
 <tr>
 <td><code>flow</code></td>
-<td><code>phrase</code></td>
-<td><code>phrase</code>: each phrase is voiced on its own (as in 1.x). <code>sentence</code>: the phrases of one sentence are voiced in one go and cut apart at their breaks, so the intonation runs on across a clause break. <code>scene</code>: the same for all of a scene's phrases that share a speed. The gaps between phrases, and so every cue time, stay as designed. A group that can't be cut cleanly is voiced phrase by phrase, with a log line.</td>
+<td><code>sentence</code></td>
+<td><code>sentence</code>: the phrases of one sentence are voiced in one go and cut apart at their breaks, so the intonation runs on across a clause break. <code>scene</code>: the same for all of a scene's phrases that share a speed. <code>phrase</code>: each phrase is voiced on its own (as in 1.2). The gaps between phrases, and so every cue time, stay as designed. A group that can't be cut cleanly is voiced phrase by phrase, with a log line.</td>
 </tr>
 <tr>
 <td><code>roomTone</code></td>
-<td><code>false</code></td>
-<td><code>true</code> lays faint room tone (seeded, low brown noise at about −60 dBFS) under the whole voice track instead of digital silence; a number sets its level in dBFS (−90 to −40).</td>
+<td><code>true</code></td>
+<td><code>true</code> lays faint room tone (seeded, low brown noise at about −60 dBFS) under the whole voice track instead of digital silence; <code>false</code> turns it off; a number sets its level in dBFS (−90 to −40).</td>
 </tr>
 <tr>
 <td><code>polish</code></td>
-<td><code>false</code></td>
-<td>Light processing on each scene's voice: a soft 80 Hz high-pass, a gentle de-esser and light compression. The loudness target is unchanged.</td>
+<td><code>true</code></td>
+<td>Light processing on each scene's voice: a soft 80 Hz high-pass, a gentle de-esser and light compression. The loudness target is unchanged. <code>false</code> turns it off.</td>
 </tr>
 </tbody>
 </table></div>
+<p>The natural voice (<code>flow: sentence</code>, <code>roomTone</code> and <code>polish</code>) is on by default. <code>flow: phrase, roomTone: false, polish: false</code> gives the 1.2 sound back.</p>
 <p>The narration is split into phrases at sentence ends (<code>.</code>, <code>!</code>, <code>?</code>, <code>…</code>), and after <code>:</code> or <code>;</code> when both sides have
 at least 3 words (so &quot;To sign the work agreement: tick the box, …&quot; is two phrases, but a short list such as &quot;speed;
 care&quot; stays whole). A sentence longer than about 140 characters is split again at commas, with <code>phraseGapSec</code> between
